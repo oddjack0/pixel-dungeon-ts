@@ -55,6 +55,11 @@ export interface PlacedMob {
   sprite: string;
   /** Whether this mob is currently hostile/awake (drives HUD alert icons). */
   hostile: boolean;
+  /**
+   * Whether tapping this mob talks to it instead of attacking. Set by the
+   * content layer from the shared NPC contract (MobActor.onTalk, seams.ts).
+   */
+  talkable: boolean;
 }
 
 /** Heap presentation for an item spawn point (vanilla Heap.Type, M1 subset). */
@@ -81,7 +86,37 @@ export interface ItemSpawn {
 }
 
 /** Mob spawn kinds produced by the generator, for the content designer. */
-export type MobKind = 'mob' | 'boss' | 'ratking' | 'statue' | 'piranha' | 'ghost' | 'shopkeeper';
+export type MobKind = 'mob' | 'boss' | 'ratking' | 'statue' | 'piranha' | 'ghost' | 'shopkeeper' | 'wandmaker';
+
+/**
+ * Cross-depth run state (vanilla `Dungeon` statics: Dungeon.java).
+ * The engine owns one per run and threads it through every depth's
+ * generation so once-per-run quests (ghost, wandmaker, dew vial, upgrade
+ * scroll quota, weak-floor chaining) behave like the original.
+ */
+export interface RunState {
+  /** Weak-floor pit chaining (Dungeon.java: deepenedGo etc. pattern). */
+  weakFloor: boolean;
+  /** The sad ghost quest has spawned (Ghost.Quest.spawned). */
+  ghostSpawned: boolean;
+  /** The dew vial still needs its guaranteed spawn (SewerLevel.createItems). */
+  dewVialNeeded: boolean;
+  /** Upgrade scrolls generated so far (Dungeon.souNeeded quota). */
+  scrollsOfUpgrade: number;
+  /** The wandmaker quest has spawned (Wandmaker.Quest.spawned). */
+  wandmakerSpawned: boolean;
+}
+
+/** Fresh per-run state (vanilla statics reset on new game). */
+export function newRunState(): RunState {
+  return {
+    weakFloor: false,
+    ghostSpawned: false,
+    dewVialNeeded: true,
+    scrollsOfUpgrade: 0,
+    wandmakerSpawned: false,
+  };
+}
 
 /** A mob spawn point produced by the generator, for the content designer. */
 export interface MobSpawn {
@@ -133,6 +168,29 @@ export class Level extends Grid {
   bossLevel = false;
   /** Boss-arena seal state (set by the seal mechanic at runtime). */
   sealed = false;
+  /**
+   * Tengu arena bounds (depth 10, PrisonBossLevel): the boss worker's
+   * arena-entry hook (press) uses these to detect entry, spawn Tengu, and
+   * seal/unseal the arena door. Null on other depths.
+   */
+  bossArena: { l: number; t: number; r: number; b: number } | null = null;
+  /**
+   * Arena door cell (depth 10): the LOCKED_DOOR between anteroom and arena
+   * (PrisonBossLevel.arenaDoor). -1 when absent.
+   */
+  arenaDoorCell = -1;
+  /**
+   * PrisonBossLevel.enteredArena (PrisonBossLevel.java:52,75): set on the
+   * hero's first step inside the arena; guards the one-time Tengu spawn.
+   * Persisted (bundle ENTERED).
+   */
+  enteredArena = false;
+  /**
+   * PrisonBossLevel.keyDropped (PrisonBossLevel.java:53,76): set when the
+   * first SkeletonKey is dropped on the level; the arena door becomes an
+   * ordinary door. Persisted (bundle DROPPED).
+   */
+  keyDropped = false;
   /** Count of hidden doors placed during generation. */
   secretDoors = 0;
 
@@ -247,7 +305,13 @@ export class Level extends Grid {
  * `generate(rng, depth)` must return a Level with stairs/items/mobs placed.
  */
 export interface LevelGen {
-  generate(rng: RNG, depth: number): Level;
+  /**
+   * Generate the level for `depth`. The engine passes its per-run RunState
+   * so once-per-run generation quests (ghost, wandmaker, dew vial, upgrade
+   * scroll quota, weak-floor chaining) persist across depth transitions;
+   * generators that predate run state may ignore it.
+   */
+  generate(rng: RNG, depth: number, run?: RunState): Level;
 }
 
 /**

@@ -13,6 +13,7 @@ import {
   type Door,
 } from './rooms.js';
 import type { ItemSpawn, MobSpawn, HeapKind } from './level.js';
+import { paintShopRoom } from './shopPainter.js';
 
 /**
  * Room painters + level decoration, faithful to vanilla
@@ -470,6 +471,83 @@ function paintTunnel(ctx: PainterCtx, room: Room): void {
     }
     for (let i = from; i <= to; i++) ctx.set(c.x, i, floor);
   }
+  for (const door of room.doors) upgradeDoor(door, DoorType.TUNNEL);
+}
+
+/**
+ * Vanilla `PassagePainter` (levels/painters/PassagePainter.java): walks the
+ * room's inner wall ring between its doors, painting the longest-door-gap
+ * arc as floor — winding corridors instead of the sewers' L-shaped tunnels.
+ */
+function paintPassage(ctx: PainterCtx, room: Room): void {
+  const pasWidth = roomW(room) - 2;
+  const pasHeight = roomH(room) - 2;
+  const floor = ctx.feeling === 'chasm' ? Terrain.WALKWAY : Terrain.FLOOR;
+
+  // PassagePainter.java:57-78 — xy2p: wall-ring cell -> perimeter index.
+  const xy2p = (x: number, y: number): number => {
+    if (y === room.t) {
+      return x - room.l - 1;
+    } else if (x === room.r) {
+      return y - room.t - 1 + pasWidth;
+    } else if (y === room.b) {
+      return room.r - x - 1 + pasWidth + pasHeight;
+    } else {
+      // x === room.l
+      if (y === room.t + 1) {
+        return 0;
+      }
+      return room.b - y - 1 + pasWidth * 2 + pasHeight;
+    }
+  };
+
+  // PassagePainter.java:80-97 — p2xy: perimeter index -> wall-ring cell.
+  const p2xy = (p: number): { x: number; y: number } => {
+    if (p < pasWidth) {
+      return { x: room.l + 1 + p, y: room.t + 1 };
+    } else if (p < pasWidth + pasHeight) {
+      return { x: room.r - 1, y: room.t + 1 + (p - pasWidth) };
+    } else if (p < pasWidth * 2 + pasHeight) {
+      return { x: room.r - 1 - (p - (pasWidth + pasHeight)), y: room.b - 1 };
+    } else {
+      return { x: room.l + 1, y: room.b - 1 - (p - (pasWidth * 2 + pasHeight)) };
+    }
+  };
+
+  const joints: number[] = [];
+  for (const door of room.doors) joints.push(xy2p(door.x, door.y));
+  joints.sort((a, b) => a - b);
+
+  const nJoints = joints.length;
+  const perimeter = pasWidth * 2 + pasHeight * 2;
+
+  if (nJoints === 0) {
+    // Degenerate (vanilla would crash): no doors, paint a plain ring.
+    ctx.fillRoomMargin(room, 1, floor);
+    return;
+  }
+
+  // PassagePainter.java:36-46 — start after the widest door gap.
+  let start = 0;
+  let maxD = joints[0]! + perimeter - joints[nJoints - 1]!;
+  for (let i = 1; i < nJoints; i++) {
+    const d = joints[i]! - joints[i - 1]!;
+    if (d > maxD) {
+      maxD = d;
+      start = i;
+    }
+  }
+
+  const end = (start + nJoints - 1) % nJoints;
+  let p = joints[start]!;
+  do {
+    const c = p2xy(p);
+    ctx.set(c.x, c.y, floor);
+    p = (p + 1) % perimeter;
+  } while (p !== joints[end]);
+  const c = p2xy(p);
+  ctx.set(c.x, c.y, floor);
+
   for (const door of room.doors) upgradeDoor(door, DoorType.TUNNEL);
 }
 
@@ -1047,6 +1125,12 @@ export function paintRooms(ctx: PainterCtx, rooms: Room[]): { entrance: number; 
       case RoomType.TUNNEL:
         paintTunnel(ctx, room);
         break;
+      case RoomType.PASSAGE:
+        paintPassage(ctx, room);
+        break;
+      case RoomType.SHOP:
+        paintShopRoom(ctx, room);
+        break;
       case RoomType.ENTRANCE:
         entrance = paintEntrance(ctx, room);
         break;
@@ -1157,14 +1241,28 @@ export function paintWaterGrass(
   rooms: Room[],
   waterFill?: number,
   grassFill?: number,
+  waterPasses = 5,
+  grassPasses = 4,
 ): void {
   const W = ctx.width;
   const H = ctx.height;
-  const water = generatePatch(ctx.rng, waterFill ?? (ctx.feeling === 'water' ? 0.6 : 0.45), 5, W, H);
+  const water = generatePatch(
+    ctx.rng,
+    waterFill ?? (ctx.feeling === 'water' ? 0.6 : 0.45),
+    waterPasses,
+    W,
+    H,
+  );
   for (let i = 0; i < W * H; i++) {
     if (ctx.tiles[i] === Terrain.FLOOR && water[i]) ctx.tiles[i] = Terrain.WATER;
   }
-  const grass = generatePatch(ctx.rng, grassFill ?? (ctx.feeling === 'grass' ? 0.6 : 0.4), 4, W, H);
+  const grass = generatePatch(
+    ctx.rng,
+    grassFill ?? (ctx.feeling === 'grass' ? 0.6 : 0.4),
+    grassPasses,
+    W,
+    H,
+  );
   if (ctx.feeling === 'grass') {
     for (const room of rooms) {
       if (room.type !== RoomType.NULL && room.type !== RoomType.PASSAGE && room.type !== RoomType.TUNNEL) {
@@ -1213,7 +1311,9 @@ export function paintDoorTiles(ctx: PainterCtx, rooms: Room[]): number {
         return ctx.feeling === 'chasm' ? Terrain.WALKWAY : Terrain.FLOOR;
       case DoorType.REGULAR:
         if (ctx.depth <= 1) return Terrain.DOOR;
-        if (ctx.rng.int(0, 12 - ctx.depth) === 0) {
+        // Vanilla RegularLevel.paintDoors (RegularLevel.java:532):
+        // Random.Int(12-depth) below depth 6, fixed Random.Int(6) at 6+.
+        if (ctx.rng.int(0, ctx.depth < 6 ? 12 - ctx.depth : 6) === 0) {
           secretDoors++;
           return Terrain.DOOR_SECRET;
         }
@@ -1247,6 +1347,67 @@ export function paintDoorTiles(ctx: PainterCtx, rooms: Room[]): number {
     }
   }
   return secretDoors;
+}
+
+/**
+ * Vanilla `PrisonBossLevel.paintDoors` (PrisonBossLevel.java:175-193): no
+ * secret doors; PASSAGE<->PASSAGE joints are left open (EMPTY); every other
+ * door is a plain DOOR. The arena entrance is upgraded to a LOCKED_DOOR by
+ * the generator (PrisonBossLevel.decorate, PrisonBossLevel.java:243).
+ *
+ * Returns the secret-door count (always 0 on the Tengu level).
+ */
+export function paintPrisonBossDoors(
+  ctx: PainterCtx,
+  rooms: Room[],
+  exitRoom: Room,
+  arenaDoor: Door | null,
+): number {
+  const seen = new Set<Door>();
+  for (const room of rooms) {
+    if (room.type === RoomType.NULL) continue;
+    for (const n of room.carvedTo) {
+      const door = room.doors.find((d) => n.doors.includes(d));
+      if (!door || seen.has(door)) continue;
+      seen.add(door);
+      let tile: Terrain;
+      if (door === arenaDoor) {
+        upgradeDoor(door, DoorType.LOCKED);
+        tile = Terrain.DOOR_LOCKED;
+      } else if (room.type === RoomType.PASSAGE && n.type === RoomType.PASSAGE) {
+        tile = Terrain.FLOOR; // vanilla EMPTY: not a door at all
+      } else {
+        upgradeDoor(door, DoorType.REGULAR);
+        tile = Terrain.DOOR;
+      }
+      ctx.set(door.x, door.y, tile);
+      if (tile !== Terrain.FLOOR) {
+        ctx.out.doors.push({ x: door.x, y: door.y, type: door.type, tile });
+      }
+    }
+  }
+  return 0;
+}
+
+/**
+ * Vanilla `PrisonBossLevel.placeTraps` (PrisonBossLevel.java:219-234): only
+ * POISON_TRAP, placed visibly (no hidden variants on the Tengu level).
+ */
+export function placePoisonTraps(
+  ctx: PainterCtx,
+  rooms: Room[],
+): { attempts: number; placed: number } {
+  const nTraps = ctx.depth <= 1 ? 0 : ctx.rng.int(1, rooms.length + ctx.depth);
+  let placed = 0;
+  for (let i = 0; i < nTraps; i++) {
+    const cell = ctx.rng.int(0, ctx.width * ctx.height);
+    if (ctx.tiles[cell] === Terrain.FLOOR) {
+      ctx.tiles[cell] = Terrain.TRAP_POISON;
+      ctx.out.traps.push({ x: ctx.x(cell), y: ctx.y(cell), trap: 3, hidden: false });
+      placed++;
+    }
+  }
+  return { attempts: nTraps, placed };
 }
 
 /**
@@ -1348,4 +1509,87 @@ export function decorateBoss(ctx: PainterCtx, exitRoom: Room, exitCell: number):
     }
   }
   // The sign in the entrance room is shared with SewerLevel.decorate.
+}
+
+/**
+ * Shared blood-stain / torch-wall / sign pass for PrisonLevel and
+ * PrisonBossLevel. `base` is the EMPTY_DECO base chance (0.05 prison,
+ * 0.15 boss); `torchTop`/`torchInner` are the Random.Int odds for torch
+ * WALL_DECO on the top row (6/4) and supported walls below (3/2).
+ */
+function decoratePrisonCore(
+  ctx: PainterCtx,
+  entranceRoom: Room,
+  entranceCell: number,
+  base: number,
+  torchTop: number,
+  torchInner: number,
+): void {
+  const W = ctx.width;
+  const H = ctx.height;
+  const rng = ctx.rng;
+  // Blood stains: EMPTY with +0.2 per wall-corner pairing.
+  for (let i = W + 1; i < W * H - W - 1; i++) {
+    if (ctx.tiles[i] === Terrain.FLOOR) {
+      let c = base;
+      if (ctx.tiles[i + 1] === Terrain.WALL && ctx.tiles[i + W] === Terrain.WALL) c += 0.2;
+      if (ctx.tiles[i - 1] === Terrain.WALL && ctx.tiles[i + W] === Terrain.WALL) c += 0.2;
+      if (ctx.tiles[i + 1] === Terrain.WALL && ctx.tiles[i - W] === Terrain.WALL) c += 0.2;
+      if (ctx.tiles[i - 1] === Terrain.WALL && ctx.tiles[i - W] === Terrain.WALL) c += 0.2;
+      if (rng.float(0, 1) < c) ctx.out.markers.emptyDeco.push(i);
+    }
+  }
+  // Torch walls: EMPTY_SP counts as open floor (vanilla EMPTY_SP).
+  const openBelow = (i: number): boolean => {
+    const t = ctx.tiles[i + W];
+    return t === Terrain.FLOOR || t === Terrain.WALKWAY;
+  };
+  for (let i = 0; i < W; i++) {
+    if (ctx.tiles[i] === Terrain.WALL && openBelow(i) && rng.int(0, torchTop) === 0) {
+      ctx.out.markers.wallDeco.push(i);
+    }
+  }
+  for (let i = W; i < W * H - W; i++) {
+    if (
+      ctx.tiles[i] === Terrain.WALL &&
+      ctx.tiles[i - W] === Terrain.WALL &&
+      openBelow(i) &&
+      rng.int(0, torchInner) === 0
+    ) {
+      ctx.out.markers.wallDeco.push(i);
+    }
+  }
+  placeSign(ctx, entranceRoom, entranceCell);
+}
+
+/**
+ * Vanilla `PrisonLevel.decorate` (PrisonLevel.java:103-130): blood-stain
+ * EMPTY_DECO (base 0.05), torch WALL_DECO (1-in-6 top row, 1-in-3 supported
+ * walls), and a sign in the entrance room.
+ */
+export function decoratePrison(ctx: PainterCtx, entranceRoom: Room, entranceCell: number): void {
+  decoratePrisonCore(ctx, entranceRoom, entranceCell, 0.05, 6, 3);
+}
+
+/**
+ * Vanilla `PrisonBossLevel.decorate` (PrisonBossLevel.java:213-273):
+ * blood-stain EMPTY_DECO (base 0.15), torch WALL_DECO (1-in-4 top row, 1-in-2
+ * supported walls), a sign in the entrance room, and the arena interior
+ * filled with INACTIVE_TRAP. (The arena-door LOCKED_DOOR is painted by
+ * paintPrisonBossDoors.)
+ */
+export function decoratePrisonBoss(
+  ctx: PainterCtx,
+  entranceRoom: Room,
+  entranceCell: number,
+  exitRoom: Room,
+): void {
+  decoratePrisonCore(ctx, entranceRoom, entranceCell, 0.15, 4, 2);
+  ctx.fillRect(
+    exitRoom.l + 2,
+    exitRoom.t + 2,
+    roomW(exitRoom) - 3,
+    roomH(exitRoom) - 3,
+    Terrain.TRAP_INACTIVE,
+  );
 }

@@ -42,6 +42,7 @@ import {
   satisfy,
 } from '../mechanics/hunger.js';
 import { pressTrapCell } from '../mechanics/traps.js';
+import { pressArenaCell } from '../dungeon/prisonBoss.js';
 import { getItem, parseItemId } from './items.js';
 import {
   addToInventory,
@@ -860,6 +861,23 @@ export function moveHero(
       const mob = buildMob(mobId, nextMobId(), pos, level.w);
       mob.state = 'wandering';
       ctx.addMob(mob, 2);
+    });
+    // PrisonBossLevel.press (PrisonBossLevel.java:303-328): the hero's first
+    // step inside the Tengu arena spawns Tengu (HUNTING) at a free arena cell
+    // and re-locks the arena door. No-op on levels without an arena.
+    pressArenaCell(ctx.level, ctx.rng, hero.pos, {
+      occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.pos === pos),
+      spawn: (pos) => {
+        // Bestiary.mob(depth) at depth 10 -> Tengu (Bestiary.java:107-110);
+        // boss.state = boss.HUNTING; GameScene.add( boss ) (PrisonBossLevel.java:316-319).
+        const tengu = buildMob('tengu', nextMobId(), pos, level.w);
+        tengu.state = 'hunting';
+        ctx.addMob(tengu);
+        // boss.notice() -> Tengu.notice() yell (Tengu.java:170-174).
+        tengu.notice(ctx);
+        // mobPress( boss ) (PrisonBossLevel.java:322): the arena interior is
+        // inactive-trap fill, so there is nothing to trigger.
+      },
     });
     // Vanilla Level.press continues after traps: HIGH_GRASS trample, then
     // WELL, ALCHEMY, then DOOR enter (Level.java:622-704). Wells and the

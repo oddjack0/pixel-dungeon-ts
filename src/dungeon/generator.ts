@@ -3,14 +3,19 @@ import { Grid } from '../core/grid.js';
 import type { RNG } from '../core/rng.js';
 import { computeFov } from '../core/fov.js';
 import { Level, type HeapKind, type ItemSpawn, type MobSpawn, type LevelGen } from './level.js';
+import { newRunState, type RunState } from './level.js';
 import {
   DoorType,
   RoomType,
   buildRooms,
   planConnections,
   planBossConnections,
+  planPrisonBossConnections,
   assignRoomTypes,
   resetSpecials,
+  entranceDoor,
+  roomW,
+  roomH,
   type Room,
 } from './rooms.js';
 import {
@@ -18,18 +23,24 @@ import {
   paintRooms,
   paintWaterGrass,
   paintDoorTiles,
+  paintPrisonBossDoors,
   placeTraps,
+  placePoisonTraps,
   decorateSewers,
   decorateBoss,
+  decoratePrison,
+  decoratePrisonBoss,
   placeSign,
   randomCell,
   type SpawnKind,
   type PainterMarkers,
 } from './painters.js';
+import { paintShopRoom } from './shopPainter.js';
 
 /**
  * Milestone 1 dungeon generator: Sewers depths 1-4 + the Goo boss level
- * (depth 5). Follows vanilla `Level.create()`:
+ * (depth 5), Prison depths 6-9 + the Tengu boss level (depth 10).
+ * Follows vanilla `Level.create()`:
  *
  *  1. quest items queued (`addItemToSpawn`) — skipped on boss levels
  *  2. feeling roll (depth > 1, never on boss levels)
@@ -41,21 +52,41 @@ import {
  * always produces the same level.
  */
 
-/** Per-run state (vanilla `Dungeon` statics that cross depths). */
-export interface RunState {
-  /** A WEAK_FLOOR was placed on the previous depth: this depth needs a PIT. */
-  weakFloor: boolean;
-  /** The sad ghost has spawned already (once per run). */
-  ghostSpawned: boolean;
-  /** The hero still needs a dew vial (once per run). */
-  dewVialNeeded: boolean;
-  /** Scrolls of Upgrade generated so far (vanilla `Dungeon.scrollsOfUpgrade`). */
-  scrollsOfUpgrade: number;
+/**
+ * Vanilla `Dungeon.bossLevel(depth)` (Dungeon.java:241-243): every 5th depth.
+ */
+export function isBossDepth(depth: number): boolean {
+  return depth % 5 === 0;
 }
 
-export function newRunState(): RunState {
-  return { weakFloor: false, ghostSpawned: false, dewVialNeeded: true, scrollsOfUpgrade: 0 };
+/**
+ * Vanilla `Dungeon.shopOnLevel()` (Dungeon.java:241-243): depths 6, 11, 16.
+ * (ShopPainter has an unreachable depth-21 case; the shop never generates
+ * there in vanilla.)
+ */
+export function shopOnLevel(depth: number): boolean {
+  return depth === 6 || depth === 11 || depth === 16;
 }
+
+/** Prison region depths (6-10), where PrisonLevel/PrisonBossLevel rules apply. */
+export function isPrisonDepth(depth: number): boolean {
+  return depth >= 6 && depth <= 10;
+}
+
+/**
+ * Vanilla `RegularLevel.build` shop selection: a room directly connected to
+ * the entrance, with exactly one connection, at least 5x5 (width()/height()).
+ * Null when none qualifies (vanilla `return false` → rebuild).
+ */
+function findShopRoom(entrance: Room): Room | null {
+  for (const r of entrance.carvedTo) {
+    if (r.carvedTo.length === 1 && roomW(r) >= 5 && roomH(r) >= 5) return r;
+  }
+  return null;
+}
+
+// RunState/newRunState live in level.ts (the engine threads one per run).
+export { newRunState, type RunState };
 
 export interface GenResult {
   level: Level;
@@ -142,7 +173,9 @@ function souNeeded(rng: RNG, depth: number, scrolls: number): boolean {
   return false;
 }
 
-export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult {  const boss = depth === 5;
+export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult {
+  const boss = isBossDepth(depth);
+  const tengu = depth === 10;
 
   // ---- 1. quest items (Level.create; skipped on boss levels) ----
   const queue: SpawnKind[] = [];
@@ -167,7 +200,8 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   if (!boss && depth > 1) {
     const r = rng.int(0, 10);
     if (r === 0) {
-      if (depth + 1 !== 5) feeling = Feeling.CHASM;
+      // Vanilla Level.java:179: no chasm feeling right before a boss depth.
+      if (!isBossDepth(depth + 1)) feeling = Feeling.CHASM;
     } else if (r === 1) {
       feeling = Feeling.WATER;
     } else if (r === 2) {
@@ -179,6 +213,8 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   let rooms: Room[] = [];
   let entranceRoom: Room | null = null;
   let exitRoom: Room | null = null;
+  /** Tengu level: the room before the arena (holds the iron-key chest). */
+  let anteroom: Room | null = null;
   let ctx: PainterCtx | null = null;
   let entranceCell = -1;
   let exitCell = -1;
@@ -198,26 +234,50 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
       depth,
       feelingName(feeling),
       boss,
-      !boss && depth + 1 === 5,
+      !boss && isBossDepth(depth + 1),
     );
     c.out.spawnQueue.push(...queue);
 
     if (boss) {
-      const plan = planBossConnections(rng, built);
-      if (!plan) continue;
-      entranceRoom = plan.entrance;
-      exitRoom = plan.exit;
-      const painted = paintRooms(c, built);
-      entranceCell = painted.entrance;
-      exitCell = painted.exit;
-      if (entranceCell < 0 || exitCell < 0) continue;
-      secretDoors = paintDoorTiles(c, built);
-      paintWaterGrass(c, built, 0.5, 0.4);
-      const traps = placeTraps(c, built);
-      trapAttempts = traps.attempts;
-      trapsPlaced = traps.placed;
-      decorateBoss(c, exitRoom, exitCell);
-      placeSign(c, entranceRoom, entranceCell);
+      if (tengu) {
+        // Vanilla `PrisonBossLevel.build` (PrisonBossLevel.java:89-165).
+        const plan = planPrisonBossConnections(rng, built);
+        if (!plan) continue;
+        entranceRoom = plan.entrance;
+        exitRoom = plan.exit;
+        anteroom = plan.anteroom;
+        const painted = paintRooms(c, built);
+        entranceCell = painted.entrance;
+        exitCell = painted.exit;
+        if (entranceCell < 0 || exitCell < 0) continue;
+        // Vanilla PrisonBossLevel.build:158-161 — the approach may not enter
+        // through the arena's top wall.
+        const arenaDoor = entranceDoor(exitRoom);
+        if (arenaDoor && arenaDoor.y === exitRoom.t) continue;
+        secretDoors = paintPrisonBossDoors(c, built, exitRoom, arenaDoor ?? null);
+        // Vanilla `PrisonBossLevel.water/grass` (PrisonBossLevel.java:167-173).
+        paintWaterGrass(c, built, 0.45, 0.3);
+        const traps = placePoisonTraps(c, built);
+        trapAttempts = traps.attempts;
+        trapsPlaced = traps.placed;
+        decoratePrisonBoss(c, entranceRoom, entranceCell, exitRoom);
+      } else {
+        const plan = planBossConnections(rng, built);
+        if (!plan) continue;
+        entranceRoom = plan.entrance;
+        exitRoom = plan.exit;
+        const painted = paintRooms(c, built);
+        entranceCell = painted.entrance;
+        exitCell = painted.exit;
+        if (entranceCell < 0 || exitCell < 0) continue;
+        secretDoors = paintDoorTiles(c, built);
+        paintWaterGrass(c, built, 0.5, 0.4);
+        const traps = placeTraps(c, built);
+        trapAttempts = traps.attempts;
+        trapsPlaced = traps.placed;
+        decorateBoss(c, exitRoom, exitCell);
+        placeSign(c, entranceRoom, entranceCell);
+      }
     } else {
       const plan = planConnections(rng, built, {
         exitMinSize: 4,
@@ -226,9 +286,17 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
         fillRandom: true,
       });
       if (!plan) continue;
+      // Vanilla `RegularLevel.build`: the shop room is picked before
+      // `assignRoomType` (RegularLevel.java); no qualifying room → rebuild.
+      if (shopOnLevel(depth)) {
+        const shop = findShopRoom(plan.entrance);
+        if (!shop) continue;
+        shop.type = RoomType.SHOP;
+      }
       const assign = assignRoomTypes(rng, built, depth, {
         prevWeakFloor: pitNeeded,
-        nextIsBoss: depth + 1 === 5,
+        nextIsBoss: isBossDepth(depth + 1),
+        tunnelsToPassages: isPrisonDepth(depth),
       });
       run.weakFloor = assign.weakFloor;
       entranceRoom = plan.entrance;
@@ -243,8 +311,21 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
       const traps = placeTraps(c, built);
       trapAttempts = traps.attempts;
       trapsPlaced = traps.placed;
-      paintWaterGrass(c, built);
-      decorateSewers(c, entranceRoom, entranceCell);
+      if (isPrisonDepth(depth)) {
+        // Vanilla `PrisonLevel.water/grass` (PrisonLevel.java:132-138).
+        paintWaterGrass(
+          c,
+          built,
+          feeling === Feeling.WATER ? 0.65 : 0.45,
+          feeling === Feeling.GRASS ? 0.6 : 0.4,
+          4,
+          3,
+        );
+        decoratePrison(c, entranceRoom, entranceCell);
+      } else {
+        paintWaterGrass(c, built);
+        decorateSewers(c, entranceRoom, entranceCell);
+      }
     }
 
     rooms = built;
@@ -296,7 +377,9 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
 
   if (boss) {
     // Vanilla `SewerBossLevel.createMobs`: exactly one Bestiary mob (Goo).
-    mobs.push({ pos: randomCell(ctx, exitRoom), kind: 'boss' });
+    // Tengu is NOT generated: he spawns when the hero enters the arena
+    // (PrisonBossLevel.press) — the boss worker's runtime hook.
+    if (!tengu) mobs.push({ pos: randomCell(ctx, exitRoom), kind: 'boss' });
   } else {
     const nMobs = 2 + (depth % 5) + rng.int(0, 3);
     for (let i = 0; i < nMobs; i++) {
@@ -308,7 +391,8 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
       mobs.push({ pos, kind: 'mob' });
     }
     // The sad ghost (SewerLevel.createMobs -> Ghost.Quest.spawn), once/run.
-    if (!run.ghostSpawned && depth > 1 && rng.int(0, 5 - depth) === 0) {
+    // Sewers only: the hook lives in SewerLevel, so depths 2-4.
+    if (!run.ghostSpawned && depth > 1 && depth < 5 && rng.int(0, 5 - depth) === 0) {
       let pos = -1;
       for (let t = 0; t < 50 && pos === -1; t++) pos = randomRespawnCell();
       if (pos !== -1) {
@@ -317,12 +401,50 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
         run.ghostSpawned = true;
       }
     }
+    // The old wandmaker (PrisonLevel.createMobs -> Wandmaker.Quest.spawn),
+    // once per run, only on depths 7-9 (Wandmaker.java:182-193): chance
+    // Random.Int(10-depth)==0, placed in the entrance room but never on the
+    // entrance tile or the sign.
+    if (!run.wandmakerSpawned && depth > 6 && depth < 10 && rng.int(0, 10 - depth) === 0) {
+      for (let t = 0; t < 50; t++) {
+        const pos = randomCell(ctx, entranceRoom);
+        if (tiles[pos] === Terrain.ENTRANCE) continue;
+        if (ctx.out.markers.signs.includes(pos)) continue;
+        if (occupied.has(pos)) continue;
+        occupied.add(pos);
+        mobs.push({ pos, kind: 'wandmaker' });
+        run.wandmakerSpawned = true;
+        break;
+      }
+    }
   }
 
   // ---- 5b. createItems ----
   const items: ItemSpawn[] = [...ctx.out.items];
 
-  if (!boss) {
+  if (boss) {
+    if (tengu && anteroom) {
+      // Vanilla `PrisonBossLevel.createItems` (PrisonBossLevel.java:253-262):
+      // the iron key for the arena door drops as a chest heap on a random
+      // passable anteroom cell. (Bones.get() is skipped: no cross-run bone
+      // state in M1 — see report.)
+      let keyPos = -1;
+      for (let t = 0; t < 1000 && keyPos < 0; t++) {
+        const p = randomCell(ctx, anteroom);
+        if (PASSABLE_SPAWN.has(tiles[p]!)) keyPos = p;
+      }
+      if (keyPos < 0) {
+        // Guaranteed fallback: the anteroom interior is floor, so this only
+        // fires if every interior cell grew a trap.
+        for (let y = anteroom.t + 1; y < anteroom.b && keyPos < 0; y++) {
+          for (let x = anteroom.l + 1; x < anteroom.r && keyPos < 0; x++) {
+            if (tiles[y * W + x] === Terrain.FLOOR) keyPos = y * W + x;
+          }
+        }
+      }
+      if (keyPos >= 0) items.push({ pos: keyPos, heap: 'CHEST', tag: 'iron-key' });
+    }
+  } else {
     // unlockedOnly: guaranteed quest items (food, potion of strength,
     // scrolls of upgrade, dew vial) must always be obtainable — vanilla
     // never strands them behind a locked door whose key is unreachable.
@@ -372,7 +494,8 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     }
 
     // SewerLevel.createItems: the dew vial joins the spawn queue (once/run).
-    if (run.dewVialNeeded && rng.int(0, 4 - depth) === 0) {
+    // Sewers only (depths 1-4): the hook lives in SewerLevel.createItems.
+    if (run.dewVialNeeded && depth < 5 && rng.int(0, 4 - depth) === 0) {
       ctx.out.spawnQueue.push(questItem('dew-vial'));
       run.dewVialNeeded = false;
     }
@@ -406,6 +529,13 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   level.stairsDown = exitCell;
   level.doors = ctx.out.doors.flatMap((d) => (isDoorTile(d.tile) ? [ctx.idx(d.x, d.y)] : []));
   level.traps = ctx.out.traps.map((t) => ctx.idx(t.x, t.y));
+  if (tengu && exitRoom) {
+    // Runtime seam for the boss worker's Tengu arena-entry hook
+    // (PrisonBossLevel.press/seal/unseal).
+    level.bossArena = { l: exitRoom.l, t: exitRoom.t, r: exitRoom.r, b: exitRoom.b };
+    const arenaDoor = entranceDoor(exitRoom);
+    level.arenaDoorCell = arenaDoor ? ctx.idx(arenaDoor.x, arenaDoor.y) : -1;
+  }
 
   return { level, rooms, markers: ctx.out.markers, items, mobs, trapAttempts, trapsPlaced };
 }
@@ -426,11 +556,12 @@ export function generateRun(rng: RNG): GenResult[] {
 
 /**
  * SEAM adapter: standalone per-depth generation for the engine's LevelGen
- * contract. Note: cross-depth run state (weak-floor chaining, ghost, dew
- * vial) only stays consistent when depths are generated via `generateRun`.
+ * contract. The engine threads its per-run RunState so once-per-run quests
+ * stay consistent across depths (a fresh state is used only when the caller
+ * passes none, e.g. unit tests).
  */
 export const sewersLevelGen: LevelGen = {
-  generate(rng: RNG, depth: number): Level {
-    return generateLevel(rng, depth, newRunState()).level;
+  generate(rng: RNG, depth: number, run?: RunState): Level {
+    return generateLevel(rng, depth, run ?? newRunState()).level;
   },
 };

@@ -694,6 +694,16 @@ export class ContentMob extends Actor implements MobActor {
     // base mobs: sprite alert only (no text in vanilla)
   }
 
+  /**
+   * Vanilla `Mob.notice()` (Mob.java): public entry that fires the notice
+   * hook. Used when a boss is spawned directly into HUNTING (Tengu via
+   * PrisonBossLevel.press, PrisonBossLevel.java:318-321), bypassing the
+   * normal sleep→hunt transition that would fire onNotice.
+   */
+  notice(ctx: ActionContext): void {
+    this.onNotice(ctx);
+  }
+
   /** Hook after any successful move (Goo seals the arena). */
   protected afterMove(ctx: ActionContext, oldPos: number): void {
     // Doors for mobs (Char.move, Char.java:484-492; Mob.move -> mobPress,

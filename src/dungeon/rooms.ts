@@ -440,6 +440,88 @@ export function planBossConnections(rng: RNG, rooms: Room[]): BossPlan | null {
   return { entrance, exit, approach };
 }
 
+export interface PrisonBossPlan {
+  entrance: Room;
+  exit: Room;
+  /** The room before the arena on the approach path (holds the iron-key chest). */
+  anteroom: Room;
+}
+
+/**
+ * Vanilla `PrisonBossLevel.build` connection logic
+ * (PrisonBossLevel.java:89-156): random entrance (>= 4x4) and arena
+ * (>= 7x7, never on the top map edge), up to 11 inner attempts each; the
+ * entrance→arena graph distance must be >= 3 rooms (up to 11 outer attempts).
+ * Only the second (priced) path is carved; the anteroom is the second-to-last
+ * room on that path; connected NULL rooms become PASSAGE. The top-wall door
+ * check (PrisonBossLevel.java:158-161) happens after painting in the
+ * generator, where door positions exist.
+ */
+export function planPrisonBossConnections(rng: RNG, rooms: Room[]): PrisonBossPlan | null {
+  let entrance: Room | null = null;
+  let exit: Room | null = null;
+  for (let attempt = 0; attempt < 11; attempt++) {
+    let innerRetry = 0;
+    let e: Room | null = null;
+    while (innerRetry++ <= 10) {
+      const cand = rng.pick(rooms);
+      if (roomW(cand) >= 4 && roomH(cand) >= 4) {
+        e = cand;
+        break;
+      }
+    }
+    if (!e) return null;
+    innerRetry = 0;
+    let x: Room | null = null;
+    while (innerRetry++ <= 10) {
+      const cand = rng.pick(rooms);
+      if (cand !== e && roomW(cand) >= 7 && roomH(cand) >= 7 && cand.t !== 0) {
+        x = cand;
+        break;
+      }
+    }
+    if (!x) return null;
+    // Vanilla `Graph.buildPath(...).size() >= 3` (path includes both ends);
+    // this port's buildPath excludes `from`, so >= 2 edges.
+    const probe = buildPath(e, x, buildDistanceMap(rooms, x));
+    if (probe && probe.length >= 2) {
+      entrance = e;
+      exit = x;
+      break;
+    }
+  }
+  if (!entrance || !exit) return null;
+
+  entrance.type = RoomType.ENTRANCE;
+  exit.type = RoomType.BOSS_EXIT;
+
+  // First path: priced but NOT connected (vanilla prices then re-paths).
+  let dist = buildDistanceMap(rooms, exit);
+  let path = buildPath(entrance, exit, dist);
+  if (!path) return null;
+  setPrice(path, dist.get(entrance)!);
+
+  dist = buildDistanceMap(rooms, exit);
+  path = buildPath(entrance, exit, dist);
+  if (!path) return null;
+
+  // Vanilla `path.get(path.size() - 2)` (vanilla path includes `from`).
+  const anteroom = path[path.length - 2]!;
+  anteroom.type = RoomType.STANDARD;
+
+  let room = entrance;
+  for (const next of path) {
+    connectRooms(room, next);
+    room = next;
+  }
+
+  for (const r of rooms) {
+    if (r.type === RoomType.NULL && r.carvedTo.length > 0) r.type = RoomType.PASSAGE;
+  }
+
+  return { entrance, exit, anteroom };
+}
+
 /** Random special pool order, per `Room.SPECIALS`. */
 const SPECIALS_POOL = [
   RoomType.ARMORY,
@@ -496,6 +578,12 @@ export function currentSpecials(): RoomType[] {
 export interface AssignOptions {
   prevWeakFloor: boolean;
   nextIsBoss: boolean;
+  /**
+   * Vanilla `PrisonLevel.assignRoomType` (PrisonLevel.java:58-66): after the
+   * regular assignment, every TUNNEL becomes a PASSAGE (painted by
+   * PassagePainter). Set for prison depths 6-9.
+   */
+  tunnelsToPassages?: boolean;
 }
 
 export interface AssignResult {
@@ -601,6 +689,13 @@ export function assignRoomTypes(
     if (r.type === RoomType.TUNNEL) {
       r.type = RoomType.STANDARD;
       count++;
+    }
+  }
+
+  // Vanilla `PrisonLevel.assignRoomType` (PrisonLevel.java:61-65).
+  if (opts.tunnelsToPassages) {
+    for (const r of rooms) {
+      if (r.type === RoomType.TUNNEL) r.type = RoomType.PASSAGE;
     }
   }
 
