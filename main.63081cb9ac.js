@@ -242,6 +242,7 @@ class Level extends Grid {
   stairsDown = -1;
   doors = [];
   traps = [];
+  blobs = [];
   items = [];
   mobs = [];
   feeling = "none" /* NONE */;
@@ -273,6 +274,7 @@ class Level extends Grid {
     switch (t) {
       case 1 /* FLOOR */:
       case 2 /* DOOR */:
+      case 40 /* OPEN_DOOR */:
       case 6 /* ENTRANCE */:
       case 7 /* EXIT */:
       case 9 /* WATER */:
@@ -292,6 +294,10 @@ class Level extends Grid {
       return null;
     this.set(x, y, revealTrapTile(t));
     return trapName(t);
+  }
+  isAvoid(x, y) {
+    const t = this.get(x, y);
+    return t === 8 /* CHASM */ || t === 12 /* WELL */ || t >= 20 /* TRAP_TOXIC */ && t <= 34 /* TRAP_SUMMONING */ && t % 2 === 0 && !isHiddenTrap(t);
   }
   revealSecretDoor(x, y) {
     if (this.get(x, y) !== 4 /* DOOR_SECRET */)
@@ -2784,6 +2790,42 @@ var SPRITES = {
     "................",
     "................"
   ],
+  dewdrop: [
+    "................",
+    "................",
+    "................",
+    "................",
+    "......11........",
+    ".....1rr1.......",
+    ".....rHHr.......",
+    ".....rHrr.......",
+    "......rrr.......",
+    ".......r........",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................"
+  ],
+  seed: [
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "......bb........",
+    ".....bYYb.......",
+    ".....bYYb.......",
+    "......bb........",
+    ".......b........",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................"
+  ],
   key_iron: [
     "................",
     "...XXj..........",
@@ -2799,6 +2841,24 @@ var SPRITES = {
     ".........kXiXXXj",
     "..........kXXXj.",
     "...........kXik.",
+    "............kj..",
+    "................"
+  ],
+  key_gold: [
+    "................",
+    "...YYj..........",
+    ".qiyyYj.........",
+    ".qY..YY.........",
+    "YY...YY.........",
+    "jY..YYk.........",
+    ".YYYYYYk........",
+    ".kjjkkYY........",
+    "......kYY.......",
+    ".......kYY...Y..",
+    "........kYY.jY..",
+    ".........kYiYYYj",
+    "..........kYYYj.",
+    "...........kYik.",
     "............kj..",
     "................"
   ],
@@ -2947,6 +3007,30 @@ var SKELETON_KEY = {
   stackable: true,
   desc: "A key carved from bone. It must open the way down."
 };
+var GOLDEN_KEY = {
+  id: "golden_key",
+  name: "golden key",
+  sprite: "key_gold",
+  type: "key",
+  stackable: true,
+  desc: "The notches on this golden key are tiny and intricate. Maybe it can open some chest lock?"
+};
+var DEWDROP = {
+  id: "dewdrop",
+  name: "dewdrop",
+  sprite: "dewdrop",
+  type: "dewdrop",
+  stackable: true,
+  desc: "A crystal clear dewdrop."
+};
+var SEED = {
+  id: "seed",
+  name: "seed",
+  sprite: "seed",
+  type: "seed",
+  stackable: true,
+  desc: "A strange seed. Perhaps it can be planted."
+};
 var ITEMS = {
   shortsword: SHORT_SWORD,
   dart: DART,
@@ -2958,7 +3042,10 @@ var ITEMS = {
   scroll_upgrade: SCROLL_UPGRADE,
   gold: GOLD,
   iron_key: IRON_KEY,
-  skeleton_key: SKELETON_KEY
+  skeleton_key: SKELETON_KEY,
+  golden_key: GOLDEN_KEY,
+  dewdrop: DEWDROP,
+  seed: SEED
 };
 function getItem(id) {
   const { defId } = parseItemId(id);
@@ -2978,6 +3065,188 @@ function parseItemId(id) {
   };
 }
 
+// src/content/itemgen.ts
+var GEN_CATEGORY_WEIGHTS = [
+  { cat: "weapon", weight: 15 },
+  { cat: "armor", weight: 10 },
+  { cat: "potion", weight: 50 },
+  { cat: "scroll", weight: 40 },
+  { cat: "wand", weight: 4 },
+  { cat: "ring", weight: 2 },
+  { cat: "seed", weight: 5 },
+  { cat: "food", weight: 0 },
+  { cat: "gold", weight: 50 },
+  { cat: "misc", weight: 5 }
+];
+var dart = (min, max) => (rng) => `dart:${rng.int(min, max)}`;
+var shortsword = () => "shortsword";
+var GEN_CLASSES = {
+  weapon: [
+    { cls: "Dagger", prob: 1, m1: shortsword },
+    { cls: "Knuckles", prob: 1, m1: shortsword },
+    { cls: "Quarterstaff", prob: 1, m1: shortsword },
+    { cls: "Spear", prob: 1, m1: shortsword },
+    { cls: "Mace", prob: 1, m1: shortsword },
+    { cls: "Sword", prob: 1, m1: shortsword },
+    { cls: "Longsword", prob: 1, m1: shortsword },
+    { cls: "BattleAxe", prob: 1, m1: shortsword },
+    { cls: "WarHammer", prob: 1, m1: shortsword },
+    { cls: "Glaive", prob: 1, m1: shortsword },
+    { cls: "ShortSword", prob: 0, m1: shortsword },
+    { cls: "Dart", prob: 0, m1: dart(5, 15) },
+    { cls: "Javelin", prob: 1, m1: dart(5, 15) },
+    { cls: "IncendiaryDart", prob: 1, m1: dart(3, 6) },
+    { cls: "CurareDart", prob: 1, m1: dart(2, 5) },
+    { cls: "Shuriken", prob: 1, m1: dart(5, 15) },
+    { cls: "Boomerang", prob: 0, m1: dart(5, 15) },
+    { cls: "Tamahawk", prob: 1, m1: dart(5, 12) }
+  ],
+  armor: [
+    { cls: "ClothArmor", prob: 1, m1: () => "cloth_armor" },
+    { cls: "LeatherArmor", prob: 1, m1: () => "cloth_armor" },
+    { cls: "MailArmor", prob: 1, m1: () => "cloth_armor" },
+    { cls: "ScaleArmor", prob: 1, m1: () => "cloth_armor" },
+    { cls: "PlateArmor", prob: 1, m1: () => "cloth_armor" }
+  ],
+  potion: [
+    { cls: "PotionOfHealing", prob: 45, m1: () => "potion_healing" },
+    { cls: "PotionOfExperience", prob: 4, m1: () => "potion_healing" },
+    { cls: "PotionOfToxicGas", prob: 15, m1: () => "potion_healing" },
+    { cls: "PotionOfParalyticGas", prob: 10, m1: () => "potion_healing" },
+    { cls: "PotionOfLiquidFlame", prob: 15, m1: () => "potion_healing" },
+    { cls: "PotionOfLevitation", prob: 10, m1: () => "potion_healing" },
+    { cls: "PotionOfStrength", prob: 0, m1: () => "potion_strength" },
+    { cls: "PotionOfMindVision", prob: 20, m1: () => "potion_healing" },
+    { cls: "PotionOfPurity", prob: 12, m1: () => "potion_healing" },
+    { cls: "PotionOfInvisibility", prob: 10, m1: () => "potion_healing" },
+    { cls: "PotionOfMight", prob: 0, m1: () => "potion_healing" },
+    { cls: "PotionOfFrost", prob: 10, m1: () => "potion_healing" }
+  ],
+  scroll: [
+    { cls: "ScrollOfIdentify", prob: 30, m1: () => "scroll" },
+    { cls: "ScrollOfTeleportation", prob: 10, m1: () => "scroll" },
+    { cls: "ScrollOfRemoveCurse", prob: 15, m1: () => "scroll" },
+    { cls: "ScrollOfRecharging", prob: 10, m1: () => "scroll" },
+    { cls: "ScrollOfMagicMapping", prob: 15, m1: () => "scroll" },
+    { cls: "ScrollOfChallenge", prob: 12, m1: () => "scroll" },
+    { cls: "ScrollOfTerror", prob: 8, m1: () => "scroll" },
+    { cls: "ScrollOfLullaby", prob: 8, m1: () => "scroll" },
+    { cls: "ScrollOfPsionicBlast", prob: 4, m1: () => "scroll" },
+    { cls: "ScrollOfMirrorImage", prob: 6, m1: () => "scroll" },
+    { cls: "ScrollOfUpgrade", prob: 0, m1: () => "scroll_upgrade" },
+    { cls: "ScrollOfEnchantment", prob: 1, m1: () => "scroll" }
+  ],
+  wand: [
+    { cls: "WandOfTeleportation", prob: 10, m1: () => "scroll" },
+    { cls: "WandOfSlowness", prob: 10, m1: () => "scroll" },
+    { cls: "WandOfFirebolt", prob: 15, m1: () => "scroll" },
+    { cls: "WandOfRegrowth", prob: 6, m1: () => "scroll" },
+    { cls: "WandOfPoison", prob: 10, m1: () => "scroll" },
+    { cls: "WandOfBlink", prob: 11, m1: () => "scroll" },
+    { cls: "WandOfLightning", prob: 15, m1: () => "scroll" },
+    { cls: "WandOfAmok", prob: 10, m1: () => "scroll" },
+    { cls: "WandOfReach", prob: 6, m1: () => "scroll" },
+    { cls: "WandOfFlock", prob: 10, m1: () => "scroll" },
+    { cls: "WandOfMagicMissile", prob: 0, m1: () => "scroll" },
+    { cls: "WandOfDisintegration", prob: 5, m1: () => "scroll" },
+    { cls: "WandOfAvalanche", prob: 5, m1: () => "scroll" }
+  ],
+  ring: [
+    { cls: "RingOfMending", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfDetection", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfShadows", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfPower", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfHerbalism", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfAccuracy", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfEvasion", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfSatiety", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfHaste", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfElements", prob: 1, m1: () => "scroll" },
+    { cls: "RingOfHaggler", prob: 0, m1: () => "scroll" },
+    { cls: "RingOfThorns", prob: 0, m1: () => "scroll" }
+  ],
+  seed: [
+    { cls: "Firebloom.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Icecap.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Sorrowmoss.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Dreamweed.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Sungrass.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Earthroot.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Fadeleaf.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Rotberry.Seed", prob: 0, m1: () => "ration" }
+  ],
+  food: [
+    { cls: "Food", prob: 4, m1: () => "ration" },
+    { cls: "Pasty", prob: 1, m1: () => "ration" },
+    { cls: "MysteryMeat", prob: 0, m1: () => "ration" }
+  ],
+  gold: [
+    {
+      cls: "Gold",
+      prob: 1,
+      m1: (rng, depth) => `gold:${rng.int(20 + depth * 10, 40 + depth * 20)}`
+    }
+  ],
+  misc: [
+    { cls: "Bomb", prob: 2, m1: dart(5, 15) },
+    { cls: "Honeypot", prob: 1, m1: () => "potion_healing" }
+  ]
+};
+function chances(rng, entries, weight) {
+  let total = 0;
+  for (const e of entries)
+    total += weight(e);
+  const roll = rng.float(0, total);
+  let acc = 0;
+  for (const e of entries) {
+    acc += weight(e);
+    if (roll < acc)
+      return e;
+  }
+  return entries[entries.length - 1];
+}
+
+class GeneratorBag {
+  weights = new Map;
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    for (const { cat, weight } of GEN_CATEGORY_WEIGHTS) {
+      this.weights.set(cat, weight);
+    }
+  }
+  weightOf(cat) {
+    return this.weights.get(cat);
+  }
+  random(rng, depth) {
+    const cat = chances(rng, GEN_CATEGORY_WEIGHTS, (e) => this.weights.get(e.cat)).cat;
+    return this.randomFrom(rng, cat, depth);
+  }
+  randomFrom(rng, cat, depth) {
+    this.weights.set(cat, this.weights.get(cat) / 2);
+    const cls = chances(rng, GEN_CLASSES[cat], (e) => e.prob);
+    return cls.m1(rng, depth);
+  }
+}
+function skeletonWeaponDrop(rng, depth, bag) {
+  let best = "";
+  let bestLvl = Number.POSITIVE_INFINITY;
+  for (let i = 0;i < 3; i++) {
+    const id = bag.randomFrom(rng, "weapon", depth);
+    const lvl = 0;
+    if (lvl < bestLvl) {
+      best = id;
+      bestLvl = lvl;
+    }
+  }
+  return best;
+}
+var itemGenerator = new GeneratorBag;
+function resetItemGenerator() {
+  itemGenerator.reset();
+}
+
 // src/core/turn.ts
 var TICK = 1;
 
@@ -2985,6 +3254,9 @@ class Actor {
   static TICK = TICK;
   time = 0;
   getSpeed() {
+    return 1;
+  }
+  getTimeScale() {
     return 1;
   }
 }
@@ -3038,7 +3310,8 @@ class Scheduler {
     return m;
   }
   spend(taker, cost) {
-    taker.time = this.now + cost / Math.max(0.01, taker.getSpeed());
+    const timeScale = taker.getTimeScale?.() ?? 1;
+    taker.time = this.now + cost / Math.max(0.01, taker.getSpeed()) / timeScale;
     this.add(taker);
   }
   less(a, b) {
@@ -3168,6 +3441,10 @@ function skeletonDeathBurst(rng, damageRoll, victimDr) {
 }
 
 // src/mechanics/buffs.ts
+var BURNING_DURATION = 8;
+var POISON_TRAP_BASE = 4;
+var PARALYSIS_DURATION = 10;
+var CRIPPLE_DURATION = 10;
 var OOZE_DAMAGE = 1;
 function burningTick(rng, hp, ht, left, inWater, flying) {
   const damage = rng.int(1, 5);
@@ -3181,8 +3458,63 @@ function poisonTick(left) {
   const nextLeft = left - 1;
   return { damage, left: nextLeft, detached: nextLeft <= 0 };
 }
+function poisonTrapDuration(depth) {
+  return POISON_TRAP_BASE + Math.floor(depth / 2);
+}
+function bleedingTick(rng, level) {
+  const next = rng.int(Math.floor(level / 2), level);
+  return { level: next, detached: next <= 0 };
+}
 function oozeTick(inWater) {
   return { damage: OOZE_DAMAGE, detached: inWater };
+}
+var MSG_BURNS_UP = "%s burns up!";
+var MSG_BURNED_TO_DEATH = "You burned to death...";
+var MSG_DIED_FROM_POISON = "You died from poison...";
+var MSG_OOZE_KILLED = "Caustic ooze killed you...";
+var MSG_BLED_TO_DEATH = "You bled to death...";
+var MSG_STARVED_TO_DEATH = "You starved to death...";
+var MSG_HUNGRY = "You are hungry.";
+var MSG_STARVING = "You are starving!";
+var DEATH_MESSAGE_RE = /you burned to death\.\.\.|you died from poison\.\.\.|caustic ooze killed you\.\.\.|you bled to death\.\.\.|you starved to death\.\.\.|you died from a toxic gas\.\.|you fell to death\.\.\./i;
+function buffDeathMessage(kind) {
+  switch (kind) {
+    case "burning":
+      return MSG_BURNED_TO_DEATH;
+    case "poison":
+      return MSG_DIED_FROM_POISON;
+    case "ooze":
+      return MSG_OOZE_KILLED;
+    case "bleeding":
+      return MSG_BLED_TO_DEATH;
+    case "hunger":
+      return MSG_STARVED_TO_DEATH;
+    default:
+      return null;
+  }
+}
+function burnsUpMessage(itemName) {
+  return MSG_BURNS_UP.replace("%s", itemName);
+}
+function burningInventoryTick(rng, stacks, isScroll, isMysteryMeat) {
+  let total = 0;
+  for (const s of stacks)
+    total += Math.max(0, s.qty);
+  if (total <= 0)
+    return null;
+  let pick = rng.int(0, total);
+  for (let i = 0;i < stacks.length; i++) {
+    pick -= Math.max(0, stacks[i].qty);
+    if (pick < 0) {
+      const itemId = stacks[i].itemId;
+      if (isScroll(itemId))
+        return { stackIndex: i, cookedId: null };
+      if (isMysteryMeat(itemId))
+        return { stackIndex: i, cookedId: "chargrilled_meat" };
+      return null;
+    }
+  }
+  return null;
 }
 
 // src/mechanics/goo.ts
@@ -3213,7 +3545,7 @@ function gooCanAttack(pumpedUp, dist) {
 function gooDecide(rng, state, ctx) {
   if (state.pumpedUp) {
     if (ctx.dist <= 1) {
-      return { kind: "attack" };
+      return { kind: "pumpedAttack" };
     }
     if (ctx.jumpPathClear && ctx.dist <= 2) {
       return { kind: "jumpAttack" };
@@ -3225,13 +3557,15 @@ function gooDecide(rng, state, ctx) {
 function gooAfterAttack(state, action) {
   switch (action.kind) {
     case "attack":
+      return { ...state, pumpedUp: false };
+    case "pumpedAttack":
       return { ...state, pumpedUp: false, jumped: false };
     case "pump":
-      return { ...state, pumpedUp: true, jumped: false };
+      return { ...state, pumpedUp: true };
     case "jumpAttack":
       return { ...state, pumpedUp: false, jumped: true };
     case "pumpFizzle":
-      return { ...state, pumpedUp: false, jumped: false };
+      return { ...state, pumpedUp: false };
   }
 }
 function gooAfterMove(state) {
@@ -3244,43 +3578,28 @@ function gooWaterRegen(hp, inWater) {
   return inWater && hp < GOO_HT ? hp + 1 : hp;
 }
 
-// src/mechanics/exp.ts
-function maxExp(lvl) {
-  return 5 + lvl * 5;
-}
-function earnExp(state, amount) {
-  state.exp += amount;
-  let gained = 0;
-  while (state.exp >= maxExp(state.lvl)) {
-    state.exp -= maxExp(state.lvl);
-    state.lvl++;
-    state.ht += 5;
-    state.hp += 5;
-    state.attackSkill++;
-    state.defenseSkill++;
-    gained++;
-  }
-  return gained;
-}
-var MOB_EXP = {
-  rat: { exp: 1, maxLvl: 5 },
-  gnoll: { exp: 2, maxLvl: 8 },
-  crab: { exp: 3, maxLvl: 9 },
-  swarm: { exp: 1, maxLvl: 10 },
-  skeleton: { exp: 5, maxLvl: 10 },
-  thief: { exp: 5, maxLvl: 10 },
-  goo: { exp: GOO_EXP, maxLvl: GOO_MAX_LVL }
-};
-function expForKill(mobId, heroLvl) {
-  const m = MOB_EXP[mobId];
-  if (!m)
-    return 0;
-  return heroLvl <= m.maxLvl ? m.exp : 0;
-}
-
 // src/mechanics/char.ts
 function strEff(hero) {
   return hero.weakened ? hero.str - 2 : hero.str;
+}
+function hasBuff(ch, kind) {
+  return ch.buffs[kind] !== undefined;
+}
+function charTimeScale(ch) {
+  let timeScale = 1;
+  if (hasBuff(ch, "slow")) {
+    timeScale *= 0.5;
+  }
+  if (hasBuff(ch, "speed")) {
+    timeScale *= 2;
+  }
+  return timeScale;
+}
+function crippleFactor(ch) {
+  return hasBuff(ch, "cripple") ? 0.5 : 1;
+}
+function charSpeed(ch) {
+  return crippleFactor(ch);
 }
 
 // src/mechanics/hero.ts
@@ -3351,6 +3670,185 @@ function upgradeArmor(armor) {
 }
 function gearDisplayName(def) {
   return def.level > 0 ? `${def.name} +${def.level}` : def.name;
+}
+function updateAwareness(lvl, rogue) {
+  return 1 - Math.pow(rogue ? 0.85 : 0.9, (1 + Math.min(lvl, 9)) * 0.5);
+}
+function heroSpeed(hero) {
+  const base = charSpeed(hero);
+  const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
+  return aEnc > 0 ? base * Math.pow(1.3, -aEnc) : base;
+}
+function intentionalSearchLevel(awareness) {
+  return 2 * awareness - awareness * awareness;
+}
+function passiveSearchLevel(awareness) {
+  return awareness;
+}
+function searchTimeCost(rng, found, level) {
+  if (!found) {
+    return 2;
+  }
+  return rng.float(0, 1) < level ? 2 : 4;
+}
+function vertigoRedirect(rng, pos, width, blocked) {
+  const dx = [1, -1, 0, 0, 1, 1, -1, -1];
+  const dy = [0, 0, 1, -1, 1, -1, 1, -1];
+  const i = rng.int(0, 8);
+  const step = pos + dx[i] + dy[i] * width;
+  if (step < 0 || blocked(step)) {
+    return null;
+  }
+  return step;
+}
+
+// src/mechanics/exp.ts
+function maxExp(lvl) {
+  return 5 + lvl * 5;
+}
+function earnExp(state, amount) {
+  state.exp += amount;
+  let gained = 0;
+  while (state.exp >= maxExp(state.lvl)) {
+    state.exp -= maxExp(state.lvl);
+    state.lvl++;
+    state.ht += 5;
+    state.hp += 5;
+    state.attackSkill++;
+    state.defenseSkill++;
+    if (state.lvl < 10) {
+      state.awareness = updateAwareness(state.lvl, false);
+    }
+    gained++;
+  }
+  return gained;
+}
+var MOB_EXP = {
+  rat: { exp: 1, maxLvl: 5 },
+  gnoll: { exp: 2, maxLvl: 8 },
+  crab: { exp: 3, maxLvl: 9 },
+  swarm: { exp: 1, maxLvl: 10 },
+  skeleton: { exp: 5, maxLvl: 10 },
+  thief: { exp: 5, maxLvl: 10 },
+  goo: { exp: GOO_EXP, maxLvl: GOO_MAX_LVL }
+};
+function expForKill(mobId, heroLvl) {
+  const m = MOB_EXP[mobId];
+  if (!m)
+    return 0;
+  return heroLvl <= m.maxLvl ? m.exp : 0;
+}
+
+// src/content/hero.ts
+class ContentHero extends Actor {
+  kind = "hero";
+  id = 0;
+  pos;
+  w;
+  hp = 20;
+  ht = 20;
+  sprite = "hero_warrior";
+  name = "you";
+  sight = 8;
+  paralysed = false;
+  rooted = false;
+  flying = false;
+  buffs = {};
+  immunities = [];
+  resistances = [];
+  str = 11;
+  weakened = false;
+  lvl = 1;
+  exp = 0;
+  attackSkill = 10;
+  defenseSkill = 5;
+  awareness = 0.1;
+  weapon = null;
+  weaponId = null;
+  armor = null;
+  armorId = null;
+  rangedWeapon = null;
+  darts = 0;
+  inventory = [];
+  gold = 0;
+  hungerLevel = 0;
+  hungerClock = 0;
+  constructor(pos, w) {
+    super();
+    this.pos = pos;
+    this.w = w;
+  }
+  get x() {
+    return this.pos % this.w;
+  }
+  set x(v) {
+    this.pos = this.y * this.w + v;
+  }
+  get y() {
+    return Math.floor(this.pos / this.w);
+  }
+  set y(v) {
+    this.pos = v * this.w + this.x;
+  }
+  getSpeed() {
+    return heroSpeed(this);
+  }
+  getTimeScale() {
+    return charTimeScale(this);
+  }
+  isAlive() {
+    return this.hp > 0;
+  }
+  act() {
+    throw new Error("ContentHero.act: route through MechanicsHooks.handleHeroIntent");
+  }
+}
+function createStarterHero(pos, w) {
+  const hero = new ContentHero(pos, w);
+  const sword = getItem("shortsword");
+  const armor = getItem("cloth_armor");
+  hero.weapon = sword.weapon ? { ...sword.weapon } : null;
+  hero.weaponId = "shortsword";
+  hero.armor = armor.armor ? { ...armor.armor } : null;
+  hero.armorId = "cloth_armor";
+  hero.inventory.push({ itemId: "ration", qty: 1 });
+  hero.inventory.push({ itemId: "dart", qty: 8 });
+  syncDarts(hero);
+  return hero;
+}
+function syncDarts(hero) {
+  hero.darts = hero.inventory.find((s) => s.itemId === "dart")?.qty ?? 0;
+}
+function addToInventory(hero, itemId, qty) {
+  const def = getItem(itemId);
+  if (qty <= 0)
+    return;
+  if (def.stackable) {
+    const existing = hero.inventory.find((s) => s.itemId === itemId);
+    if (existing) {
+      existing.qty += qty;
+    } else {
+      hero.inventory.push({ itemId, qty });
+    }
+  } else {
+    for (let i = 0;i < qty; i++) {
+      hero.inventory.push({ itemId, qty: 1 });
+    }
+  }
+  syncDarts(hero);
+}
+function removeFromInventory(hero, slot, qty = 1) {
+  const stack = hero.inventory[slot];
+  if (!stack || qty <= 0)
+    return null;
+  const take = Math.min(qty, stack.qty);
+  const removed = { itemId: stack.itemId, qty: take };
+  stack.qty -= take;
+  if (stack.qty <= 0) {
+    hero.inventory.splice(slot, 1);
+  }
+  syncDarts(hero);
+  return removed;
 }
 
 // src/content/mobs.ts
@@ -3492,13 +3990,36 @@ function buffTarget(ch) {
     resistances: ch.resistances
   };
 }
-function tickBuffs(rng, level, ch, _log) {
+function tickBuffs(rng, level, ch, log) {
   const inWater = level.getAt(ch.pos) === 9 /* WATER */;
   const b = ch.buffs;
+  const hero = ch.kind === "hero" ? ch : null;
+  const logBuffDeath = (kind) => {
+    if (hero && !hero.isAlive()) {
+      const msg = buffDeathMessage(kind);
+      if (msg)
+        log(msg);
+    }
+  };
   if (b.burning && ch.isAlive()) {
     const t = burningTick(rng, ch.hp, ch.ht, b.burning.left, inWater, ch.flying);
     const applied = applyDamage(rng, buffTarget(ch), t.damage, "burning");
     ch.hp = applied.hp;
+    if (hero) {
+      const burn = burningInventoryTick(rng, hero.inventory, (id) => getItem(id).type === "scroll", (id) => id === "mystery_meat");
+      if (burn) {
+        const stack = hero.inventory[burn.stackIndex];
+        if (stack) {
+          const name = getItem(stack.itemId).name;
+          removeFromInventory(hero, burn.stackIndex, 1);
+          if (burn.cookedId !== null && burn.cookedId in ITEMS) {
+            addToInventory(hero, burn.cookedId, 1);
+          }
+          log(burnsUpMessage(name));
+        }
+      }
+    }
+    logBuffDeath("burning");
     if (t.detached)
       delete b.burning;
     else
@@ -3512,6 +4033,7 @@ function tickBuffs(rng, level, ch, _log) {
     const t = poisonTick(b.poison.left);
     const applied = applyDamage(rng, buffTarget(ch), t.damage, "poison");
     ch.hp = applied.hp;
+    logBuffDeath("poison");
     if (t.detached)
       delete b.poison;
     else
@@ -3525,6 +4047,7 @@ function tickBuffs(rng, level, ch, _log) {
     const t = oozeTick(inWater);
     const applied = applyDamage(rng, buffTarget(ch), t.damage, "ooze");
     ch.hp = applied.hp;
+    logBuffDeath("ooze");
     if (t.detached)
       delete b.ooze;
     if (applied.paralysisBroken) {
@@ -3532,12 +4055,34 @@ function tickBuffs(rng, level, ch, _log) {
       delete b.paralysis;
     }
   }
+  if (b.bleeding && ch.isAlive()) {
+    const t = bleedingTick(rng, b.bleeding.level ?? 0);
+    if (t.detached) {
+      delete b.bleeding;
+    } else {
+      b.bleeding.level = t.level;
+      const applied = applyDamage(rng, buffTarget(ch), t.level, "bleeding");
+      ch.hp = applied.hp;
+      logBuffDeath("bleeding");
+      if (applied.paralysisBroken) {
+        ch.paralysed = false;
+        delete b.paralysis;
+      }
+    }
+  } else if (b.bleeding) {
+    delete b.bleeding;
+  }
   if (b.paralysis) {
     b.paralysis.left -= 1;
     if (b.paralysis.left <= 0) {
       delete b.paralysis;
       ch.paralysed = false;
     }
+  }
+  if (b.cripple) {
+    b.cripple.left -= 1;
+    if (b.cripple.left <= 0)
+      delete b.cripple;
   }
 }
 function heroOf(ctx) {
@@ -3676,7 +4221,10 @@ class ContentMob extends Actor {
     this.pos = v * this.w + this.x;
   }
   getSpeed() {
-    return this.def.speed;
+    return this.def.speed * crippleFactor(this);
+  }
+  getTimeScale() {
+    return charTimeScale(this);
   }
   isAlive() {
     return this.hp > 0;
@@ -3732,7 +4280,19 @@ class ContentMob extends Actor {
     }
   }
   onNotice(_ctx) {}
-  afterMove(_ctx, _oldPos) {}
+  afterMove(ctx, oldPos) {
+    const level = ctx.level;
+    const ox = oldPos % level.w;
+    const oy = Math.floor(oldPos / level.w);
+    if (level.get(ox, oy) === 40 /* OPEN_DOOR */) {
+      if (!level.items.some((it) => it.pos === oldPos)) {
+        level.set(ox, oy, 2 /* DOOR */);
+      }
+    }
+    if (level.get(this.x, this.y) === 2 /* DOOR */) {
+      level.set(this.x, this.y, 40 /* OPEN_DOOR */);
+    }
+  }
   onDeath(_ctx) {}
   canAttack(targetPos) {
     return chebyshevPos(this.pos, targetPos, this.w) <= 1;
@@ -3864,14 +4424,12 @@ function mobDefenseProc(ctx, mob, damage) {
       clone.hp = Math.floor((mob.hp - damage) / 2);
       clone.state = "hunting";
       clone.generation = mob.generation + 1;
-      clone.enemySeen = true;
       if (mob.buffs.burning)
         clone.buffs.burning = { kind: "burning", left: 8 };
       if (mob.buffs.poison)
         clone.buffs.poison = { kind: "poison", left: 2 };
       mob.hp -= clone.hp;
       ctx.addMob(clone, 1);
-      ctx.log("The swarm splits!");
     }
   }
   if (mob.def.ability === "thief" && mob.state === "fleeing") {
@@ -3993,9 +4551,15 @@ function rollMobLoot(ctx, mob) {
         dropItemAt(ctx, mob.pos, "potion_healing");
       }
       break;
-    case "skeleton":
+    case "skeleton": {
       if (rng.int(0, 5) === 0) {
-        dropItemAt(ctx, mob.pos, "shortsword");
+        dropItemAt(ctx, mob.pos, skeletonWeaponDrop(rng, depth, itemGenerator));
+      }
+      break;
+    }
+    case "crab":
+      if (rng.float(0, 1) < 0.167) {
+        dropItemAt(ctx, mob.pos, "ration");
       }
       break;
     default:
@@ -4108,37 +4672,8 @@ function resolveMobSpawns(rng, depth, spawns) {
 function buildMobs(resolved, w) {
   return resolved.map((r) => buildMob(r.mobId, nextMobId(), r.pos, w));
 }
-var RANDOM_TABLE = [
-  { id: "gold", weight: 3 },
-  { id: "dart", weight: 2 },
-  { id: "ration", weight: 2 },
-  { id: "potion_healing", weight: 2 },
-  { id: "scroll", weight: 1.5 },
-  { id: "potion_strength", weight: 0.5 },
-  { id: "cloth_armor", weight: 0.5 },
-  { id: "shortsword", weight: 0.5 }
-];
 function pickRandomItemId(rng, depth) {
-  let total = 0;
-  for (const e of RANDOM_TABLE)
-    total += e.weight;
-  const roll = rng.float(0, total);
-  let acc = 0;
-  for (const e of RANDOM_TABLE) {
-    acc += e.weight;
-    if (roll < acc)
-      return sizedItemId(rng, depth, e.id);
-  }
-  return sizedItemId(rng, depth, RANDOM_TABLE[RANDOM_TABLE.length - 1].id);
-}
-function sizedItemId(rng, depth, baseId) {
-  if (baseId === "gold") {
-    return `gold:${rng.intRange(20 + depth * 10, 40 + depth * 20)}`;
-  }
-  if (baseId === "dart") {
-    return `dart:${rng.intRange(5, 15)}`;
-  }
-  return baseId;
+  return itemGenerator.random(rng, depth);
 }
 function resolveItemTag(rng, depth, tag) {
   switch (tag) {
@@ -4155,7 +4690,7 @@ function resolveItemTag(rng, depth, tag) {
     case "iron-key":
       return "iron_key";
     case "golden-key":
-      return "iron_key";
+      return "golden_key";
     case "prize-armor":
       return "cloth_armor";
     case "prize-weapon":
@@ -4167,7 +4702,7 @@ function resolveItemTag(rng, depth, tag) {
     case "prize-food":
       return "ration";
     case "prize-bomb":
-      return `dart:${rng.intRange(5, 15)}`;
+      return `dart:${rng.int(5, 15)}`;
     case "prize-wand":
     case "prize-ring":
       return "scroll";
@@ -4187,9 +4722,15 @@ function resolveItemTag(rng, depth, tag) {
 function resolveItemSpawns(rng, depth, spawns) {
   return spawns.map((s) => {
     const tag = s.tag ?? "random";
-    const itemId = tag === "gold" ? sizedItemId(rng, depth, "gold") : tag.startsWith("gold:") ? tag : resolveItemTag(rng, depth, tag);
+    const itemId = tag === "gold" ? itemGenerator.randomFrom(rng, "gold", depth) : tag.startsWith("gold:") ? tag : resolveItemTag(rng, depth, tag);
     const { defId } = parseItemId(itemId);
-    return { pos: s.pos, itemId, sprite: getItem(defId).sprite };
+    const lockedChest = s.heap === "LOCKED_CHEST" || s.heap === "CRYSTAL_CHEST";
+    return {
+      pos: s.pos,
+      itemId,
+      sprite: getItem(defId).sprite,
+      ...lockedChest ? { lockedChest: true } : {}
+    };
   });
 }
 var pendingResults = new WeakMap;
@@ -4204,6 +4745,7 @@ function takeGenResult(level) {
 }
 var contentLevelGen = {
   generate(rng, depth) {
+    resetItemGenerator();
     const result = generateLevel(rng, depth, newRunState());
     const items = resolveItemSpawns(rng, depth, result.items);
     for (const it of items)
@@ -4258,113 +4800,487 @@ function regenTick(hp, ht, starving) {
   return hp < ht && !starving ? hp + 1 : hp;
 }
 
-// src/content/hero.ts
-class ContentHero extends Actor {
-  kind = "hero";
-  id = 0;
-  pos;
-  w;
-  hp = 20;
-  ht = 20;
-  sprite = "hero_warrior";
-  name = "you";
-  sight = 8;
-  paralysed = false;
-  rooted = false;
-  flying = false;
-  buffs = {};
-  immunities = [];
-  resistances = [];
-  str = 11;
-  weakened = false;
-  lvl = 1;
-  exp = 0;
-  attackSkill = 10;
-  defenseSkill = 5;
-  awareness = 0.1;
-  weapon = null;
-  weaponId = null;
-  armor = null;
-  armorId = null;
-  rangedWeapon = null;
-  darts = 0;
-  inventory = [];
-  gold = 0;
-  hungerLevel = 0;
-  hungerClock = 0;
-  constructor(pos, w) {
-    super();
-    this.pos = pos;
-    this.w = w;
+// src/mechanics/blobs.ts
+function isSolidForBlob(t) {
+  return t === 0 /* WALL */ || t === 2 /* DOOR */ || t === 3 /* DOOR_LOCKED */ || t === 4 /* DOOR_SECRET */ || t === 37 /* BARRICADE */ || t === 15 /* STATUE */ || t === 17 /* BOOKSHELF */ || t === 5 /* EXIT_LOCKED */;
+}
+function isFlamableForBlob(t) {
+  return t === 10 /* GRASS */ || t === 39 /* HIGH_GRASS */ || t === 2 /* DOOR */ || t === 37 /* BARRICADE */ || t === 17 /* BOOKSHELF */;
+}
+
+class Blob {
+  kind;
+  cur;
+  off;
+  volume = 0;
+  constructor(kind, length) {
+    this.kind = kind;
+    this.cur = new Int32Array(length);
+    this.off = new Int32Array(length);
   }
-  get x() {
-    return this.pos % this.w;
+  act(rng, world) {
+    if (this.volume > 0) {
+      this.volume = 0;
+      this.evolve(rng, world);
+      const tmp = this.off;
+      this.off = this.cur;
+      this.cur = tmp;
+    }
   }
-  set x(v) {
-    this.pos = this.y * this.w + v;
+  evolve(_rng, world) {
+    const { w } = world;
+    const h = world.length / w;
+    const { cur, off } = this;
+    for (let y = 1;y < h - 1; y++) {
+      const from = y * w + 1;
+      const to = from + w - 2;
+      for (let pos = from;pos < to; pos++) {
+        if (!world.solidAt(pos)) {
+          let count = 1;
+          let sum = cur[pos];
+          if (!world.solidAt(pos - 1)) {
+            sum += cur[pos - 1];
+            count++;
+          }
+          if (!world.solidAt(pos + 1)) {
+            sum += cur[pos + 1];
+            count++;
+          }
+          if (!world.solidAt(pos - w)) {
+            sum += cur[pos - w];
+            count++;
+          }
+          if (!world.solidAt(pos + w)) {
+            sum += cur[pos + w];
+            count++;
+          }
+          const value = sum >= count ? Math.floor(sum / count) - 1 : 0;
+          off[pos] = value;
+          this.volume += value;
+        } else {
+          off[pos] = 0;
+        }
+      }
+    }
   }
-  get y() {
-    return Math.floor(this.pos / this.w);
+  seed(cell, amount) {
+    this.cur[cell] += amount;
+    this.volume += amount;
   }
-  set y(v) {
-    this.pos = v * this.w + this.x;
-  }
-  getSpeed() {
-    return 1;
-  }
-  isAlive() {
-    return this.hp > 0;
-  }
-  act() {
-    throw new Error("ContentHero.act: route through MechanicsHooks.handleHeroIntent");
+  clear(cell) {
+    this.volume -= this.cur[cell];
+    this.cur[cell] = 0;
   }
 }
-function createStarterHero(pos, w) {
-  const hero = new ContentHero(pos, w);
-  const sword = getItem("shortsword");
-  const armor = getItem("cloth_armor");
-  hero.weapon = sword.weapon ? { ...sword.weapon } : null;
-  hero.weaponId = "shortsword";
-  hero.armor = armor.armor ? { ...armor.armor } : null;
-  hero.armorId = "cloth_armor";
-  hero.inventory.push({ itemId: "ration", qty: 1 });
-  hero.inventory.push({ itemId: "dart", qty: 8 });
-  syncDarts(hero);
-  return hero;
+
+class FireBlob extends Blob {
+  constructor(length) {
+    super("fire", length);
+  }
+  evolve(_rng, world) {
+    const { w, length } = world;
+    const { cur, off } = this;
+    const from = w + 1;
+    const to = length - w - 1;
+    let observe = false;
+    for (let pos = from;pos < to; pos++) {
+      let fire;
+      if (cur[pos] > 0) {
+        this.burn(world, pos);
+        fire = cur[pos] - 1;
+        if (fire <= 0 && world.flamableAt(pos)) {
+          world.burnOutTile(pos);
+          observe = true;
+        }
+      } else {
+        if (world.flamableAt(pos) && (cur[pos - 1] > 0 || cur[pos + 1] > 0 || cur[pos - w] > 0 || cur[pos + w] > 0)) {
+          fire = 4;
+          this.burn(world, pos);
+        } else {
+          fire = 0;
+        }
+      }
+      this.volume += off[pos] = fire;
+    }
+  }
+  burn(world, pos) {
+    const ch = world.charAt(pos);
+    if (ch !== null) {
+      world.reigniteBurning(ch);
+    }
+  }
+  seed(cell, amount) {
+    if (this.cur[cell] === 0) {
+      this.volume += amount;
+      this.cur[cell] = amount;
+    }
+  }
 }
-function syncDarts(hero) {
-  hero.darts = hero.inventory.find((s) => s.itemId === "dart")?.qty ?? 0;
+var TOXIC_GAS_DEATH_MESSAGE = "You died from a toxic gas..";
+
+class ToxicGasBlob extends Blob {
+  constructor(length) {
+    super("toxic", length);
+  }
+  evolve(rng, world) {
+    super.evolve(rng, world);
+    const levelDamage = 5 + world.depth * 5;
+    for (let i = 0;i < world.length; i++) {
+      if (this.cur[i] > 0) {
+        const ch = world.charAt(i);
+        if (ch !== null) {
+          let damage = Math.floor((ch.ht + levelDamage) / 40);
+          if (rng.int(0, 40) < (ch.ht + levelDamage) % 40) {
+            damage++;
+          }
+          world.damageChar(rng, ch, damage, "toxic_gas", (dead) => {
+            world.log(TOXIC_GAS_DEATH_MESSAGE);
+          });
+        }
+      }
+    }
+    const par = world.blobs.find((b) => b.kind === "paralytic");
+    if (par != null) {
+      const parCur = par.cur;
+      for (let i = 0;i < world.length; i++) {
+        const t = this.cur[i];
+        const p = parCur[i];
+        if (p >= t) {
+          this.volume -= t;
+          this.cur[i] = 0;
+        } else {
+          par.volume -= p;
+          parCur[i] = 0;
+        }
+      }
+    }
+  }
 }
-function addToInventory(hero, itemId, qty) {
-  const def = getItem(itemId);
-  if (qty <= 0)
-    return;
-  if (def.stackable) {
-    const existing = hero.inventory.find((s) => s.itemId === itemId);
-    if (existing) {
-      existing.qty += qty;
+
+class ParalyticGasBlob extends Blob {
+  constructor(length) {
+    super("paralytic", length);
+  }
+  evolve(_rng, world) {
+    super.evolve(_rng, world);
+    for (let i = 0;i < world.length; i++) {
+      if (this.cur[i] > 0) {
+        const ch = world.charAt(i);
+        if (ch !== null) {
+          world.prolongParalysis(ch, PARALYSIS_DURATION);
+        }
+      }
+    }
+  }
+}
+function createBlob(kind, length) {
+  switch (kind) {
+    case "fire":
+      return new FireBlob(length);
+    case "toxic":
+      return new ToxicGasBlob(length);
+    case "paralytic":
+      return new ParalyticGasBlob(length);
+  }
+}
+function blobOf(blobs, kind) {
+  return blobs.find((b) => b.kind === kind);
+}
+function seedBlob(blobs, kind, cell, amount, length) {
+  let blob = blobOf(blobs, kind);
+  if (!blob) {
+    blob = createBlob(kind, length);
+    blobs.push(blob);
+  }
+  blob.seed(cell, amount);
+  return blob;
+}
+function tickBlobs(rng, world, blobs) {
+  for (const blob of blobs) {
+    blob.act(rng, world);
+  }
+}
+
+// src/mechanics/traps.ts
+var TXT_HIDDEN_PLATE_CLICKS = "A hidden pressure plate clicks!";
+var TXT_ALARM_SOUND = "The trap emits a piercing sound that echoes throughout the dungeon!";
+var TXT_LIGHTNING_DEATH = "You were killed by a discharge of a lightning trap...";
+function trapKindOf(t) {
+  switch (t) {
+    case 20 /* TRAP_TOXIC */:
+    case 21 /* TRAP_TOXIC_HIDDEN */:
+      return "toxic";
+    case 22 /* TRAP_FIRE */:
+    case 23 /* TRAP_FIRE_HIDDEN */:
+      return "fire";
+    case 24 /* TRAP_PARALYTIC */:
+    case 25 /* TRAP_PARALYTIC_HIDDEN */:
+      return "paralytic";
+    case 26 /* TRAP_POISON */:
+    case 27 /* TRAP_POISON_HIDDEN */:
+      return "poison";
+    case 28 /* TRAP_ALARM */:
+    case 29 /* TRAP_ALARM_HIDDEN */:
+      return "alarm";
+    case 30 /* TRAP_LIGHTNING */:
+    case 31 /* TRAP_LIGHTNING_HIDDEN */:
+      return "lightning";
+    case 32 /* TRAP_GRIPPING */:
+    case 33 /* TRAP_GRIPPING_HIDDEN */:
+      return "gripping";
+    case 34 /* TRAP_SUMMONING */:
+    case 35 /* TRAP_SUMMONING_HIDDEN */:
+      return "summoning";
+    default:
+      return null;
+  }
+}
+function trapCharDr(ch) {
+  if (ch.kind === "hero") {
+    return ch.armor ? Math.max(ch.armor.dr + ch.armor.level, 0) : 0;
+  }
+  return ch.def.dr;
+}
+function damageFromTrap(ctx, rng, ch, dmg, sourceTag, onHeroDeath) {
+  const target = {
+    hp: ch.hp,
+    ht: ch.ht,
+    paralysed: ch.paralysed,
+    immunities: ch.immunities,
+    resistances: ch.resistances
+  };
+  const applied = applyDamage(rng, target, dmg, sourceTag);
+  ch.hp = applied.hp;
+  if (applied.paralysisBroken) {
+    ch.paralysed = false;
+    delete ch.buffs.paralysis;
+  }
+  if (applied.died) {
+    if (ch.kind === "hero") {
+      onHeroDeath?.();
     } else {
-      hero.inventory.push({ itemId, qty });
-    }
-  } else {
-    for (let i = 0;i < qty; i++) {
-      hero.inventory.push({ itemId, qty: 1 });
+      ctx.killMob(ch);
     }
   }
-  syncDarts(hero);
 }
-function removeFromInventory(hero, slot, qty = 1) {
-  const stack = hero.inventory[slot];
-  if (!stack || qty <= 0)
-    return null;
-  const take = Math.min(qty, stack.qty);
-  const removed = { itemId: stack.itemId, qty: take };
-  stack.qty -= take;
-  if (stack.qty <= 0) {
-    hero.inventory.splice(slot, 1);
+function beckonMob(mob, cell) {
+  if (mob.state !== "hunting") {
+    mob.state = "wandering";
   }
-  syncDarts(hero);
-  return removed;
+  mob.target = cell;
+}
+function makeBlobWorld(ctx, hero, mobs) {
+  const level = ctx.level;
+  return {
+    w: level.w,
+    length: level.w * level.h,
+    depth: level.depth,
+    blobs: level.blobs,
+    solidAt: (pos) => isSolidForBlob(level.getAt(pos)),
+    flamableAt: (pos) => isFlamableForBlob(level.getAt(pos)),
+    tileAt: (pos) => level.getAt(pos),
+    setTile: (pos, t) => {
+      const { x, y } = level.xy(pos);
+      level.set(x, y, t);
+    },
+    charAt: (pos) => {
+      if (hero.isAlive() && hero.pos === pos)
+        return hero;
+      return mobs.find((m) => m.isAlive() && m.pos === pos) ?? null;
+    },
+    visibleAt: (pos) => level.visible[pos] !== 0,
+    damageChar: (rng, ch, dmg, sourceTag, onHeroDeath) => damageFromTrap(ctx, rng, ch, dmg, sourceTag, onHeroDeath ? () => onHeroDeath(ch) : undefined),
+    reigniteBurning: (ch) => {
+      ch.buffs.burning = { kind: "burning", left: BURNING_DURATION };
+    },
+    prolongParalysis: (ch, duration) => {
+      const cur = ch.buffs.paralysis?.left ?? 0;
+      ch.buffs.paralysis = { kind: "paralysis", left: Math.max(cur, duration) };
+      ch.paralysed = true;
+    },
+    burnOutTile: (pos) => {
+      const t = level.getAt(pos);
+      const unstitchable = t === 2 /* DOOR */ || t === 17 /* BOOKSHELF */;
+      let burned = 38 /* EMBERS */;
+      if (unstitchable) {
+        const { x: x2, y: y2 } = level.xy(pos);
+        const flooded = level.neighbors4(x2, y2).some((n) => level.get(n.x, n.y) === 9 /* WATER */);
+        if (flooded)
+          burned = 9 /* WATER */;
+      }
+      const { x, y } = level.xy(pos);
+      level.set(x, y, burned);
+    },
+    log: (msg) => ctx.log(msg)
+  };
+}
+function toxicTrap(ctx, cell) {
+  const level = ctx.level;
+  seedBlob(level.blobs, "toxic", cell, 300 + 20 * level.depth, level.w * level.h);
+}
+function fireTrap(ctx, cell) {
+  const level = ctx.level;
+  seedBlob(level.blobs, "fire", cell, 2, level.w * level.h);
+}
+function paralyticTrap(ctx, cell) {
+  const level = ctx.level;
+  seedBlob(level.blobs, "paralytic", cell, 80 + 5 * level.depth, level.w * level.h);
+}
+function poisonTrap(ctx, ch) {
+  if (ch !== null) {
+    ch.buffs.poison = { kind: "poison", left: poisonTrapDuration(ctx.level.depth) };
+  }
+}
+function alarmTrap(ctx, cell, ch, mobs, visible) {
+  for (const mob of mobs) {
+    if (mob !== ch) {
+      beckonMob(mob, cell);
+    }
+  }
+  if (visible) {
+    ctx.log(TXT_ALARM_SOUND);
+  }
+}
+function lightningTrap(ctx, rng, cell, ch) {
+  if (ch !== null) {
+    const dmg = Math.max(1, rng.int(Math.floor(ch.hp / 3), Math.floor(2 * ch.hp / 3)));
+    damageFromTrap(ctx, rng, ch, dmg, "lightning", () => {
+      ctx.log(TXT_LIGHTNING_DEATH);
+    });
+    if (ch.kind === "hero" && ch.isAlive()) {
+      chargeHeroWands(ch);
+    }
+  } else {}
+}
+function chargeHeroWands(_hero) {
+  return 0;
+}
+function grippingTrap(rng, ch, depth) {
+  if (ch !== null) {
+    const damage = Math.max(0, depth + 3 - rng.intRange(0, Math.floor(trapCharDr(ch) / 2)));
+    ch.buffs.bleeding = { kind: "bleeding", left: 0, level: damage };
+    const cur = ch.buffs.cripple?.left ?? 0;
+    ch.buffs.cripple = { kind: "cripple", left: Math.max(cur, CRIPPLE_DURATION) };
+  } else {}
+}
+function bestiaryMobId(rng, depth) {
+  let chances2;
+  let ids;
+  switch (depth) {
+    case 1:
+      chances2 = [1];
+      ids = ["rat"];
+      break;
+    case 2:
+      chances2 = [1, 1];
+      ids = ["rat", "gnoll"];
+      break;
+    case 3:
+      chances2 = [1, 2, 1, 0.02];
+      ids = ["rat", "gnoll", "crab", "swarm"];
+      break;
+    case 4:
+      chances2 = [1, 2, 3, 0.02, 0.01, 0.01];
+      ids = ["rat", "gnoll", "crab", "swarm", "skeleton", "thief"];
+      break;
+    default:
+      return null;
+  }
+  let sum = 0;
+  for (const c of chances2)
+    sum += Math.max(0, c);
+  if (sum <= 0)
+    return null;
+  const value = rng.float(0, sum);
+  sum = 0;
+  for (let i = 0;i < chances2.length; i++) {
+    sum += Math.max(0, chances2[i]);
+    if (value < sum)
+      return ids[i];
+  }
+  return null;
+}
+function summoningTrap(ctx, rng, cell, ch, hero, mobs, summon) {
+  const level = ctx.level;
+  if (level.bossLevel) {
+    return;
+  }
+  let nMobs = 1;
+  if (rng.int(0, 2) === 0) {
+    nMobs++;
+    if (rng.int(0, 2) === 0) {
+      nMobs++;
+    }
+  }
+  const { x, y } = level.xy(cell);
+  const candidates = [];
+  for (const n of level.neighbors8(x, y)) {
+    const p = level.idx(n.x, n.y);
+    const occupied = hero.isAlive() && hero.pos === p || mobs.some((m) => m.isAlive() && m.pos === p);
+    if (!occupied && (level.isPassable(n.x, n.y) || level.isAvoid(n.x, n.y))) {
+      candidates.push(p);
+    }
+  }
+  const points = [];
+  while (nMobs > 0 && candidates.length > 0) {
+    const index = rng.int(0, candidates.length);
+    points.push(candidates.splice(index, 1)[0]);
+    nMobs--;
+  }
+  for (const point of points) {
+    const mobId = bestiaryMobId(rng, level.depth);
+    if (mobId === null)
+      continue;
+    summon(mobId, point);
+  }
+}
+function triggerTrap(ctx, rng, cell, kind, ch, hero, mobs, summon) {
+  const visible = ctx.level.visible[cell] !== 0;
+  switch (kind) {
+    case "toxic":
+      toxicTrap(ctx, cell);
+      break;
+    case "fire":
+      fireTrap(ctx, cell);
+      break;
+    case "paralytic":
+      paralyticTrap(ctx, cell);
+      break;
+    case "poison":
+      poisonTrap(ctx, ch);
+      break;
+    case "alarm":
+      alarmTrap(ctx, cell, ch, mobs, visible);
+      break;
+    case "lightning":
+      lightningTrap(ctx, rng, cell, ch);
+      break;
+    case "gripping":
+      grippingTrap(rng, ch, ctx.level.depth);
+      break;
+    case "summoning":
+      summoningTrap(ctx, rng, cell, ch, hero, mobs, summon);
+      break;
+  }
+}
+function deactivateTrapCell(level, cell) {
+  const { x, y } = level.xy(cell);
+  level.set(x, y, 36 /* TRAP_INACTIVE */);
+}
+function pressTrapCell(ctx, cell, ch, summon) {
+  const level = ctx.level;
+  const tile = level.getAt(cell);
+  const kind = trapKindOf(tile);
+  if (kind === null) {
+    return;
+  }
+  if (isHiddenTrap(tile)) {
+    ctx.log(TXT_HIDDEN_PLATE_CLICKS);
+  }
+  const hero = ctx.hero;
+  const mobs = ctx.mobs;
+  triggerTrap(ctx, ctx.rng, cell, kind, ch, hero, mobs, summon);
+  deactivateTrapCell(level, cell);
 }
 
 // src/content/actions.ts
@@ -4377,6 +5293,10 @@ function pickupAt(ctx, hero) {
   }
   level.items = level.items.filter((it) => it !== item);
   const { defId, qty } = parseItemId(item.itemId);
+  if (defId === "dewdrop")
+    return pickupDewdrop(ctx, hero, qty);
+  if (item.lockedChest)
+    return openLockedChest(ctx, hero, item);
   const def = getItem(defId);
   if (def.type === "gold") {
     hero.gold += qty;
@@ -4412,6 +5332,9 @@ function useInventorySlot(ctx, hero, slot) {
     case "key":
       return useKey(ctx, hero, slot, stack);
     case "gold":
+      return 1;
+    case "dewdrop":
+    case "seed":
       return 1;
   }
 }
@@ -4643,10 +5566,143 @@ function dropSlot(ctx, hero, slot) {
   ctx.log(`You drop the ${def.name}.`);
   return 0.5;
 }
+var chasmArmed = null;
+function stepTowardChasm(ctx, hero, nx, ny) {
+  const level = ctx.level;
+  const from = hero.pos;
+  const to = ny * level.w + nx;
+  if (hero.flying) {
+    hero.pos = to;
+    passiveSearch(ctx, hero);
+    return 1;
+  }
+  if (chasmArmed !== null && chasmArmed.from === from && chasmArmed.to === to) {
+    chasmArmed = null;
+    return heroFall(ctx, hero);
+  }
+  chasmArmed = { from, to };
+  ctx.log("Do you really want to jump into the chasm? You can probably die.");
+  return 0;
+}
+function heroFall(ctx, hero) {
+  chasmArmed = null;
+  ctx.log("You fall into the chasm!");
+  hero.buffs.cripple = { kind: "cripple", left: CRIPPLE_DURATION };
+  const dmg = ctx.rng.intRange(Math.floor(hero.ht / 3), Math.floor(hero.ht / 2));
+  const applied = applyDamage(ctx.rng, hero, dmg);
+  hero.hp = applied.hp;
+  if (applied.paralysisBroken) {
+    hero.paralysed = false;
+    delete hero.buffs.paralysis;
+  }
+  if (!hero.isAlive()) {
+    ctx.log("You fell to death...");
+  }
+  return 1;
+}
+function doorEnter(ctx, x, y) {
+  ctx.level.set(x, y, 40 /* OPEN_DOOR */);
+}
+function doorLeave(ctx, x, y) {
+  const level = ctx.level;
+  if (!level.items.some((it) => it.pos === level.idx(x, y))) {
+    level.set(x, y, 2 /* DOOR */);
+  }
+}
+function trampleHighGrass(ctx, hero, x, y) {
+  const level = ctx.level;
+  level.set(x, y, 10 /* GRASS */);
+  const herbalismLevel = 0;
+  if (ctx.rng.int(0, 18) <= ctx.rng.int(0, herbalismLevel + 1)) {
+    dropAt(ctx, level.idx(x, y), "seed");
+  }
+  if (ctx.rng.int(0, 6) <= ctx.rng.int(0, herbalismLevel + 1)) {
+    dropAt(ctx, level.idx(x, y), "dewdrop");
+  }
+}
+function dropAt(ctx, pos, itemId) {
+  ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
+}
+function pickupDewdrop(ctx, hero, qty) {
+  const level = ctx.level;
+  const value = 1 + Math.floor((level.depth - 1) / 5);
+  const effect = Math.min(hero.ht - hero.hp, value * qty);
+  if (effect > 0) {
+    hero.hp += effect;
+    ctx.log(`+${effect}HP`);
+  }
+  return 1;
+}
+function openLockedChest(ctx, hero, item) {
+  const level = ctx.level;
+  const keySlot = hero.inventory.findIndex((s) => s.itemId === "golden_key");
+  if (keySlot === -1) {
+    ctx.log("This chest is locked and you don't have matching key");
+    return 0;
+  }
+  removeFromInventory(hero, keySlot, 1);
+  level.items = level.items.filter((it) => it !== item);
+  const { defId, qty } = parseItemId(item.itemId);
+  const def = getItem(defId);
+  const label = qty > 1 ? `${qty}x ${def.name}` : def.name;
+  if (def.type === "gold") {
+    hero.gold += qty;
+    ctx.log(`You unlock the chest and take ${qty} gold.`);
+  } else {
+    addToInventory(hero, defId, qty);
+    ctx.log(`You unlock the chest and take the ${label}.`);
+  }
+  return 1;
+}
+var SIGN_TIPS = [
+  "Wear the highest tier armor you can; do not rely on dodging alone.",
+  "Enchantments on weapons and armor are potent; identify items to find them.",
+  "Dewdrops heal a little; save potions of healing for emergencies.",
+  "Do not be afraid to run from a fight you cannot win.",
+  "Upgrade scrolls are precious; spend them on gear you will keep.",
+  "Mystery meat is risky; cook it at a stove if you can.",
+  "Strength potions let you wear heavier gear sooner.",
+  "Hidden traps and doors can be found by searching.",
+  "Blandfruit can be cooked with seeds for useful meals.",
+  "Flies are weak alone; do not let a swarm surround you.",
+  "Gnoll scouts hit hard; use doorways to fight them one at a time.",
+  "Crabs block a lot of damage; use wands or surprise attacks.",
+  "Goo is coming. Fire will keep it from healing.",
+  "Fire hurts Goo, but do not stand in it yourself.",
+  "Keep your distance from spinners and their webs.",
+  "Skeletons hit hard; blind or slow them first.",
+  "Thieves steal; kill them before they flee with your gear.",
+  "Shaman bolts hurt; break line of sight.",
+  "Brutes enrage when hurt; finish them quickly.",
+  "DM-300 is coming. Lightning hurts it most.",
+  "Lightning wands and surprise attacks bring DM-300 down.",
+  "The City awaits. Mind the monks and their disabling strikes."
+];
+var signCells = new WeakMap;
+function noteSignCells(level, cells) {
+  signCells.set(level, new Set(cells));
+}
+function readSign(ctx, hero) {
+  const cells = signCells.get(ctx.level);
+  if (!cells || !cells.has(hero.pos))
+    return 1;
+  const index = ctx.level.depth - 1;
+  if (index < SIGN_TIPS.length) {
+    ctx.log(SIGN_TIPS[index]);
+  } else {
+    cells.delete(hero.pos);
+    ctx.level.set(hero.x, hero.y, 38 /* EMBERS */);
+    ctx.log("As you try to read the sign it bursts into greenish flames.");
+  }
+  return 0;
+}
+function waitTurn(ctx, hero) {
+  return readSign(ctx, hero);
+}
 function moveHero(ctx, hero, dx, dy) {
   const level = ctx.level;
-  const nx = hero.x + dx;
-  const ny = hero.y + dy;
+  let nx = hero.x + dx;
+  let ny = hero.y + dy;
   if (!level.inBounds(nx, ny))
     return 1;
   const foe = ctx.mobs.find((m) => m.isAlive() && m.x === nx && m.y === ny);
@@ -4654,44 +5710,91 @@ function moveHero(ctx, hero, dx, dy) {
     strikeHeroVsMob(ctx, hero, foe, heroAttackSkill(hero, { ranged: false, adjacent: false }), (r) => heroDamageRoll(r, hero, { ranged: false }));
     return 1;
   }
+  if (hasBuff(hero, "vertigo")) {
+    const step = vertigoRedirect(ctx.rng, hero.pos, level.w, (p) => {
+      const px = p % level.w;
+      const py = Math.floor(p / level.w);
+      return !level.inBounds(px, py) || !level.isPassable(px, py) || ctx.mobs.some((m) => m.isAlive() && m.x === px && m.y === py);
+    });
+    if (step === null) {
+      passiveSearch(ctx, hero);
+      return 1;
+    }
+    nx = step % level.w;
+    ny = Math.floor(step / level.w);
+  }
   const tile = level.get(nx, ny);
+  if (tile === 8 /* CHASM */)
+    return stepTowardChasm(ctx, hero, nx, ny);
   if (tile === 3 /* DOOR_LOCKED */) {
     const keySlot = hero.inventory.findIndex((s) => s.itemId === "iron_key");
     if (keySlot === -1) {
-      ctx.log("The door is locked.");
-      return 1;
+      ctx.log("You don't have a matching key");
+      return 0;
     }
     level.set(nx, ny, 2 /* DOOR */);
     removeFromInventory(hero, keySlot, 1);
     ctx.log("You unlock the door.");
-    hero.pos = ny * level.w + nx;
-    passiveSearch(ctx, hero);
     return 1;
   }
   if (!level.isPassable(nx, ny))
     return 1;
+  if (level.get(hero.x, hero.y) === 40 /* OPEN_DOOR */) {
+    doorLeave(ctx, hero.x, hero.y);
+  }
   hero.pos = ny * level.w + nx;
+  if (!hero.flying) {
+    pressTrapCell(ctx, hero.pos, hero, (mobId, pos) => {
+      const mob = buildMob(mobId, nextMobId(), pos, level.w);
+      mob.state = "wandering";
+      ctx.addMob(mob, 2);
+    });
+    enterCell(ctx, hero, nx, ny);
+  } else if (tile === 2 /* DOOR */) {
+    doorEnter(ctx, nx, ny);
+  }
   passiveSearch(ctx, hero);
   return 1;
 }
-var TIME_TO_SEARCH = 2;
+function enterCell(ctx, hero, x, y) {
+  const t = ctx.level.get(x, y);
+  if (t === 39 /* HIGH_GRASS */)
+    trampleHighGrass(ctx, hero, x, y);
+  else if (t === 2 /* DOOR */)
+    doorEnter(ctx, x, y);
+}
 function searchIntentional(ctx, hero) {
   const level = ctx.level;
-  for (let dy = -1;dy <= 1; dy++) {
-    for (let dx = -1;dx <= 1; dx++) {
+  const distance = 1;
+  const level_ = intentionalSearchLevel(hero.awareness);
+  let found = false;
+  for (let dy = -distance;dy <= distance; dy++) {
+    for (let dx = -distance;dx <= distance; dx++) {
       const nx = hero.x + dx;
       const ny = hero.y + dy;
       if (!level.inBounds(nx, ny))
         continue;
       if (level.visible[level.idx(nx, ny)] === 0)
         continue;
-      level.revealSecretDoor(nx, ny);
+      const t = level.get(nx, ny);
+      if (t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) {
+        if (t === 4 /* DOOR_SECRET */) {
+          level.revealSecretDoor(nx, ny);
+        } else {
+          level.revealTrap(nx, ny);
+        }
+        found = true;
+      }
     }
   }
-  return TIME_TO_SEARCH;
+  if (found) {
+    ctx.log("You noticed something");
+  }
+  return searchTimeCost(ctx.rng, found, level_);
 }
 function passiveSearch(ctx, hero) {
   const level = ctx.level;
+  const chance = passiveSearchLevel(hero.awareness);
   for (let dy = -1;dy <= 1; dy++) {
     for (let dx = -1;dx <= 1; dx++) {
       const nx = hero.x + dx;
@@ -4700,8 +5803,13 @@ function passiveSearch(ctx, hero) {
         continue;
       if (level.visible[level.idx(nx, ny)] === 0)
         continue;
-      if (level.get(nx, ny) === 4 /* DOOR_SECRET */ && ctx.rng.float(0, 1) < hero.awareness) {
-        level.revealSecretDoor(nx, ny);
+      const t = level.get(nx, ny);
+      if ((t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) && ctx.rng.float(0, 1) < chance) {
+        if (t === 4 /* DOOR_SECRET */) {
+          level.revealSecretDoor(nx, ny);
+        } else {
+          level.revealTrap(nx, ny);
+        }
       }
     }
   }
@@ -4717,13 +5825,14 @@ function tickHeroClock(rng, ctx, hero, cost) {
     });
     hero.hungerLevel = t.level;
     if (t.becameStarving)
-      ctx.log("You are starving!");
+      ctx.log(MSG_STARVING);
     else if (t.becameHungry)
-      ctx.log("You are hungry.");
+      ctx.log(MSG_HUNGRY);
     if (t.damage > 0) {
+      ctx.log(MSG_STARVING);
       hero.hp = Math.max(hero.hp - t.damage, 0);
       if (!hero.isAlive())
-        ctx.log("You starved to death...");
+        ctx.log(MSG_STARVED_TO_DEATH);
     }
     if (hero.isAlive()) {
       hero.hp = regenTick(hero.hp, hero.ht, isStarving(hero.hungerLevel));
@@ -5250,37 +6359,41 @@ class GooMob extends ContentMob {
     dropItemAt(ctx, this.pos, "skeleton_key");
     ctx.log("glurp... glurp...");
   }
+  applyGooAfter(action) {
+    const s = gooAfterAttack({ hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped }, action);
+    this.pumpedUp = s.pumpedUp;
+    this.jumped = s.jumped;
+  }
   doAttack(ctx, hero) {
     const rng = ctx.rng;
     const dist = chebyshevPos(this.pos, hero.pos, this.w);
     const action = gooDecide(rng, { hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped }, { dist, jumpPathClear: this.jumpPathClear(ctx, hero) });
     switch (action.kind) {
       case "pump": {
-        this.pumpedUp = true;
         ctx.log("Goo is pumping itself up!");
-        const s = gooAfterAttack({ hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped }, action);
-        this.pumpedUp = s.pumpedUp;
-        this.jumped = s.jumped;
+        this.applyGooAfter(action);
         return PUMP_UP_DELAY * this.getSpeed();
       }
       case "pumpFizzle":
-        this.pumpedUp = false;
+        this.applyGooAfter(action);
         return this.waitCost();
+      case "pumpedAttack": {
+        this.jumped = false;
+        this.gooStrike(ctx, hero, gooAttackSkill(true, this.jumped), true);
+        this.applyGooAfter(action);
+        return 1 * this.getSpeed();
+      }
       case "attack": {
-        const pumped = this.pumpedUp;
-        const jumped = this.jumped;
-        this.gooStrike(ctx, hero, gooAttackSkill(pumped, jumped), pumped);
-        const s = gooAfterAttack({ hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped }, action);
-        this.pumpedUp = s.pumpedUp;
-        this.jumped = s.jumped;
+        this.gooStrike(ctx, hero, gooAttackSkill(false, this.jumped), false);
+        this.applyGooAfter(action);
         return 1 * this.getSpeed();
       }
       case "jumpAttack": {
+        this.jumped = true;
         this.pos = this.jumpDest(ctx, hero);
         ctx.log("Goo jumps!");
-        this.gooStrike(ctx, hero, gooAttackSkill(true, true), true);
-        this.pumpedUp = false;
-        this.jumped = true;
+        this.gooStrike(ctx, hero, gooAttackSkill(true, this.jumped), true);
+        this.applyGooAfter(action);
         return 1 * this.getSpeed();
       }
     }
@@ -5289,7 +6402,7 @@ class GooMob extends ContentMob {
     strikeMobVsHero(ctx, this, hero, accuracy, (rng) => gooDamageRoll(rng, pumped), (rng, damage) => {
       if (gooOozeRoll(rng)) {
         hero.buffs.ooze = { kind: "ooze", left: 0 };
-        ctx.log("Caustic ooze covers you!");
+        ctx.log("Caustic ooze eats your flesh. Wash away it!");
       }
       return damage;
     });
@@ -5352,6 +6465,8 @@ function catalogKind(def) {
       return "scroll";
     case "key":
     case "gold":
+    case "dewdrop":
+    case "seed":
       return "misc";
   }
 }
@@ -5499,6 +6614,7 @@ var contentMechanics = {
     const result = takeGenResult(level);
     if (!result)
       return [];
+    noteSignCells(level, result.markers.signs);
     const resolved = resolveMobSpawns(rng, result.level.depth, result.mobs);
     return buildMobs(resolved, result.level.w);
   },
@@ -5519,7 +6635,7 @@ var contentMechanics = {
         cost = searchIntentional(ctx, hero);
         break;
       case "wait":
-        cost = 1;
+        cost = waitTurn(ctx, hero);
         break;
       case "pickup":
         cost = pickupAt(ctx, hero);
@@ -5566,6 +6682,11 @@ var contentMechanics = {
   },
   tickActorBuffs(actor, ctx) {
     tickBuffs(ctx.rng, ctx.level, actor, ctx.log);
+  },
+  evolveBlobs(ctx) {
+    const hero = heroOf(ctx);
+    const mobs = ctx.mobs;
+    tickBlobs(ctx.rng, makeBlobWorld(ctx, hero, mobs), ctx.level.blobs);
   },
   tickHeroClock(actor, ctx, cost) {
     tickHeroClock(ctx.rng, ctx, actor, cost);
@@ -5668,6 +6789,7 @@ class Game {
         return "waiting";
       this.scheduler.next();
       this.deps.mechanics.tickActorBuffs(this.hero, this.ctx());
+      this.deps.mechanics.evolveBlobs(this.ctx());
       let cost2;
       let transitioned = false;
       if (intent.kind === "descend") {
@@ -5787,7 +6909,10 @@ class Game {
   checkHeroDeath() {
     if (!this.hero.isAlive() && !this.gameOver) {
       this.gameOver = true;
-      this.logMsg("You died...");
+      const last = this.log[this.log.length - 1] ?? "";
+      if (!DEATH_MESSAGE_RE.test(last) && last !== "You died...") {
+        this.logMsg("You died...");
+      }
     }
   }
   ctx() {
@@ -5901,7 +7026,50 @@ var ORIGINAL_SPRITES = {
   trap_alarm: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv8qKSf/MjEv/1NSTv9MS0f/IB8d/y4tK/9TUk7/TEtH/yopJ/8gHx3/U1JO/1NSTv9MS0f/U1JO/09OSv8gHx3/tzQw/9Q3T/9PTkr/MjEv/74xRv++MCv/U1JO/y4tK//bN1f/wjM//1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/8IvMf/ILkj/dXVx/09OSv/MLTL/tTFQ/3BvbP9TUk7/xS0t/8UxVf9ramf/U1JO/1NSTv87Ojb/Ozo2/zU0Mf91dXH/cnFu/1NSTv9PTkr/YmFe/2JhXv81NDH/Ozo2/11dWv9iYV7/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/Li0r/zIxL/9TUk7/U1JO/yAfHf8qKSf/U1JO/1NSTv8yMS//Kikn/zs6Nv9PTkr/T05K/1NSTv9PTkr/IyMg/7osLf/OLCD/U1JO/zIxL/+wMi7/wzAm/1NSTv8vLyz/zCsg/8goIv81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv/DKij/wTg8/3Jxbv9GRUH/sjAv/7cuLf9ycW7/U1JO/703QP/HRVf/YmFe/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/YmFe/2JhXv87Ojb/NTQx/11dWv9ycW7/U1JO/09OSv91dXH/cnFu/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/y4tK/8yMS//T05K/0ZFQf8gHx3/MjEv/1NSTv9PTkr/Ly8s/zIxL/87Ojb/T05K/09OSv87Ojb/U1JO/zIxL/+3ICX/xys1/1NSTv8vLyz/wy46/8IvKv9TUk7/Ly8s/80rO//NMTb/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/wyxN/9AkLP9ycW7/TEtH/8E5RP/IMir/YmFe/zs6Nv/QGxr/yjkt/11dWv9TUk7/U1JO/zU0Mf81NDH/NTQx/2JhXv9iYV7/Ozo2/zs6Nv9iYV7/XV1a/zU0Mf9MS0f/cG9s/2JhXv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
   trap_lightning: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv8qKSf/MjEv/1NSTv9MS0f/IB8d/y4tK/9TUk7/TEtH/yopJ/8gHx3/U1JO/1NSTv9MS0f/U1JO/09OSv8gHx3/bKz6/2HM6/9PTkr/MjEv/0S33v9Uv9r/U1JO/y4tK/9fuev/Ysjh/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/2XO1P9gydX/dXVx/09OSv9YvO7/Vcbo/3BvbP9TUk7/Ycro/2e08/9ramf/U1JO/1NSTv87Ojb/Ozo2/zU0Mf91dXH/cnFu/1NSTv9PTkr/YmFe/2JhXv81NDH/Ozo2/11dWv9iYV7/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/Li0r/zIxL/9TUk7/U1JO/yAfHf8qKSf/U1JO/1NSTv8yMS//Kikn/zs6Nv9PTkr/T05K/1NSTv9PTkr/IyMg/0jE2/9iwPD/U1JO/zIxL/9SzOD/YbPl/1NSTv8vLyz/ZK/z/0vI1f81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9fuOT/bLLp/3Jxbv9GRUH/U7va/2DA6P9ycW7/U1JO/2m78f9Zp+//YmFe/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/YmFe/2JhXv87Ojb/NTQx/11dWv9ycW7/U1JO/09OSv91dXH/cnFu/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/y4tK/8yMS//T05K/0ZFQf8gHx3/MjEv/1NSTv9PTkr/Ly8s/zIxL/87Ojb/T05K/09OSv87Ojb/U1JO/zIxL/9ruOX/VMXt/1NSTv8vLyz/aLfO/1LI2v9TUk7/Ly8s/1q84P9Wxez/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/Rrzv/1G/5/9ycW7/TEtH/2DA3P9hw9b/YmFe/zs6Nv9Yvev/Y8Lo/11dWv9TUk7/U1JO/zU0Mf81NDH/NTQx/2JhXv9iYV7/Ozo2/zs6Nv9iYV7/XV1a/zU0Mf9MS0f/cG9s/2JhXv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
   trap_gripping: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv8qKSf/MjEv/1NSTv9MS0f/IB8d/y4tK/9TUk7/TEtH/yopJ/8gHx3/U1JO/1NSTv9MS0f/U1JO/09OSv8gHx3/p4Ft/4l2av9PTkr/MjEv/5+fn/+Tk5P/U1JO/y4tK/+goKD/iXZq/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/8eEX/+Gc2n/dXVx/09OSv+Ghob/paWl/3BvbP9TUk7/rKys/7OFav9ramf/U1JO/1NSTv87Ojb/Ozo2/zU0Mf91dXH/cnFu/1NSTv9PTkr/YmFe/2JhXv81NDH/Ozo2/11dWv9iYV7/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/Li0r/zIxL/9TUk7/U1JO/yAfHf8qKSf/U1JO/1NSTv8yMS//Kikn/zs6Nv9PTkr/T05K/1NSTv9PTkr/IyMg/56env+enp7/U1JO/zIxL/+RkZH/r4Rs/1NSTv8vLyz/0mwy/7F0Vf81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv+uhGz/rIJt/3Jxbv9GRUH/h4eH/6ioqP9ycW7/U1JO/9VpLv+YcVv/YmFe/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/YmFe/2JhXv87Ojb/NTQx/11dWv9ycW7/U1JO/09OSv91dXH/cnFu/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/y4tK/8yMS//T05K/0ZFQf8gHx3/MjEv/1NSTv9PTkr/Ly8s/zIxL/87Ojb/T05K/09OSv87Ojb/U1JO/zIxL/+Hh4f/uYVo/1NSTv8vLyz/yHJE/9JsNf9TUk7/Ly8s/6Wlpf+ampr/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/o6Oj/7mFaP9ycW7/TEtH/9JkKP/Cc0n/YmFe/zs6Nv+ZmZn/mZmZ/11dWv9TUk7/U1JO/zU0Mf81NDH/NTQx/2JhXv9iYV7/Ozo2/zs6Nv9iYV7/XV1a/zU0Mf9MS0f/cG9s/2JhXv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
-  trap_summoning: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv8qKSf/MjEv/1NSTv9MS0f/IB8d/y4tK/9TUk7/TEtH/yopJ/8gHx3/U1JO/1NSTv9MS0f/U1JO/09OSv8gHx3/mNn//9v///9PTkr/MjEv/4rL//+t7v//U1JO/y4tK//c////y////1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/6Di///G////dXVx/09OSv/c////svP//3BvbP9TUk7/svP//6Di//9ramf/U1JO/1NSTv87Ojb/Ozo2/zU0Mf91dXH/cnFu/1NSTv9PTkr/YmFe/2JhXv81NDH/Ozo2/11dWv9iYV7/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/Li0r/zIxL/9TUk7/U1JO/yAfHf8qKSf/U1JO/1NSTv8yMS//Kikn/zs6Nv9PTkr/T05K/1NSTv9PTkr/IyMg/6vs///O////U1JO/zIxL/+5+v//u/z//1NSTv8vLyz/q+z//8D///81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv+y8///wv///3Jxbv9GRUH/vv///5/g//9ycW7/U1JO/6Di///U////YmFe/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/YmFe/2JhXv87Ojb/NTQx/11dWv9ycW7/U1JO/09OSv91dXH/cnFu/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/y4tK/8yMS//T05K/0ZFQf8gHx3/MjEv/1NSTv9PTkr/Ly8s/zIxL/87Ojb/T05K/09OSv87Ojb/U1JO/zIxL/+P0P//isv//1NSTv8vLyz/ouP//53e//9TUk7/Ly8s/77////N////NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/1////6Lj//9ycW7/TEtH/+P///+k5f//YmFe/zs6Nv+29///3v///11dWv9TUk7/U1JO/zU0Mf81NDH/NTQx/2JhXv9iYV7/Ozo2/zs6Nv9iYV7/XV1a/zU0Mf9MS0f/cG9s/2JhXv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" }
+  trap_summoning: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv8qKSf/MjEv/1NSTv9MS0f/IB8d/y4tK/9TUk7/TEtH/yopJ/8gHx3/U1JO/1NSTv9MS0f/U1JO/09OSv8gHx3/mNn//9v///9PTkr/MjEv/4rL//+t7v//U1JO/y4tK//c////y////1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/6Di///G////dXVx/09OSv/c////svP//3BvbP9TUk7/svP//6Di//9ramf/U1JO/1NSTv87Ojb/Ozo2/zU0Mf91dXH/cnFu/1NSTv9PTkr/YmFe/2JhXv81NDH/Ozo2/11dWv9iYV7/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/Li0r/zIxL/9TUk7/U1JO/yAfHf8qKSf/U1JO/1NSTv8yMS//Kikn/zs6Nv9PTkr/T05K/1NSTv9PTkr/IyMg/6vs///O////U1JO/zIxL/+5+v//u/z//1NSTv8vLyz/q+z//8D///81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv+y8///wv///3Jxbv9GRUH/vv///5/g//9ycW7/U1JO/6Di///U////YmFe/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/YmFe/2JhXv87Ojb/NTQx/11dWv9ycW7/U1JO/09OSv91dXH/cnFu/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/y4tK/8yMS//T05K/0ZFQf8gHx3/MjEv/1NSTv9PTkr/Ly8s/zIxL/87Ojb/T05K/09OSv87Ojb/U1JO/zIxL/+P0P//isv//1NSTv8vLyz/ouP//53e//9TUk7/Ly8s/77////N////NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/1////6Lj//9ycW7/TEtH/+P///+k5f//YmFe/zs6Nv+29///3v///11dWv9TUk7/U1JO/zU0Mf81NDH/NTQx/2JhXv9iYV7/Ozo2/zs6Nv9iYV7/XV1a/zU0Mf9MS0f/cG9s/2JhXv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_toxic_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_fire_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_paralytic_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_inactive: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv8qKSf/MjEv/1NSTv9MS0f/IB8d/y4tK/9TUk7/TEtH/yopJ/8gHx3/U1JO/1NSTv9MS0f/U1JO/09OSv8gHx3/AAAA/wAAAP9PTkr/MjEv/wAAAP8AAAD/U1JO/y4tK/8AAAD/AAAA/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/wAAAP8AAAD/dXVx/09OSv8AAAD/AAAA/3BvbP9TUk7/AAAA/wAAAP9ramf/U1JO/1NSTv87Ojb/Ozo2/zU0Mf91dXH/cnFu/1NSTv9PTkr/YmFe/2JhXv81NDH/Ozo2/11dWv9iYV7/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/Li0r/zIxL/9TUk7/U1JO/yAfHf8qKSf/U1JO/1NSTv8yMS//Kikn/zs6Nv9PTkr/T05K/1NSTv9PTkr/IyMg/wAAAP8AAAD/U1JO/zIxL/8AAAD/AAAA/1NSTv8vLyz/AAAA/wAAAP81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv8AAAD/AAAA/3Jxbv9GRUH/AAAA/wAAAP9ycW7/U1JO/wAAAP8AAAD/YmFe/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/YmFe/2JhXv87Ojb/NTQx/11dWv9ycW7/U1JO/09OSv91dXH/cnFu/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/y4tK/8yMS//T05K/0ZFQf8gHx3/MjEv/1NSTv9PTkr/Ly8s/zIxL/87Ojb/T05K/09OSv87Ojb/U1JO/zIxL/8AAAD/AAAA/1NSTv8vLyz/AAAA/wAAAP9TUk7/Ly8s/wAAAP8AAAD/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/AAAA/wAAAP9ycW7/TEtH/wAAAP8AAAD/YmFe/zs6Nv8AAAD/AAAA/11dWv9TUk7/U1JO/zU0Mf81NDH/NTQx/2JhXv9iYV7/Ozo2/zs6Nv9iYV7/XV1a/zU0Mf9MS0f/cG9s/2JhXv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_poison_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_alarm_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_lightning_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_gripping_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  trap_summoning_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  high_grass: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/WZlK/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/1mZSv87Ojb/NTQx/zs6Nv9PTkr/WZlK/1mZSv9TUk7/T05K/zs6Nv9ZmUr/U1JO/1NSTv9MS0f/NTQx/0xLR/9Idjz/TEtH/0ZFQf9ZmUr/U1JO/1mZSv9MS0f/U1JO/09OSv81NDH/WZlK/1NSTv9PTkr/U1JO/1mZSv9PTkr/MjEv/y4tK/9PTkr/WZlK/1NSTv9Idjz/U1JO/y4tK/9Idjz/NTQx/1mZSv9ZmUr/U1JO/09OSv9ZmUr/TEtH/0xLR/9TUk7/WZlK/zU0Mf8qKSf/SHY8/zIxL/87Ojb/IyMg/zU0Mf9TUk7/WZlK/1NSTv9PTkr/WZlK/zs6Nv81NDH/Ozo2/1mZSv87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1mZSv9TUk7/U1JO/1mZSv9GRUH/U1JO/1NSTv9Idjz/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9ZmUr/SHY8/1NSTv9Idjz/WZlK/1NSTv9PTkr/SHY8/0xLR/81NDH/SHY8/y8vLP9TUk7/RkVB/zs6Nv9GRUH/WZlK/0h2PP9GRUH/SHY8/0h2PP9PTkr/MjEv/0h2PP8yMS//IyMg/0ZFQf9PTkr/NTQx/zU0Mf9ZmUr/Ozo2/1mZSv9Idjz/IB8d/yAfHf9Idjz/U1JO/y8vLP8yMS//T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/WZlK/0xLR/9TUk7/SHY8/0ZFQf8gHx3/MjEv/1NSTv9PTkr/WZlK/1NSTv9ZmUr/T05K/09OSv87Ojb/U1JO/1mZSv9PTkr/U1JO/0h2PP9Idjz/Ozo2/0xLR/9TUk7/WZlK/1mZSv9GRUH/WZlK/09OSv9PTkr/Ozo2/0xLR/9ZmUr/T05K/09OSv9Idjz/SHY8/zs6Nv9Idjz/Ozo2/0h2PP81NDH/IB8d/0h2PP8yMS//U1JO/zU0Mf81NDH/SHY8/zs6Nv87Ojb/SHY8/0h2PP8jIyD/IB8d/zU0Mf9Idjz/TEtH/zs6Nv8gHx3/IyMg/zU0Mf8yMS//Kikn/yMjIP9Idjz/Ly8s/0h2PP9Idjz/Ly8s/yopJ/8gHx3/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv8jIyD/MjEv/y8vLP8uLSv/MjEv/zIxL/9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  sign: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf8vLiv/Ly4r/y8uK/8vLiv/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/y8uK/84NzT/QkI+/0JCPv89PDn/Kion/5h1Rf98VTH/PTw5/zg3NP8qKif/QkI+/0JCPv9MS0f/U1JO/z8+O/8qKif/j29D/41uQ/+NbkP/kXFG/5BxRP+NbkP/kHFE/41uQ/+Pb0P/lXRJ/5NzSP8/Pjv/QkI+/0xLR/89PDn/jW5D/3RRMf9zUDD/eVU1/3dUMv95VTX/eFU0/3hVNP95VTX/dVMx/3pWNv9mSzD/Zksw/0JCPv87Ojb/Ly4r/5V0Sf93VDL/dVMx/2hOMv9oTjL/eVU1/2hNMf9mSzD/Zksw/2ZLMP93VDL/aE0x/2hNMf8vLiv/U1JO/z08Of+Sckf/ZUov/0o3JP9JNiL/RTMg/0k2I/9UOyT/UDgi/0k2Iv9JNiL/SDUi/2ZLMP9jSS7/Pz47/1NSTv8/Pjv/kXFG/2VKL/9mSzD/Zksw/2NJLv9mSzD/ak80/2dMMf9nTDH/Zksw/2VKL/9mSzD/aE4y/z8+O/9TUk7/ODc0/5FxRv9nTDH/ak80/0c0If9HNCL/RTMg/0c0If9HNCL/RzQi/3dUMv96Vjb/d1Qy/2NJLv8/Pjv/NTQx/yoqJ/+QcUT/Z0wx/2pPNP91UzH/dVMx/3VTMf93VDL/eFU0/3RRMf91UzH/dVMx/3NQMP9qTzT/Kion/zs6Nv84NzT/kXFG/3hVNP90UTH/d1Qy/3hVNP93VDL/eVU1/3VTMf95VTX/dFEx/3lVNf95VTX/Z0wx/z8+O/87Ojb/QkI+/0JCPv9oTTH/Zksw/2ZLMP9lSi//Y0ku/2NJLv9qTzT/ZUov/2ZLMP9oTjL/aE0x/z8+O/8/Pjv/Ozo2/0xLR/8/Pjv/Pz47/z8+O/8/Pjv/PTw5/y8uK/9wUzD/VT4l/y8uK/8qKif/Kion/yoqJ/9CQj7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv8vLiv/l3RE/2RHKf89PDn/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/Pz47/5t3R/9qTS7/Pz47/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/0JCPv8/Pjv/Ly4r/z8+O/9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  bufficon_mind_vision: { w: 7, h: 7, rgba: "uGK4/7hiuP+4Yrj/uGK4/7hiuP+4Yrj/uGK4/7hiuP/vk87//8Tl///E5f//xOX/75PO/7hiuP/vk87//8Tl/7hiuP/vk87/uGK4///E5f/vk87//8Tl/7hiuP+4Yrj//8Tl/7hiuP+4Yrj//8Tl/++Tzv//xOX/uGK4/++Tzv+4Yrj//8Tl/++Tzv+4Yrj/75PO///E5f//xOX//8Tl/++Tzv+4Yrj/uGK4/7hiuP+4Yrj/uGK4/7hiuP+4Yrj/uGK4/w==" },
+  bufficon_levitation: { w: 7, h: 7, rgba: "ZtT//2bU//9m1P//ZtT//2bU//9m1P//ZtT//2bU//9m1P//ZtT//7Lp/////////////2bU//9m1P//ZtT//////////////////2bU//9m1P//ZtT///////////////////////9m1P//ZtT//2bU//////////////////+y6f//ZtT//2bU//9m1P//s+r/////////////ZtT//2bU//9m1P//ZtT//2bU//9m1P//ZtT//2bU//9m1P//ZtT//w==" },
+  bufficon_fire: { w: 7, h: 7, rgba: "/yoA//8qAP//KgD//6oz//8qAP//KgD//yoA//8qAP//KgD///9m//8qAP//KgD//yoA//8qAP//KgD//yoA//8qAP///2b//6oz//8qAP//KgD//yoA//+qM////2b///9m////Zv//qjP//yoA//8qAP//qjP///9m////Zv///2b//9VN//8qAP//KgD//6oz////Zv///2b///9m//+qM///KgD//yoA//8qAP//qjP//6oz//+qM///KgD//yoA/w==" },
+  bufficon_poison: { w: 7, h: 7, rgba: "ly+Z/5cvmf+XL5n/ly+Z/5cvmf+XL5n/ly+Z/5cvmf+XL5n/SxdM/0sXTP9LF0z/ly+Z/5cvmf+XL5n/AAAA/wAAAP8AAAD/AAAA/wAAAP+XL5n/ly+Z/wAAAP+XL5n/AAAA/5cvmf8AAAD/ly+Z/5cvmf8AAAD/AAAA/0wYTf8AAAD/AAAA/5cvmf+XL5n/TBhN/wAAAP8AAAD/AAAA/0wYTf+XL5n/ly+Z/5cvmf9MGE3/ly+Z/0wYTf+XL5n/ly+Z/w==" },
+  bufficon_paralysis: { w: 7, h: 7, rgba: "/9tl///bZf//22X//9tl///bZf//22X//9tl///bZf+AbjP/AAAA/wAAAP8AAAD/gG4z///bZf//22X/AAAA///bZf//22X//9tl/wAAAP//22X/AAAA/wAAAP8AAAD//9tl/wAAAP8AAAD/AAAA///bZf8AAAD//9tl///bZf//22X/AAAA///bZf//22X/gG4z/wAAAP8AAAD/AAAA/4BuM///22X//9tl///bZf//22X//9tl///bZf//22X//9tl/w==" },
+  bufficon_hunger: { w: 7, h: 7, rgba: "8nMY//JzGP/ycxj/8nMY//JzGP/ycxj/8nMY//JzGP/yoGb/8uTa/7Ooof/y5Nr/8qBm//JzGP/ycxj/8uTa//Lk2v+zqKH/8uTa//Lk2v/ycxj/8nMY/7Ooof+zqKH/s6ih/7Ooof+zqKH/8nMY//JzGP/y5Nr/8uTa/7Ooof/y5Nr/8uTa//JzGP/ycxj/8qBm//Lk2v+zqKH/8uTa//KgZv/ycxj/8nMY//JzGP/ycxj/8nMY//JzGP/ycxj/8nMY/w==" },
+  bufficon_starvation: { w: 7, h: 7, rgba: "zAwM/8wMDP/MDAz/zAwM/8wMDP/MDAz/zAwM/8wMDP/eYlv/8uTa/7Ooof/y5Nr/3mJb/8wMDP/MDAz/8uTa//Lk2v+zqKH/8uTa//Lk2v/MDAz/zAwM/7Ooof+zqKH/s6ih/7Ooof+zqKH/zAwM/8wMDP/y5Nr/8uTa/7Ooof/y5Nr/8uTa/8wMDP/MDAz/3mJb//Lk2v+zqKH/8uTa/95iW//MDAz/zAwM/8wMDP/MDAz/zAwM/8wMDP/MDAz/zAwM/w==" },
+  bufficon_slow: { w: 7, h: 7, rgba: "/1Uz//9VM///VTP//1Uz//9VM///VTP//1Uz//9VM/+yOyT/AAAA/wAAAP8AAAD/sjsk//9VM///VTP/AAAA//9VM/9/Khn//1Uz/wAAAP//VTP//1Uz/wAAAP//VTP/AAAA/7I7JP8AAAD//1Uz//9VM/8AAAD//1Uz//9VM///VTP/AAAA//9VM///VTP/sjsk/wAAAP8AAAD/AAAA/7I7JP//VTP//1Uz//9VM///VTP//1Uz//9VM///VTP//1Uz/w==" },
+  bufficon_ooze: { w: 7, h: 7, rgba: "AIBW/wCAVv8AgFb/AIBW/wCAVv8AgFb/AIBW/wCAVv8AgFb/AIBW/wCAVv8AWTz/AFk8/wCAVv8AgFb/AIBW/wCAVv8AgFb/AAAA/wAAAP8AgFb/AIBW/wCAVv8AgFb/AAAA/wAAAP8AWTz/AIBW/wCAVv8AgFb/AAAA/wAAAP8AAAD/AIBW/wCAVv8AgFb/AAAA/wAAAP8AAAD/AAAA/wAAAP8AgFb/AIBW/wCAVv8AgFb/AIBW/wCAVv8AgFb/AIBW/w==" },
+  bufficon_amok: { w: 7, h: 7, rgba: "AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD//xoa//8aGv+ADQ3/AAAA/wAAAP8AAAD/AAAA/wAAAP+ADQ3//xoa/wAAAP8AAAD/AAAA//8aGv//Ghr/AAAA/wAAAP//Ghr/AAAA/wAAAP8AAAD/AAAA//8aGv8AAAD/AAAA/wAAAP8AAAD//xoa/4ANDf8AAAD/gA0N/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/w==" },
+  bufficon_terror: { w: 7, h: 7, rgba: "AAAA/wAAAP////////////////8AAAD/AAAA/wAAAP//////gICA//////+AgID//////wAAAP8AAAD//////wAAAP//////AAAA//////8AAAD/AAAA/wAAAP////////////////8AAAD/AAAA/wAAAP8AAAD//////wAAAP//////AAAA/wAAAP8AAAD/AAAA/4CAgP8AAAD/gICA/wAAAP8AAAD/AAAA/wAAAP8AAAD/gICA/wAAAP8AAAD/AAAA/w==" },
+  bufficon_roots: { w: 7, h: 7, rgba: "M0wA/zNMAP8zTAD/M0wA/zNMAP8zTAD/M0wA/zNMAP8zTAD//3kZ//95Gf//eRn/M0wA/zNMAP8zTAD/M0wA//95Gf//eRn//3kZ/zNMAP8zTAD/M0wA/4VeCv//eRn//3kZ//95Gf+FXgr/M0wA/zNMAP//eRn//3kZ//95Gf//eRn//3kZ/zNMAP8zTAD//3kZ/4VeCv//eRn/hV4K//95Gf8zTAD/M0wA//95Gf8zTAD//3kZ/zNMAP//eRn/M0wA/w==" },
+  bufficon_invisible: { w: 7, h: 7, rgba: "AFSm/wBUpv8AVKb/AFSm/wBUpv8AVKb/AFSm/wBUpv8AVKb/f6nS/3+p0v9/qdL/AFSm/wBUpv8AVKb/AFSm/3+p0v9/qdL/f6nS/wBUpv8AVKb/AFSm/wBUpv8AVKb/f6nS/wBUpv8AVKb/AFSm/wBUpv8AVKb/f6nS/3+p0v9/qdL/AFSm/wBUpv8AVKb/AFSm/3+p0v8AVKb/f6nS/wBUpv8AVKb/AFSm/wBUpv8AVKb/AFSm/wBUpv8AVKb/AFSm/w==" },
+  bufficon_shadows: { w: 7, h: 7, rgba: "AFgm/wBYJv8AWCb/AFgm/wBYJv8AWCb/AFgm/wBYJv8AWCb/AFgm/wDlAP8AWCb/AFgm/wBYJv8AWCb/AFgm/wDlAP8A5QD/AOUA/wBYJv8AWCb/AFgm/wDlAP8A5QD/AOUA/wDlAP8A5QD/AFgm/wBYJv8A5QD/AOUA/wDlAP8A5QD/AOUA/wBYJv8AWCb/AK0P/wDlAP8A5QD/AOUA/wCtD/8AWCb/AFgm/wBYJv8AWCb/AOUA/wBYJv8AWCb/AFgm/w==" },
+  bufficon_weakness: { w: 7, h: 7, rgba: "mZl6/5mZev+ZmXr/mZl6/5mZev+ZmXr/mZl6/5mZev+ZmXr/mZl6/5mZev+ZmXr/Khoz/5mZev+ZmXr/mZl6/5mZev+ZmXr/Khoz/yoaM/+ZmXr/mZl6/5mZev8qGjP/mZl6/yoaM/+ZmXr/mZl6/5mZev8qGjP/Khoz/5mZev+ZmXr/mZl6/5mZev+ZmXr/Khoz/5mZev+ZmXr/mZl6/5mZev+ZmXr/mZl6/5mZev+ZmXr/mZl6/5mZev+ZmXr/mZl6/w==" },
+  bufficon_frost: { w: 7, h: 7, rgba: "/////////////////////////////////////////////////////1Z0uf//////////////////////VnS5//////9WdLn//////1Z0uf////////////////9WdLn/VnS5/1Z0uf////////////////9WdLn//////1Z0uf//////VnS5//////////////////////9WdLn//////////////////////////////////////////////////////w==" },
+  bufficon_blindness: { w: 7, h: 7, rgba: "R2Sd/0dknf9HZJ3/R2Sd/0dknf9HZJ3/R2Sd/0dknf8nMoD/BgA7/wYAO/8GADv/JzKA/0dknf8nMoD/BgA7/wYAO/8nMoD/BgA7/wYAO/8nMoD/BgA7/wYAO/8GADv/R2Sd/wYAO/8GADv/BgA7/ycygP8GADv/BgA7/ycygP8GADv/BgA7/ycygP9HZJ3/JzKA/wYAO/8GADv/BgA7/ycygP9HZJ3/R2Sd/0dknf9HZJ3/R2Sd/0dknf9HZJ3/R2Sd/w==" },
+  bufficon_combo: { w: 7, h: 7, rgba: "s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/wAAAP+zs7P/AAAA/7Ozs/8AAAD/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/w==" },
+  bufficon_fury: { w: 7, h: 7, rgba: "AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/4ANDf//Ghr//xoa//8aGv//Ghr//xoa/4ANDf+ADQ3/AAAA/wAAAP//Ghr/AAAA/wAAAP+ADQ3/gA0N//8aGv//Ghr//xoa//8aGv//Ghr/gA0N/wAAAP//Ghr/AAAA/wAAAP8AAAD//xoa/wAAAP8AAAD/gA0N//8aGv//Ghr//xoa/4ANDf8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/w==" },
+  bufficon_healing: { w: 7, h: 7, rgba: "JLNi/ySzYv8ks2L/JLNi/ySzYv8ks2L/JLNi/ySzYv8ks2L/JLNi/5n/NP8ks2L/JLNi/ySzYv8ks2L/JLNi/ySzYv+Z/zT/JLNi/ySzYv8ks2L/JLNi/5n/NP+Z/zT/mf80/5n/NP+Z/zT/JLNi/ySzYv8ks2L/JLNi/5n/NP8ks2L/JLNi/ySzYv8ks2L/JLNi/ySzYv+Z/zT/JLNi/ySzYv8ks2L/JLNi/ySzYv8ks2L/JLNi/ySzYv8ks2L/JLNi/w==" },
+  bufficon_armor: { w: 7, h: 7, rgba: "mY9c/5mPXP+Zj1z/mY9c/5mPXP+Zj1z/mY9c/5mPXP9NPS7/TT0u/009Lv9NPS7/TT0u/5mPXP+Zj1z/TT0u/009Lv9NPS7/TT0u/009Lv+Zj1z/mY9c/009Lv9NPS7/TT0u/009Lv9NPS7/mY9c/5mPXP+Zj1z/TT0u/009Lv9NPS7/mY9c/5mPXP+Zj1z/mY9c/5mPXP9NPS7/mY9c/5mPXP+Zj1z/mY9c/5mPXP+Zj1z/mY9c/5mPXP+Zj1z/mY9c/w==" },
+  bufficon_heart: { w: 7, h: 7, rgba: "5hc5/+YXOf/mFzn/5hc5/+YXOf/mFzn/5hc5/+YXOf/zcov//8zd/+YXOf//zN3/83KL/+YXOf/mFzn//8zd///M3f//zN3//8zd///M3f/mFzn/5hc5///M3f//zN3//8zd///M3f//zN3/5hc5/+YXOf/mFzn//8zd///M3f//zN3/5hc5/+YXOf/mFzn/5hc5/+YXOf//zN3/5hc5/+YXOf/mFzn/5hc5/+YXOf/mFzn/5hc5/+YXOf/mFzn/5hc5/w==" },
+  bufficon_light: { w: 7, h: 7, rgba: "ACFX/wAhV/8AIVf/ACFX/wAhV/8AIVf/ACFX/wAhV/8AIVf/zNMR/8zTEf/M0xH/ACFX/wAhV/8AIVf/zNMR////AP////////8A/8zTEf8AIVf/ACFX/8zTEf/////////////////M0xH/ACFX/wAhV//M0xH///8A/////////wD/zNMR/wAhV/8AIVf/ACFX/8zTEf/M0xH/zNMR/wAhV/8AIVf/ACFX/wAhV/8AIVf/ACFX/wAhV/8AIVf/ACFX/w==" },
+  bufficon_cripple: { w: 7, h: 7, rgba: "ly+Z/5cvmf+XL5n/ly+Z/5cvmf+XL5n/ly+Z/5cvmf+3kUf/zNMR/8zTEf+3kUf/ly+Z/5cvmf+XL5n/zNMR/5cvmf+XL5n/zNMR/5cvmf+XL5n/ly+Z/5cvmf+scWP/zNMR/7eRR/+XL5n/ly+Z/5cvmf+XL5n/zNMR/5cvmf+XL5n/ly+Z/5cvmf+XL5n/ly+Z/7eRR//M0xH/zNMR/8zTEf+XL5n/ly+Z/5cvmf+XL5n/ly+Z/5cvmf+XL5n/ly+Z/w==" },
+  bufficon_barkskin: { w: 7, h: 7, rgba: "AFgm/wBYJv8AWCb/AFgm/wBYJv8AWCb/AFgm/wBYJv9NPS7/AFgm/009Lv8AWCb/TT0u/wBYJv8AWCb/mY9c/wBYJv+Zj1z/AFgm/5mPXP8AWCb/AFgm/5mPXP8AWCb/mY9c/wBYJv+Zj1z/AFgm/wBYJv+Zj1z/mY9c/5mPXP+Zj1z/mY9c/wBYJv8AWCb/AFgm/5mPXP+Zj1z/mY9c/wBYJv8AWCb/AFgm/wBYJv+Zj1z/mY9c/5mPXP8AWCb/AFgm/w==" },
+  bufficon_immunity: { w: 7, h: 7, rgba: "5c9c/+XPXP/lz1z/5c9c/+XPXP/lz1z/5c9c/+XPXP8zTAD/M0wA/zNMAP8zTAD/M0wA/+XPXP/lz1z/M0wA/+XPXP8zTAD/5c9c/zNMAP/lz1z/5c9c/zNMAP8zTAD/M0wA/zNMAP8zTAD/5c9c/+XPXP/lz1z/5c9c/zNMAP/lz1z/5c9c/+XPXP/lz1z/5c9c/zNMAP8zTAD/M0wA/+XPXP/lz1z/5c9c/+XPXP/lz1z/5c9c/+XPXP/lz1z/5c9c/w==" },
+  bufficon_bleeding: { w: 7, h: 7, rgba: "TTYf/002H/9NNh//TTYf/002H/9NNh//TTYf/002H/9NNh//TTYf/8wAAP9NNh//TTYf/002H/9NNh//TTYf/8wAAP/MAAD/zAAA/002H/9NNh//TTYf/8wAAP/MAAD/zAAA/8wAAP/MAAD/TTYf/002H//MAAD/zAAA/8wAAP/MAAD/zAAA/002H/9NNh//TTYf/8wAAP/MAAD/zAAA/002H/9NNh//TTYf/002H/9NNh//TTYf/002H/9NNh//TTYf/w==" },
+  bufficon_mark: { w: 7, h: 7, rgba: "AAAA/wAAAP8AAAD//zMz/wAAAP8AAAD/AAAA/wAAAP8AAAD/UlJS//8zM/9SUlL/AAAA/wAAAP8AAAD/UlJS/8zMzP/MzMz/zMzM/1JSUv8AAAD//zMz//8zM//MzMz//zMz/8zMzP//MzP//zMz/wAAAP9SUlL/zMzM/8zMzP/MzMz/UlJS/wAAAP8AAAD/AAAA/1JSUv//MzP/UlJS/wAAAP8AAAD/AAAA/wAAAP8AAAD//zMz/wAAAP8AAAD/AAAA/w==" },
+  bufficon_deferred: { w: 7, h: 7, rgba: "PUVN/z1FTf89RU3/PUVN/z1FTf89RU3/PUVN/z1FTf94PTb//yoA//8qAP//KgD/eD02/z1FTf89RU3//yoA/z1FTf//KgD//yoA//8qAP89RU3/PUVN//8qAP89RU3//yoA//8qAP//KgD/PUVN/z1FTf//KgD/PUVN/z1FTf89RU3//yoA/z1FTf89RU3/eD02//8qAP//KgD//yoA/3g9Nv89RU3/PUVN/z1FTf89RU3/PUVN/z1FTf89RU3/PUVN/w==" },
+  bufficon_vertigo: { w: 7, h: 7, rgba: "/////////////////////wAAAP/MzMz//////8zMzP8AAAD/AAAA/8zMzP//////AAAA//////8AAAD///////////8AAAD//////wAAAP///////////8zMzP8AAAD/AAAA/wAAAP/MzMz///////////8AAAD//////wAAAP///////////wAAAP//////AAAA///////MzMz/AAAA/wAAAP/MzMz//////8zMzP8AAAD//////////////////////w==" },
+  bufficon_rage: { w: 7, h: 7, rgba: "AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP+AVQD//6oA//+qAP//qgD/gFUA/wAAAP+AVQD//6oA//8aGv//Yg3//xoa//+qAP+AVQD//6oA//8aGv//Ghr//6oA//8aGv//Ghr//6oA/4BVAP//qgD//xoa//9iDf//Ghr//6oA/4BVAP8AAAD/gFUA//+qAP//qgD//6oA/4BVAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/w==" },
+  bufficon_sacrifice: { w: 7, h: 7, rgba: "IkRm/yJEZv8iRGb/RIju/yJEZv8iRGb/IkRm/yJEZv8iRGb/u8z//yJEZv8iRGb/IkRm/yJEZv8iRGb/IkRm/yJEZv+7zP//RIju/yJEZv8iRGb/IkRm/0SI7v+7zP//u8z//7vM//9EiO7/IkRm/yJEZv9EiO7/u8z//7vM//+7zP//u8z//yJEZv8iRGb/RIju/7vM//+7zP//u8z//0SI7v8iRGb/IkRm/yJEZv9EiO7/RIju/0SI7v8iRGb/IkRm/w==" }
 };
 
 // src/engine/render.ts
@@ -6041,19 +7209,10 @@ class Renderer {
     ctx.drawImage(this.entitySprite(game.hero.sprite), hx, hy, TILE_PX, TILE_PX);
   }
   updateCamera(game, vw, vh) {
-    const level = game.level;
     const viewTilesW = vw / TILE_PX;
     const viewTilesH = vh / TILE_PX;
-    if (level.w <= viewTilesW) {
-      this.camX = (level.w - viewTilesW) / 2;
-    } else {
-      this.camX = Math.min(Math.max(game.hero.x + 0.5 - viewTilesW / 2, 0), level.w - viewTilesW);
-    }
-    if (level.h <= viewTilesH) {
-      this.camY = (level.h - viewTilesH) / 2;
-    } else {
-      this.camY = Math.min(Math.max(game.hero.y + 0.5 - viewTilesH / 2, 0), level.h - viewTilesH);
-    }
+    this.camX = game.hero.x + 0.5 - viewTilesW / 2;
+    this.camY = game.hero.y + 0.5 - viewTilesH / 2;
   }
   tileSprite(level, x, y) {
     const t = level.get(x, y);
@@ -6069,8 +7228,10 @@ class Renderer {
         break;
       case 1 /* FLOOR */:
       case 11 /* WALKWAY */:
-      case 36 /* TRAP_INACTIVE */:
         name = (x * 7 + y * 13) % 3 === 0 ? "floor1" : "floor0";
+        break;
+      case 36 /* TRAP_INACTIVE */:
+        name = "trap_inactive";
         break;
       case 38 /* EMBERS */:
         name = "embers";
@@ -6092,8 +7253,10 @@ class Renderer {
         name = "water";
         break;
       case 10 /* GRASS */:
-      case 39 /* HIGH_GRASS */:
         name = "grass";
+        break;
+      case 39 /* HIGH_GRASS */:
+        name = "high_grass";
         break;
       case 8 /* CHASM */:
         name = "chasm";
@@ -6104,26 +7267,50 @@ class Renderer {
       case 20 /* TRAP_TOXIC */:
         name = "trap_toxic";
         break;
+      case 21 /* TRAP_TOXIC_HIDDEN */:
+        name = "trap_toxic_secret";
+        break;
       case 22 /* TRAP_FIRE */:
         name = "trap_fire";
+        break;
+      case 23 /* TRAP_FIRE_HIDDEN */:
+        name = "trap_fire_secret";
         break;
       case 24 /* TRAP_PARALYTIC */:
         name = "trap_paralytic";
         break;
+      case 25 /* TRAP_PARALYTIC_HIDDEN */:
+        name = "trap_paralytic_secret";
+        break;
       case 26 /* TRAP_POISON */:
         name = "trap_poison";
+        break;
+      case 27 /* TRAP_POISON_HIDDEN */:
+        name = "trap_poison_secret";
         break;
       case 28 /* TRAP_ALARM */:
         name = "trap_alarm";
         break;
+      case 29 /* TRAP_ALARM_HIDDEN */:
+        name = "trap_alarm_secret";
+        break;
       case 30 /* TRAP_LIGHTNING */:
         name = "trap_lightning";
+        break;
+      case 31 /* TRAP_LIGHTNING_HIDDEN */:
+        name = "trap_lightning_secret";
         break;
       case 32 /* TRAP_GRIPPING */:
         name = "trap_gripping";
         break;
+      case 33 /* TRAP_GRIPPING_HIDDEN */:
+        name = "trap_gripping_secret";
+        break;
       case 34 /* TRAP_SUMMONING */:
         name = "trap_summoning";
+        break;
+      case 35 /* TRAP_SUMMONING_HIDDEN */:
+        name = "trap_summoning_secret";
         break;
       case 13 /* ALCHEMY */:
         name = "alchemy";
@@ -6476,23 +7663,85 @@ function readHeroView(game) {
     pos: game.hero.y * game.level.w + game.hero.x
   };
 }
-function buffLabel(kind) {
+
+// src/ui/bufficons.ts
+var BUFF_ICON_PX = 7;
+var BUFF_ICON_SCALE = 3;
+var BUFF_ICON_DRAW = BUFF_ICON_PX * BUFF_ICON_SCALE;
+var BUFF_ICON_GAP = 2 * BUFF_ICON_SCALE;
+var BUFF_ICON_PITCH = BUFF_ICON_DRAW + BUFF_ICON_GAP;
+var BUFF_REMOVE_MS = 600;
+function buffIconKey(kind) {
   switch (kind) {
     case "burning":
-      return "Burning";
+      return "bufficon_fire";
     case "poison":
-      return "Poisoned";
-    case "ooze":
-      return "Oozed";
+      return "bufficon_poison";
     case "paralysis":
-      return "Paralysed";
+      return "bufficon_paralysis";
+    case "ooze":
+      return "bufficon_ooze";
     case "roots":
-      return "Rooted";
-    case "hunger":
-      return "Hunger";
+      return "bufficon_roots";
     default:
-      return kind.charAt(0).toUpperCase() + kind.slice(1);
+      return null;
   }
+}
+function buffStripKeys(buffs) {
+  const keys = [];
+  for (const b of buffs) {
+    const k = buffIconKey(b);
+    if (k && !keys.includes(k))
+      keys.push(k);
+  }
+  return keys;
+}
+function buffIconX(x0, i) {
+  return x0 + i * BUFF_ICON_PITCH;
+}
+function trackRemovedIcons(prev, nextKeys, live, now) {
+  const kept = live.filter((r) => nextKeys.includes(r.key) || removedIconTransform(r.at, now) !== null);
+  for (let i = 0;i < prev.keys.length; i++) {
+    const k = prev.keys[i];
+    if (!nextKeys.includes(k) && !kept.some((r) => r.key === k)) {
+      kept.push({ key: k, x: buffIconX(prev.x0, i), at: now });
+    }
+  }
+  return kept;
+}
+function removedIconTransform(at, now) {
+  const p = (now - at) / BUFF_REMOVE_MS;
+  if (p < 0 || p >= 1)
+    return null;
+  return { scale: 1 + 5 * p, alpha: 1 - p };
+}
+var iconCache = new Map;
+function buffIconCanvas(key) {
+  if (iconCache.has(key))
+    return iconCache.get(key);
+  let canvas = null;
+  try {
+    const spr = ORIGINAL_SPRITES[key];
+    if (spr && spr.w === BUFF_ICON_PX && spr.h === BUFF_ICON_PX) {
+      const bin = atob(spr.rgba);
+      const bytes = new Uint8ClampedArray(bin.length);
+      for (let i = 0;i < bin.length; i++)
+        bytes[i] = bin.charCodeAt(i);
+      canvas = document.createElement("canvas");
+      canvas.width = BUFF_ICON_PX;
+      canvas.height = BUFF_ICON_PX;
+      const g = canvas.getContext("2d");
+      if (g) {
+        g.putImageData(new ImageData(bytes, BUFF_ICON_PX, BUFF_ICON_PX), 0, 0);
+      } else {
+        canvas = null;
+      }
+    }
+  } catch {
+    canvas = null;
+  }
+  iconCache.set(key, canvas);
+  return canvas;
 }
 
 // src/ui/hud.ts
@@ -6529,6 +7778,9 @@ var SLOT = 56;
 
 class Hud {
   logBuffer = new LogBuffer;
+  prevStripKeys = [];
+  removedStripIcons = [];
+  stripX0 = 8;
   layout(view) {
     const pad = 10;
     const dartBtn = { x: view.w - pad - SLOT, y: view.h - pad - SLOT, w: SLOT, h: SLOT };
@@ -6538,11 +7790,11 @@ class Hud {
   draw(ctx, game, sprites, view, opts = { throwMode: false }) {
     const hv = readHeroView(game);
     const L = this.layout(view);
-    this.drawTopBar(ctx, game, view, hv);
+    this.drawTopBar(ctx, game, view, hv, opts.now);
     this.drawLog(ctx, view);
     this.drawQuickSlots(ctx, game, sprites, view, L, opts.throwMode);
   }
-  drawTopBar(ctx, game, view, hv) {
+  drawTopBar(ctx, game, view, hv, now) {
     ctx.fillStyle = "rgba(10, 8, 14, 0.78)";
     ctx.fillRect(0, 0, view.w, 64);
     const barW = Math.min(210, view.w - 180);
@@ -6584,27 +7836,39 @@ class Hud {
     ctx.fillStyle = UI.gold;
     ctx.font = "bold 12px system-ui, sans-serif";
     ctx.fillText(`${hv.gold}`, gx + 12, 52);
-    let bx = 8;
-    ctx.font = "bold 10px system-ui, sans-serif";
-    for (const b of hv.buffs) {
-      if (b === "hunger")
-        continue;
-      const label = buffLabel(b);
-      const w = ctx.measureText(label).width + 14;
-      ctx.fillStyle = buffColor(b);
-      ctx.strokeStyle = UI.ink;
-      ctx.lineWidth = 1.5;
-      roundRect(ctx, { x: bx, y: 44, w, h: 16 }, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#fff";
-      ctx.textAlign = "center";
-      ctx.fillText(label, bx + w / 2, 52.5);
-      ctx.textAlign = "left";
-      bx += w + 6;
-      if (bx > view.w - 110)
+    this.drawBuffStrip(ctx, view, hv.buffs, 8, 43, now);
+  }
+  drawBuffStrip(ctx, view, buffs, x0, y, now) {
+    const t = now ?? Date.now();
+    const keys = buffStripKeys(buffs);
+    this.removedStripIcons = trackRemovedIcons({ keys: this.prevStripKeys, x0: this.stripX0 }, keys, this.removedStripIcons, t);
+    this.prevStripKeys = keys;
+    this.stripX0 = x0;
+    ctx.imageSmoothingEnabled = false;
+    const maxX = view.w - 110;
+    let bx = x0;
+    for (const key of keys) {
+      const img = buffIconCanvas(key);
+      if (img)
+        ctx.drawImage(img, bx, y, BUFF_ICON_DRAW, BUFF_ICON_DRAW);
+      bx += BUFF_ICON_PITCH;
+      if (bx > maxX)
         break;
     }
+    for (const r of this.removedStripIcons) {
+      const tr = removedIconTransform(r.at, t);
+      if (!tr)
+        continue;
+      const img = buffIconCanvas(r.key);
+      if (!img)
+        continue;
+      const size = BUFF_ICON_DRAW * tr.scale;
+      const cx = r.x + BUFF_ICON_DRAW / 2;
+      const cy = y + BUFF_ICON_DRAW / 2;
+      ctx.globalAlpha = Math.max(0, tr.alpha);
+      ctx.drawImage(img, cx - size / 2, cy - size / 2, size, size);
+    }
+    ctx.globalAlpha = 1;
   }
   drawLog(ctx, view) {
     const lines = this.logBuffer.visible(4);
@@ -6656,22 +7920,6 @@ class Hud {
     ctx.textAlign = "center";
     ctx.fillText(hint, r.x + r.w / 2, r.y + r.h - 5);
     ctx.textAlign = "left";
-  }
-}
-function buffColor(kind) {
-  switch (kind) {
-    case "burning":
-      return UI.buffBurn;
-    case "poison":
-      return UI.buffPoison;
-    case "ooze":
-      return UI.buffOoze;
-    case "paralysis":
-      return UI.buffPara;
-    case "roots":
-      return UI.buffRoot;
-    default:
-      return "#6e7484";
   }
 }
 
@@ -7570,7 +8818,7 @@ class UiManager {
   deathCause(g) {
     for (let i = g.log.length - 1;i >= Math.max(0, g.log.length - 20); i--) {
       const line = g.log[i];
-      if (/killed by|slain|you died/i.test(line))
+      if (/killed by|slain|you died|to death\.\.\.|killed you\.\.\./i.test(line))
         return line;
     }
     return "The dungeon claims another.";
