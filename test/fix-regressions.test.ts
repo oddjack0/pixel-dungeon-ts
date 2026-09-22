@@ -256,7 +256,9 @@ describe('depth transitions tick buffs and hunger/regen', () => {
     g.queueIntent({ kind: 'descend' });
     g.pump();
     expect(g.level.depth).toBe(2);
-    expect(hero.hungerLevel).toBe(269); // hunger ticked on the transition
+    // Vanilla Hero.actDescend: transition costs satisfy(-STARVING/10) = +36
+    // hunger when not starving, plus the normal hunger-clock tick (+10).
+    expect(hero.hungerLevel).toBe(305); // 259 + 36 + 10
   });
 
   test('descend ticks buffs before the transition', () => {

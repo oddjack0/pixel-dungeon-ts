@@ -183,4 +183,8 @@ export const stubMechanics: MechanicsHooks = {
   tickHeroClock(_actor: HeroActor, _ctx: ActionContext, _cost: number): void {
     // stub: no hunger/regen
   },
+
+  applyTransitionHunger(_actor: HeroActor): void {
+    // stub: no hunger
+  },
 };

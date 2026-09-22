@@ -23,6 +23,7 @@ import {
   heroAttackSkill,
   heroDamageRoll,
 } from '../mechanics/hero.js';
+import { isStarving, satisfy, STARVING } from '../mechanics/hunger.js';
 import {
   dropSlot,
   equipSlot,
@@ -380,6 +381,15 @@ export const contentMechanics: MechanicsHooks = {
   tickHeroClock(actor: HeroActor, ctx: ActionContext, cost: number): void {
     // Mechanics owns the tick logic; the engine owns the call site (loop.ts).
     tickHeroClock(ctx.rng, ctx, actor as unknown as ContentHero, cost);
+  },
+
+  applyTransitionHunger(actor: HeroActor): void {
+    // Vanilla Hero.actDescend/actAscend: satisfy(-Hunger.STARVING/10),
+    // skipped when already starving (Hero.java).
+    const hero = actor as unknown as ContentHero;
+    if (!isStarving(hero.hungerLevel)) {
+      hero.hungerLevel = satisfy(hero.hungerLevel, -STARVING / 10);
+    }
   },
 
   saveHero(hero: HeroActor): HeroSaveData {

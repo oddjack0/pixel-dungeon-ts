@@ -96,6 +96,14 @@ export interface MechanicsHooks {
    * The engine calls this for every hero turn, including depth transitions.
    */
   tickHeroClock(actor: HeroActor, ctx: ActionContext, cost: number): void;
+  /**
+   * Vanilla Hero.actDescend/actAscend: when a depth transition actually
+   * occurs, hunger increases by STARVING/10 (satisfy(-STARVING/10)) unless
+   * the hero is already starving (Hero.java actDescend/actAscend). Engine
+   * owns the call site (it knows when a transition happens); mechanics owns
+   * the hunger logic.
+   */
+  applyTransitionHunger(actor: HeroActor): void;
   /** Spawn the hero for a fresh run. */
   spawnHero(rng: RNG, level: Level): HeroActor;
   /** Spawn mobs for a fresh level (empty array is fine pre-content). */

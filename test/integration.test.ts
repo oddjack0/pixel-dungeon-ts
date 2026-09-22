@@ -6,6 +6,7 @@ import { Terrain } from '../src/core/grid';
 import { clearSave, hasSave, loadGame, saveGame } from '../src/engine/save';
 import type { ContentHero } from '../src/content/hero';
 import type { HeroIntent } from '../src/engine/seams';
+import { HUNGRY } from '../src/mechanics/hunger';
 
 /** In-memory localStorage shim (bun has no DOM storage). */
 function installStorage(): void {
@@ -118,8 +119,10 @@ function makeTestBot(seed: number) {
         doIntent({ kind: 'useItem', slot: s });
         continue;
       }
-      // eat?
-      if (h.hp < h.ht * 0.8) {
+      // eat? (a real player eats when hungry; the bot's hp is pinned for test
+      // robustness so gate on hunger too — vanilla starves non-eaters, and
+      // starvation damage rolls would also diverge the test's RNG stream)
+      if (h.hp < h.ht * 0.8 || h.hungerLevel >= HUNGRY) {
         const f = slotOf('ration');
         if (f >= 0) {
           doIntent({ kind: 'useItem', slot: f });

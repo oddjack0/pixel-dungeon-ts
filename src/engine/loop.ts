@@ -175,6 +175,8 @@ export class Game {
   descend(): void {
     const depth = this.level.depth + 1;
     this.changeDepth(depth);
+    // Vanilla Hero.actDescend: depth transitions cost hunger (unless starving).
+    this.deps.mechanics.applyTransitionHunger(this.hero);
     this.logMsg(`You descend to depth ${depth}.`);
   }
 
@@ -186,6 +188,8 @@ export class Game {
     }
     const depth = this.level.depth - 1;
     this.changeDepth(depth);
+    // Vanilla Hero.actAscend: depth transitions cost hunger (unless starving).
+    this.deps.mechanics.applyTransitionHunger(this.hero);
     this.logMsg(`You ascend to depth ${depth}.`);
   }
 
