@@ -72,6 +72,13 @@ function warriorHero() {
     armor: { name: 'cloth armor', str: 9, dr: 2 },
     rangedWeapon: null,
     darts: 8,
+    // ContentHero shape: the content inventory adapter (registered by
+    // src/content/hooks.ts at module load) reads hero.inventory; the stub
+    // must carry the starter kit or full-suite runs crash here.
+    inventory: [
+      { itemId: 'ration', qty: 1 },
+      { itemId: 'dart', qty: 8 },
+    ],
   };
 }
 
@@ -123,7 +130,9 @@ describe('readHeroView', () => {
 
 describe('inventory adapter', () => {
   test('warrior kit shown correctly', () => {
-    const items = readInventory(testGame());
+    // default adapter: assertions below encode its ids ('clotharmor'); the
+    // global adapter is order-dependent (see note on defaultInventoryAdapter).
+    const items = defaultInventoryAdapter(testGame());
     const byId = Object.fromEntries(items.map((i) => [i.id, i]));
     expect(byId['shortsword'].kind).toBe('weapon');
     expect(byId['shortsword'].equipped).toBe(true);
@@ -139,7 +148,8 @@ describe('inventory adapter', () => {
   });
 
   test('context-aware actions per item type', () => {
-    const items = readInventory(testGame());
+    // default adapter; see note in 'warrior kit shown correctly'.
+    const items = defaultInventoryAdapter(testGame());
     const byId = Object.fromEntries(items.map((i) => [i.id, i]));
     expect(actionsFor(byId['shortsword'])).toEqual(['equip', 'drop']);
     expect(actionsFor(byId['dart'])).toEqual(['throw', 'drop']);

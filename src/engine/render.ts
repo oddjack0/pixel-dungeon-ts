@@ -1,4 +1,5 @@
 import { ART_PX, PALETTE, REGION_TINTS, SPRITES } from '../assets/sprites.js';
+import { ORIGINAL_SPRITES } from '../assets/original_sprites.js';
 import { Terrain, regionForDepth, type Region } from '../core/grid.js';
 import type { Level } from '../dungeon/level.js';
 import type { Game } from './loop.js';
@@ -199,10 +200,12 @@ export class Renderer {
         name = 'door_secret';
         break;
       case Terrain.FLOOR:
-      case Terrain.EMBERS:
       case Terrain.WALKWAY:
       case Terrain.TRAP_INACTIVE:
         name = (x * 7 + y * 13) % 3 === 0 ? 'floor1' : 'floor0';
+        break;
+      case Terrain.EMBERS:
+        name = 'embers';
         break;
       case Terrain.DOOR:
         name = 'door';
@@ -231,14 +234,52 @@ export class Renderer {
         name = 'well';
         break;
       case Terrain.TRAP_TOXIC:
+        name = 'trap_toxic';
+        break;
       case Terrain.TRAP_FIRE:
+        name = 'trap_fire';
+        break;
       case Terrain.TRAP_PARALYTIC:
+        name = 'trap_paralytic';
+        break;
       case Terrain.TRAP_POISON:
+        name = 'trap_poison';
+        break;
       case Terrain.TRAP_ALARM:
+        name = 'trap_alarm';
+        break;
       case Terrain.TRAP_LIGHTNING:
+        name = 'trap_lightning';
+        break;
       case Terrain.TRAP_GRIPPING:
+        name = 'trap_gripping';
+        break;
       case Terrain.TRAP_SUMMONING:
-        name = 'trap_revealed';
+        name = 'trap_summoning';
+        break;
+      // Special-room tiles (indices = original Terrain.java constants).
+      case Terrain.ALCHEMY:
+        name = 'alchemy';
+        break;
+      case Terrain.PEDESTAL:
+        name = 'pedestal';
+        break;
+      case Terrain.STATUE:
+        name = 'statue';
+        break;
+      case Terrain.BOOKSHELF:
+        name = 'bookshelf';
+        break;
+      // Chests/tombs/bones are heap sprites in the original (Heap.image ->
+      // ItemSpriteSheet), drawn on floor cells; map to the same frames here.
+      case Terrain.CHEST:
+        name = 'chest';
+        break;
+      case Terrain.CHEST_LOCKED:
+        name = 'chest_locked';
+        break;
+      case Terrain.TOMB:
+        name = 'tomb';
         break;
       default:
         // Hidden trap variants render as floor (their cover).
@@ -263,6 +304,21 @@ export class Renderer {
   }
 
   private prerender(name: string, region: Region | undefined): HTMLCanvasElement {
+    // Original Watabou sprites (GPL-3.0): embedded RGBA, decoded
+    // synchronously — no async image loading, no palette remap. These are
+    // pre-colored, so region tinting does not apply to them.
+    const orig = ORIGINAL_SPRITES[name];
+    if (orig) {
+      const bin = atob(orig.rgba);
+      const bytes = new Uint8ClampedArray(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const img = document.createElement('canvas');
+      img.width = orig.w;
+      img.height = orig.h;
+      const g = img.getContext('2d')!;
+      g.putImageData(new ImageData(bytes, orig.w, orig.h), 0, 0);
+      return this.scaleUp(img);
+    }
     const rows = SPRITES[name] ?? missingSpriteRows();
     // Per-region char overrides (art director's REGION_TINTS table).
     const overrides = region ? REGION_TINTS[region] : undefined;
@@ -290,7 +346,11 @@ export class Renderer {
       }
     }
     g.putImageData(data, 0, 0);
-    // Scale up to render size with smoothing off (crisp pixels).
+    return this.scaleUp(img);
+  }
+
+  /** Scale a sprite canvas up to render size with smoothing off (crisp pixels). */
+  private scaleUp(img: HTMLCanvasElement): HTMLCanvasElement {
     const big = document.createElement('canvas');
     big.width = TILE_PX;
     big.height = TILE_PX;

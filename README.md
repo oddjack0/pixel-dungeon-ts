@@ -6,7 +6,7 @@ A ground-up TypeScript port of **Pixel Dungeon**, playable in the browser. HTML5
 
 ## Credit
 
-The original game **Pixel Dungeon** was created by [Watabou](https://github.com/watabou/pixel-dungeon) and is the ground truth for this port's mechanics. All pixel art in this project is original — no assets were copied from the original game.
+The original game **Pixel Dungeon** was created by [Watabou](https://github.com/watabou/pixel-dungeon) and is the ground truth for this port's mechanics. The sprite set in `src/assets/original_sprites.ts` is extracted directly from the original game's assets (hero, mobs, items, and terrain tiles) and used under the same license — see `scripts/extract_original_sprites.ts` for the per-sprite source mapping. Thank you, Watabou.
 
 This project is a GPL-3.0 derivative: it is and will remain open source. See [LICENSE](LICENSE).
 
@@ -35,4 +35,4 @@ Then serve `dist/` with any static server (e.g. `bunx serve dist`) and open it i
 
 ## Status
 
-Under active development in checkpointed stages, each followed by a playtest. Current stage: Milestone 1 (grid engine, movement, rendering, dungeon generation, combat, items) with an art overhaul in progress.
+Under active development in checkpointed stages, each followed by a playtest. Current stage: Milestone 1 (grid engine, movement, rendering, dungeon generation, combat, items); rendering now uses the original Pixel Dungeon sprites (GPL-3.0, credit Watabou) via `src/assets/original_sprites.ts`.
