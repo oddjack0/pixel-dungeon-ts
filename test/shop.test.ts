@@ -262,7 +262,8 @@ describe('trade price math (WndTradeItem.java:168-199)', () => {
 
   test('unitPriceOf: missing catalog entry or absent price -> 0, never invented', () => {
     expect(unitPriceOf('no-such-item')).toBe(0);
-    expect(unitPriceOf('dart')).toBe(0); // M1 catalog has no prices yet
+    expect(unitPriceOf('dart')).toBe(2); // Dart.price() = quantity * 2 (Dart.java)
+    expect(unitPriceOf('gold')).toBe(0); // Item.price() = 0 (Item.java)
   });
 });
 
@@ -399,9 +400,18 @@ describe('sell flow (WndTradeItem.sell/sellOne, WndTradeItem.java:168-195)', () 
   });
 
   test('readSellable lists only items with price() > 0 (WndBag FOR_SALE rule)', () => {
-    const { game } = fakeGame([], [{ itemId: 'dart', qty: 8 }], 0);
-    // The M1 catalog has no prices yet, so nothing is sellable.
-    expect(readSellable(game)).toHaveLength(0);
+    // Darts have a price now (Dart.price() = quantity * 2); gold does not.
+    const { game } = fakeGame(
+      [],
+      [
+        { itemId: 'dart', qty: 8 },
+        { itemId: 'gold', qty: 10 },
+      ],
+      0,
+    );
+    const sellable = readSellable(game);
+    expect(sellable.map((s) => s.itemId)).toEqual(['dart']);
+    expect(sellable[0]!.qty).toBe(8);
   });
 
   test('readShopStock reads only FOR_SALE heaps', () => {
