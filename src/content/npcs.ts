@@ -9,9 +9,13 @@
  * `windows/WndWandmaker.java` (WndWandmaker.java:34-76).
  * GPL-3.0, (C) Oleg Dolya.
  *
- * Vanilla Ghost.Quest / Wandmaker.Quest are static (run-level) quest state;
- * here they are module singletons, reset per run by `resetQuestState()`
- * (called from the content layer's spawnHero). Full quest journals are a
+ * Vanilla Ghost.Quest / Wandmaker.Quest / Blacksmith.Quest are static
+ * (run-level) quest state; here they are module singletons, reset per run by
+ * `resetQuestState()` (called from the content layer's spawnHero) and
+ * persisted across save/load by `saveQuestState()` / `restoreQuestState()`
+ * (wired into src/engine/save.ts — vanilla Dungeon.storeInBundle calls
+ * Ghost.Quest.storeInBundle / Wandmaker.Quest.storeInBundle /
+ * Blacksmith.Quest.storeInBundle). Full quest journals are a
  * later milestone — Journal.add/remove are no-ops (documented below).
  *
  * Shared NPC contract (seams.ts): talkable NPCs expose `onTalk(ctx)`; the
@@ -120,10 +124,80 @@ export function freshWandmakerQuest(): WandmakerQuestState {
 
 export const wandmakerQuest: WandmakerQuestState = freshWandmakerQuest();
 
-/** Reset both quest singletons for a fresh run (called from spawnHero). */
+/** Reset all quest singletons for a fresh run (called from spawnHero). */
 export function resetQuestState(): void {
   Object.assign(ghostQuest, freshGhostQuest());
   Object.assign(wandmakerQuest, freshWandmakerQuest());
+  Object.assign(blacksmithQuest, freshBlacksmithQuest());
+}
+
+/**
+ * Vanilla Blacksmith.Quest statics (Blacksmith.java:251-265): the
+ * blacksmith's reforge/imbue quest state. The NPC dialog/reforge logic is
+ * the Stage-2 blacksmith worker's system; this file owns the run-level
+ * quest state storage only (spawned/alternative/given/completed/reforged —
+ * Blacksmith.java:267-300 storeInBundle/restoreFromBundle).
+ */
+export interface BlacksmithQuestState {
+  /** Vanilla Quest.spawned (Blacksmith.java:253). */
+  spawned: boolean;
+  /**
+   * Vanilla Quest.alternative (Blacksmith.java:255,315): the quest variant
+   * drawn at spawn — false = mine dark gold ore with the pickaxe
+   * (TXT_GOLD_1), true = stain the pickaxe with bat blood (TXT_BLOOD_1).
+   */
+  alternative: boolean;
+  /** Vanilla Quest.given (Blacksmith.java:256). */
+  given: boolean;
+  /** Vanilla Quest.completed (Blacksmith.java:257). */
+  completed: boolean;
+  /** Vanilla Quest.reforged (Blacksmith.java:258). */
+  reforged: boolean;
+}
+
+export function freshBlacksmithQuest(): BlacksmithQuestState {
+  return {
+    spawned: false,
+    alternative: false,
+    given: false,
+    completed: false,
+    reforged: false,
+  };
+}
+
+export const blacksmithQuest: BlacksmithQuestState = freshBlacksmithQuest();
+
+/**
+ * Save-bundle form of the three run-level quest singletons (vanilla
+ * Dungeon.storeInBundle -> Ghost.Quest.storeInBundle (Ghost.java:194-216),
+ * Wandmaker.Quest.storeInBundle (Wandmaker.java:143-160),
+ * Blacksmith.Quest.storeInBundle (Blacksmith.java:275-290)).
+ * JSON-serializable; restored with restoreQuestState().
+ */
+export interface QuestSaveData {
+  ghost: GhostQuestState;
+  wandmaker: WandmakerQuestState;
+  blacksmith: BlacksmithQuestState;
+}
+
+/** Snapshot the quest singletons for the save bundle. */
+export function saveQuestState(): QuestSaveData {
+  return {
+    ghost: { ...ghostQuest },
+    wandmaker: { ...wandmakerQuest },
+    blacksmith: { ...blacksmithQuest },
+  };
+}
+
+/**
+ * Restore the quest singletons from a save bundle. Missing sections (old
+ * saves) fall back to fresh state — vanilla restoreFromBundle leaves the
+ * statics at reset() defaults when the node is absent.
+ */
+export function restoreQuestState(data: QuestSaveData | undefined): void {
+  Object.assign(ghostQuest, freshGhostQuest(), data?.ghost ?? {});
+  Object.assign(wandmakerQuest, freshWandmakerQuest(), data?.wandmaker ?? {});
+  Object.assign(blacksmithQuest, freshBlacksmithQuest(), data?.blacksmith ?? {});
 }
 
 /**

@@ -8,6 +8,11 @@ import {
   type MobSaveData,
   mobsToPlaced,
 } from './seams.js';
+import {
+  restoreQuestState,
+  saveQuestState,
+  type QuestSaveData,
+} from '../content/npcs.js';
 
 /**
  * Save/load full run state to localStorage (JSON).
@@ -54,6 +59,12 @@ interface RunSaveData {
   mobs: MobSaveData[];
   /** Per-run generation state (ghost/wandmaker/dew vial/scroll quota/weak floor). */
   run?: RunState;
+  /**
+   * Run-level quest state (vanilla Ghost.Quest / Wandmaker.Quest /
+   * Blacksmith.Quest statics, saved by Dungeon.storeInBundle). Persists
+   * across depth transitions (module singletons) and across save/load.
+   */
+  quests?: QuestSaveData;
 }
 
 export function hasSave(key: string = SAVE_KEY): boolean {
@@ -105,6 +116,7 @@ export function saveGame(game: Game, mechanics: MechanicsHooks, key: string = SA
     hero: mechanics.saveHero(game.hero),
     mobs: game.mobs.map((m) => mechanics.saveMob(m)),
     run: { ...game.run },
+    quests: saveQuestState(),
   };
   try {
     localStorage.setItem(key, JSON.stringify(data));
@@ -172,6 +184,9 @@ export function loadGame(
   game.gameOver = data.gameOver;
   game.log = [...data.log];
   game.run = data.run ? { ...data.run } : newRunState();
+  // Quest state is run-level (vanilla statics); restore the singletons so a
+  // reloaded run keeps ghost/wandmaker/blacksmith progress.
+  restoreQuestState(data.quests);
 
   const hero = mechanics.reviveHero(rng, data.hero);
   game.hero = hero;

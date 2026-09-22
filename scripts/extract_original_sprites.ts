@@ -151,6 +151,16 @@ const I = (key: string, idx: number, note: string): Slice => ({
   h: 16,
   note,
 });
+/** tiles2.png: 16x16 tiles, 16 cols; indices = Terrain.java constants (Caves theme). */
+const T2 = (key: string, idx: number, note: string): Slice => ({
+  key,
+  file: 'tiles2.png',
+  x: (idx % 16) * 16,
+  y: Math.floor(idx / 16) * 16,
+  w: 16,
+  h: 16,
+  note,
+});
 /**
  * buffs.png: 7x7 buff icons; TextureFilm(texture, 7, 7) (BuffIndicator.java).
  * cols = 128 / 7 = 18, rows = 16 / 7 = 2; frame i at ((i % 18) * 7, (i / 18 | 0) * 7).
@@ -279,6 +289,79 @@ const SLICES: Slice[] = [
   // High grass and sign tiles (indices = Terrain.java constants).
   T('high_grass', 15, 'Terrain.HIGH_GRASS'),
   T('sign', 29, 'Terrain.SIGN'),
+  // --- Stage 2 (Caves depths 11-15): tiles (tiles2.png, Terrain.java indices) ---
+  T2('tile_caves_chasm', 0, 'Terrain.CHASM, caves theme'),
+  T2('tile_caves_floor', 1, 'Terrain.EMPTY, caves theme'),
+  T2('tile_caves_grass', 2, 'Terrain.GRASS, caves theme'),
+  T2('tile_caves_wall', 4, 'Terrain.WALL, caves theme'),
+  T2('tile_caves_door', 5, 'Terrain.DOOR, caves theme'),
+  T2('tile_caves_entrance', 7, 'Terrain.ENTRANCE, caves theme'),
+  T2('tile_caves_exit', 8, 'Terrain.EXIT, caves theme'),
+  T2('tile_caves_trap', 17, 'Terrain.TOXIC_TRAP, caves theme'),
+  T2('tile_caves_statue', 35, 'Terrain.STATUE, caves theme'),
+  { key: 'tile_caves_water', file: 'water2.png', x: 0, y: 0, w: 16, h: 16, note: 'water2.png frame (0,0); original animates, Stage 2 static like Stage 1 water' },
+  // --- Stage 2 (Caves): mobs & Blacksmith NPC — idle frame 0, per the *Sprite.java classes ---
+  { key: 'mob_spinner', file: 'spinner.png', x: 0, y: 0, w: 16, h: 16, note: 'SpinnerSprite: TextureFilm 16x16, idle frame 0 (SpinnerSprite.java:29-32)' },
+  { key: 'mob_elemental', file: 'elemental.png', x: 0, y: 0, w: 12, h: 14, pad: true, note: 'ElementalSprite: TextureFilm 12x14, idle frame 0 (ElementalSprite.java:29-32)' },
+  { key: 'mob_monk', file: 'monk.png', x: 0, y: 0, w: 15, h: 14, pad: true, note: 'MonkSprite: TextureFilm 15x14, idle frame 0 (MonkSprite.java:32-35)' },
+  { key: 'mob_dm300', file: 'dm300.png', x: 0, y: 0, w: 22, h: 20, note: 'DM300Sprite: TextureFilm 22x20, idle frame 0 (DM300Sprite.java:31-34); frame larger than 16x16, kept natural size' },
+  { key: 'mob_bee', file: 'bee.png', x: 0, y: 0, w: 16, h: 16, note: 'BeeSprite: TextureFilm 16x16, idle frame 0 (BeeSprite.java:36-39)' },
+  { key: 'npc_blacksmith', file: 'blacksmith.png', x: 0, y: 0, w: 13, h: 16, pad: true, note: 'BlacksmithSprite: TextureFilm 13x16, idle frame 0 (BlacksmithSprite.java:30-33)' },
+  // --- Stage 2: item icons (items.png, ItemSpriteSheet indices) ---
+  // Wands: Wand.java:76-103 handler order is the canonical pre-shuffle mapping.
+  I('item_wand_magicmissile', 3, 'ItemSpriteSheet.WAND_MAGIC_MISSILE (fixed image)'),
+  I('item_wand_teleportation', 48, 'ItemSpriteSheet.WAND_HOLLY (handler order index 0)'),
+  I('item_wand_slowness', 49, 'ItemSpriteSheet.WAND_YEW (handler order index 1)'),
+  I('item_wand_firebolt', 50, 'ItemSpriteSheet.WAND_EBONY (handler order index 2)'),
+  I('item_wand_poison', 51, 'ItemSpriteSheet.WAND_CHERRY (handler order index 3)'),
+  I('item_wand_regrowth', 52, 'ItemSpriteSheet.WAND_TEAK (handler order index 4)'),
+  I('item_wand_blink', 53, 'ItemSpriteSheet.WAND_ROWAN (handler order index 5)'),
+  I('item_wand_lightning', 54, 'ItemSpriteSheet.WAND_WILLOW (handler order index 6)'),
+  I('item_wand_amok', 55, 'ItemSpriteSheet.WAND_MAHOGANY (handler order index 7)'),
+  I('item_wand_reach', 68, 'ItemSpriteSheet.WAND_BAMBOO (handler order index 8)'),
+  I('item_wand_flock', 69, 'ItemSpriteSheet.WAND_PURPLEHEART (handler order index 9)'),
+  I('item_wand_disintegration', 70, 'ItemSpriteSheet.WAND_OAK (handler order index 10)'),
+  I('item_wand_avalanche', 71, 'ItemSpriteSheet.WAND_BIRCH (handler order index 11)'),
+  // Rings: Ring.java:55-81 handler order.
+  I('item_ring_mending', 32, 'ItemSpriteSheet.RING_DIAMOND (handler order index 0)'),
+  I('item_ring_detection', 33, 'ItemSpriteSheet.RING_OPAL (handler order index 1)'),
+  I('item_ring_shadows', 34, 'ItemSpriteSheet.RING_GARNET (handler order index 2)'),
+  I('item_ring_power', 35, 'ItemSpriteSheet.RING_RUBY (handler order index 3)'),
+  I('item_ring_herbalism', 36, 'ItemSpriteSheet.RING_AMETHYST (handler order index 4)'),
+  I('item_ring_accuracy', 37, 'ItemSpriteSheet.RING_TOPAZ (handler order index 5)'),
+  I('item_ring_evasion', 38, 'ItemSpriteSheet.RING_ONYX (handler order index 6)'),
+  I('item_ring_satiety', 39, 'ItemSpriteSheet.RING_TOURMALINE (handler order index 7)'),
+  I('item_ring_haste', 72, 'ItemSpriteSheet.RING_EMERALD (handler order index 8)'),
+  I('item_ring_haggler', 73, 'ItemSpriteSheet.RING_SAPPHIRE (handler order index 9)'),
+  I('item_ring_elements', 74, 'ItemSpriteSheet.RING_QUARTZ (handler order index 10)'),
+  I('item_ring_thorns', 75, 'ItemSpriteSheet.RING_AGATE (handler order index 11)'),
+  // Potions: Potion.java:55-81 handler order.
+  I('item_potion_experience', 57, 'ItemSpriteSheet.POTION_CRIMSON (handler order index 1)'),
+  I('item_potion_toxicgas', 58, 'ItemSpriteSheet.POTION_AZURE (handler order index 2)'),
+  I('item_potion_liquidflame', 59, 'ItemSpriteSheet.POTION_JADE (handler order index 3)'),
+  I('item_potion_paralyticgas', 61, 'ItemSpriteSheet.POTION_MAGENTA (handler order index 5)'),
+  I('item_potion_levitation', 62, 'ItemSpriteSheet.POTION_CHARCOAL (handler order index 6)'),
+  I('item_potion_mindvision', 63, 'ItemSpriteSheet.POTION_IVORY (handler order index 7)'),
+  I('item_potion_purity', 64, 'ItemSpriteSheet.POTION_AMBER (handler order index 8)'),
+  I('item_potion_invisibility', 65, 'ItemSpriteSheet.POTION_BISTRE (handler order index 9)'),
+  I('item_potion_might', 66, 'ItemSpriteSheet.POTION_INDIGO (handler order index 10)'),
+  I('item_potion_frost', 67, 'ItemSpriteSheet.POTION_SILVER (handler order index 11)'),
+  // Scrolls: Scroll.java:41-67 handler order.
+  I('item_scroll_identify', 40, 'ItemSpriteSheet.SCROLL_KAUNAN (handler order index 0)'),
+  I('item_scroll_magicmapping', 41, 'ItemSpriteSheet.SCROLL_SOWILO (handler order index 1)'),
+  I('item_scroll_recharging', 42, 'ItemSpriteSheet.SCROLL_LAGUZ (handler order index 2)'),
+  I('item_scroll_removecurse', 43, 'ItemSpriteSheet.SCROLL_YNGVI (handler order index 3)'),
+  I('item_scroll_teleportation', 44, 'ItemSpriteSheet.SCROLL_GYFU (handler order index 4)'),
+  I('item_scroll_challenge', 45, 'ItemSpriteSheet.SCROLL_RAIDO (handler order index 5)'),
+  I('item_scroll_terror', 46, 'ItemSpriteSheet.SCROLL_ISAZ (handler order index 6)'),
+  I('item_scroll_lullaby', 47, 'ItemSpriteSheet.SCROLL_MANNAZ (handler order index 7)'),
+  I('item_scroll_psionicblast', 76, 'ItemSpriteSheet.SCROLL_NAUDIZ (handler order index 8)'),
+  I('item_scroll_mirrorimage', 77, 'ItemSpriteSheet.SCROLL_BERKANAN (handler order index 9)'),
+  I('item_scroll_enchantment', 79, 'ItemSpriteSheet.SCROLL_TIWAZ (handler order index 11)'),
+  // Quest items & tools.
+  I('item_darkgold', 102, 'ItemSpriteSheet.ORE (DarkGold.java:27)'),
+  I('item_pickaxe', 101, 'ItemSpriteSheet.PICKAXE'),
+  I('item_honeypot', 125, 'ItemSpriteSheet.HONEYPOT'),
   // --- buff icons: 7x7, BuffIndicator.java constants (buffs.png) ---
   B('bufficon_mind_vision', 0, 'BuffIndicator.MIND_VISION'),
   B('bufficon_levitation', 1, 'BuffIndicator.LEVITATION'),
