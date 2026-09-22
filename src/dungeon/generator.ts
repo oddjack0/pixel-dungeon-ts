@@ -30,6 +30,8 @@ import {
   decorateBoss,
   decoratePrison,
   decoratePrisonBoss,
+  decorateCaves,
+  paintCavesBoss,
   placeSign,
   randomCell,
   type SpawnKind,
@@ -39,7 +41,8 @@ import { paintShopRoom } from './shopPainter.js';
 
 /**
  * Milestone 1 dungeon generator: Sewers depths 1-4 + the Goo boss level
- * (depth 5), Prison depths 6-9 + the Tengu boss level (depth 10).
+ * (depth 5), Prison depths 6-9 + the Tengu boss level (depth 10), Caves
+ * depths 11-14 + the DM-300 boss level (depth 15).
  * Follows vanilla `Level.create()`:
  *
  *  1. quest items queued (`addItemToSpawn`) — skipped on boss levels
@@ -71,6 +74,11 @@ export function shopOnLevel(depth: number): boolean {
 /** Prison region depths (6-10), where PrisonLevel/PrisonBossLevel rules apply. */
 export function isPrisonDepth(depth: number): boolean {
   return depth >= 6 && depth <= 10;
+}
+
+/** Caves regular depths (11-14), where CavesLevel rules apply. */
+export function isCavesDepth(depth: number): boolean {
+  return depth >= 11 && depth <= 14;
 }
 
 /**
@@ -176,6 +184,7 @@ function souNeeded(rng: RNG, depth: number, scrolls: number): boolean {
 export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult {
   const boss = isBossDepth(depth);
   const tengu = depth === 10;
+  const dm300 = depth === 15;
 
   // ---- 1. quest items (Level.create; skipped on boss levels) ----
   const queue: SpawnKind[] = [];
@@ -209,7 +218,7 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     }
   }
 
-  // ---- 3. build retry loop ----
+  // ---- 3. build ----
   let rooms: Room[] = [];
   let entranceRoom: Room | null = null;
   let exitRoom: Room | null = null;
@@ -218,11 +227,30 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   let ctx: PainterCtx | null = null;
   let entranceCell = -1;
   let exitCell = -1;
+  /** DM-300 level: the arena-door cell (CavesBossLevel.arenaDoor). */
+  let cavesArenaDoor = -1;
+  /** DM-300 level: the arena bounds (bossArena seam). */
+  let cavesArena: { l: number; t: number; r: number; b: number } | null = null;
   let secretDoors = 0;
   let trapAttempts = 0;
   let trapsPlaced = 0;
   const pitNeeded = depth > 1 && run.weakFloor;
 
+  if (dm300) {
+    // Vanilla `CavesBossLevel.build` + `decorate`
+    // (CavesBossLevel.java:81-176): no room system — 8 carved chambers plus
+    // the DM-300 arena. No feeling, no placeTraps, no quest items
+    // (CavesBossLevel extends Level directly, not RegularLevel). Single-shot:
+    // the carve has no failure modes, so no retry loop is needed.
+    const c = new PainterCtx(rng, W, H, depth, 'none', true, false);
+    const built = paintCavesBoss(c);
+    entranceCell = built.entrance;
+    exitCell = built.exit;
+    cavesArenaDoor = built.arenaDoor;
+    cavesArena = built.arena;
+    rooms = [];
+    ctx = c;
+  } else
   for (let attempt = 0; attempt < 200; attempt++) {
     const built = buildRooms(rng);
     if (!built) continue;
@@ -299,6 +327,26 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
         tunnelsToPassages: isPrisonDepth(depth),
       });
       run.weakFloor = assign.weakFloor;
+      // Vanilla `Blacksmith.Quest.spawn` (Blacksmith.java:305-320), called
+      // from `CavesLevel.assignRoomType` (CavesLevel.java:62-66): once per
+      // run, on depths 12-14 with `Int(15-depth)==0` (depth 14: guaranteed).
+      // The first STANDARD room bigger than 4x4 becomes the blacksmith's
+      // room. (Vanilla iterates a HashSet; `built` order is this port's
+      // deterministic stand-in — see docs/DUNGEON-REPORT.md.)
+      if (
+        isCavesDepth(depth) &&
+        depth > 11 &&
+        !run.blacksmithSpawned &&
+        rng.int(0, 15 - depth) === 0
+      ) {
+        for (const r of built) {
+          if (r.type === RoomType.STANDARD && roomW(r) > 4 && roomH(r) > 4) {
+            r.type = RoomType.BLACKSMITH;
+            run.blacksmithSpawned = true;
+            break;
+          }
+        }
+      }
       entranceRoom = plan.entrance;
       exitRoom = plan.exit;
       // CHASM feeling: the unpainted map is chasm (Level.create).
@@ -322,6 +370,17 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
           3,
         );
         decoratePrison(c, entranceRoom, entranceCell);
+      } else if (isCavesDepth(depth)) {
+        // Vanilla `CavesLevel.water/grass` (CavesLevel.java:53-59).
+        paintWaterGrass(
+          c,
+          built,
+          feeling === Feeling.WATER ? 0.6 : 0.45,
+          feeling === Feeling.GRASS ? 0.55 : 0.35,
+          6,
+          3,
+        );
+        decorateCaves(c, built, entranceRoom, entranceCell);
       } else {
         paintWaterGrass(c, built);
         decorateSewers(c, entranceRoom, entranceCell);
@@ -332,7 +391,11 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     ctx = c;
     break;
   }
-  if (!ctx || !entranceRoom || !exitRoom || entranceCell < 0 || exitCell < 0) {
+  if (!ctx || entranceCell < 0 || exitCell < 0) {
+    throw new Error(`dungeon generation failed for depth ${depth}`);
+  }
+  // DM-300 depths use no rooms; every other depth has entrance/exit rooms.
+  if (!dm300 && (!entranceRoom || !exitRoom)) {
     throw new Error(`dungeon generation failed for depth ${depth}`);
   }
 
@@ -378,8 +441,10 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   if (boss) {
     // Vanilla `SewerBossLevel.createMobs`: exactly one Bestiary mob (Goo).
     // Tengu is NOT generated: he spawns when the hero enters the arena
-    // (PrisonBossLevel.press) — the boss worker's runtime hook.
-    if (!tengu) mobs.push({ pos: randomCell(ctx, exitRoom), kind: 'boss' });
+    // (PrisonBossLevel.press) — the boss worker's runtime hook. DM-300 is
+    // NOT generated either: it spawns when the hero LEAVES the arena
+    // (CavesBossLevel.press) — see cavesBoss.ts.
+    if (!tengu && !dm300 && exitRoom) mobs.push({ pos: randomCell(ctx, exitRoom), kind: 'boss' });
   } else {
     const nMobs = 2 + (depth % 5) + rng.int(0, 3);
     for (let i = 0; i < nMobs; i++) {
@@ -407,7 +472,8 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     // entrance tile or the sign.
     if (!run.wandmakerSpawned && depth > 6 && depth < 10 && rng.int(0, 10 - depth) === 0) {
       for (let t = 0; t < 50; t++) {
-        const pos = randomCell(ctx, entranceRoom);
+        // Non-boss depths always have an entrance room here (checked above).
+        const pos = randomCell(ctx, entranceRoom!);
         if (tiles[pos] === Terrain.ENTRANCE) continue;
         if (ctx.out.markers.signs.includes(pos)) continue;
         if (occupied.has(pos)) continue;
@@ -535,6 +601,12 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     level.bossArena = { l: exitRoom.l, t: exitRoom.t, r: exitRoom.r, b: exitRoom.b };
     const arenaDoor = entranceDoor(exitRoom);
     level.arenaDoorCell = arenaDoor ? ctx.idx(arenaDoor.x, arenaDoor.y) : -1;
+  }
+  if (dm300 && cavesArena) {
+    // Runtime seam for the boss worker's DM-300 arena-exit hook
+    // (CavesBossLevel.press/seal/unseal — see cavesBoss.ts).
+    level.bossArena = { ...cavesArena };
+    level.arenaDoorCell = cavesArenaDoor;
   }
 
   return { level, rooms, markers: ctx.out.markers, items, mobs, trapAttempts, trapsPlaced };

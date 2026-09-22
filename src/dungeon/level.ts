@@ -86,7 +86,7 @@ export interface ItemSpawn {
 }
 
 /** Mob spawn kinds produced by the generator, for the content designer. */
-export type MobKind = 'mob' | 'boss' | 'ratking' | 'statue' | 'piranha' | 'ghost' | 'shopkeeper' | 'wandmaker';
+export type MobKind = 'mob' | 'boss' | 'ratking' | 'statue' | 'piranha' | 'ghost' | 'shopkeeper' | 'wandmaker' | 'blacksmith';
 
 /**
  * Cross-depth run state (vanilla `Dungeon` statics: Dungeon.java).
@@ -105,6 +105,8 @@ export interface RunState {
   scrollsOfUpgrade: number;
   /** The wandmaker quest has spawned (Wandmaker.Quest.spawned). */
   wandmakerSpawned: boolean;
+  /** The blacksmith quest has spawned (Blacksmith.Quest.spawned). */
+  blacksmithSpawned: boolean;
 }
 
 /** Fresh per-run state (vanilla statics reset on new game). */
@@ -115,6 +117,7 @@ export function newRunState(): RunState {
     dewVialNeeded: true,
     scrollsOfUpgrade: 0,
     wandmakerSpawned: false,
+    blacksmithSpawned: false,
   };
 }
 

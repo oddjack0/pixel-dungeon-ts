@@ -9,6 +9,8 @@ import {
   entranceDoor,
   placeDoor,
   joinRooms,
+  sharedDoor,
+  intersectRooms,
   type Room,
   type Door,
 } from './rooms.js';
@@ -1188,6 +1190,9 @@ export function paintRooms(ctx: PainterCtx, rooms: Room[]): { entrance: number; 
       case RoomType.RAT_KING:
         paintRatKing(ctx, room);
         break;
+      case RoomType.BLACKSMITH:
+        paintBlacksmith(ctx, room);
+        break;
       default:
         ctx.fillRoomMargin(room, 1, Terrain.FLOOR);
         break;
@@ -1592,4 +1597,330 @@ export function decoratePrisonBoss(
     roomH(exitRoom) - 3,
     Terrain.TRAP_INACTIVE,
   );
+}
+
+// --------------------------------------------------------------- caves (depths 11-15)
+
+/**
+ * Vanilla `BlacksmithPainter` (BlacksmithPainter.java:27-52): margin-1 ring
+ * of (visible) fire traps, margin-2 EMPTY_SP floor (WALKWAY in this port's
+ * Terrain contract — same convention as ShopPainter's EMPTY_SP), two
+ * armor/weapon prizes on free EMPTY_SP cells, doors unlocked with a 1-cell
+ * floor drawInside, and the Blacksmith NPC on a heap-free interior cell
+ * (emitted as a 'blacksmith' MobSpawn for the content designer).
+ */
+function paintBlacksmith(ctx: PainterCtx, room: Room): void {
+  ctx.fillRoom(room, Terrain.WALL);
+  ctx.fillRoomMargin(room, 1, Terrain.TRAP_FIRE);
+  ctx.fillRoomMargin(room, 2, Terrain.WALKWAY);
+  // Vanilla drops on EMPTY_SP cells (BlacksmithPainter.java:35-41).
+  for (let i = 0; i < 2; i++) {
+    let pos = randomCell(ctx, room);
+    let guard = 4096;
+    while (ctx.tiles[pos] !== Terrain.WALKWAY && guard-- > 0) {
+      pos = randomCell(ctx, room);
+    }
+    ctx.drop(pos, prize(ctx.rng.pick(['prize-armor', 'prize-weapon'] as const)));
+  }
+  // Record the visible fire-trap ring (same as paintBurned).
+  for (let i = room.l + 1; i < room.r; i++) {
+    for (const y of [room.t + 1, room.b - 1]) {
+      ctx.out.traps.push({ x: i, y, trap: TRAP_ORDER.indexOf('fire'), hidden: false });
+    }
+  }
+  for (let j = room.t + 2; j < room.b - 1; j++) {
+    for (const x of [room.l + 1, room.r - 1]) {
+      ctx.out.traps.push({ x, y: j, trap: TRAP_ORDER.indexOf('fire'), hidden: false });
+    }
+  }
+  for (const door of room.doors) {
+    upgradeDoor(door, DoorType.UNLOCKED);
+    drawInside(ctx, room, door, 1, Terrain.FLOOR);
+  }
+  let pos = randomCell(ctx, room, 1);
+  let guard = 4096;
+  while (ctx.heaps.has(pos) && guard-- > 0) {
+    pos = randomCell(ctx, room, 1);
+  }
+  ctx.out.mobs.push({ pos, kind: 'blacksmith' });
+}
+
+/**
+ * Vanilla `CavesLevel.decorate` (CavesLevel.java:70-160).
+ *
+ * - Corner rounding on STANDARD rooms bigger than 3x3: with
+ *   `Int(width*height) > 8` per corner, an interior corner cell becomes WALL
+ *   when its two orthogonal wall neighbors are WALL (CavesLevel.java:81-114).
+ * - Door EMPTY_DECO: for each STANDARD/TUNNEL neighbor, with `Int(3)==0`
+ *   the shared door cell is decorated (CavesLevel.java:116-120).
+ * - EMPTY_DECO scatter: `Int(6) <= n` where n is the 4-dir wall-neighbor
+ *   count (CavesLevel.java:122-142).
+ * - WALL_DECO veins: 1-in-12 per wall cell (CavesLevel.java:144-148).
+ * - A sign in the entrance room (CavesLevel.java:150-156).
+ * - CHASM cuts between adjacent non-connected STANDARD rooms, skipped when
+ *   the next depth is a boss level (CavesLevel.java:158-186).
+ *
+ * EMPTY_DECO/WALL_DECO/SIGN have no ids in the shared Terrain contract, so
+ * tiles stay FLOOR/WALL and positions are recorded in markers (the same
+ * convention as the sewers/prison decorators).
+ */
+export function decorateCaves(
+  ctx: PainterCtx,
+  rooms: Room[],
+  entranceRoom: Room,
+  entranceCell: number,
+): void {
+  const W = ctx.width;
+  const H = ctx.height;
+  const rng = ctx.rng;
+
+  for (const room of rooms) {
+    if (room.type !== RoomType.STANDARD) continue;
+    if (roomW(room) <= 3 || roomH(room) <= 3) continue;
+
+    const s = roomW(room) * roomH(room); // Rect.square()
+    const cornerWall = (
+      cx: number,
+      cy: number,
+      nx1: number,
+      ny1: number,
+      nx2: number,
+      ny2: number,
+    ): void => {
+      if (ctx.get(nx1, ny1) === Terrain.WALL && ctx.get(nx2, ny2) === Terrain.WALL) {
+        ctx.set(cx, cy, Terrain.WALL);
+      }
+    };
+    // CavesLevel.java:88-114 — four interior corners.
+    if (rng.int(0, s) > 8) {
+      cornerWall(room.l + 1, room.t + 1, room.l, room.t + 1, room.l + 1, room.t);
+    }
+    if (rng.int(0, s) > 8) {
+      cornerWall(room.r - 1, room.t + 1, room.r, room.t + 1, room.r - 1, room.t);
+    }
+    if (rng.int(0, s) > 8) {
+      cornerWall(room.l + 1, room.b - 1, room.l, room.b - 1, room.l + 1, room.b);
+    }
+    if (rng.int(0, s) > 8) {
+      cornerWall(room.r - 1, room.b - 1, room.r, room.b - 1, room.r - 1, room.b);
+    }
+
+    // CavesLevel.java:116-120 — door EMPTY_DECO.
+    for (const n of room.carvedTo) {
+      if ((n.type === RoomType.STANDARD || n.type === RoomType.TUNNEL) && rng.int(0, 3) === 0) {
+        const door = sharedDoor(room, n);
+        if (door) ctx.out.markers.emptyDeco.push(ctx.idx(door.x, door.y));
+      }
+    }
+  }
+
+  // CavesLevel.java:122-142 — EMPTY_DECO scatter (Int(6) <= wall count).
+  for (let i = W + 1; i < W * H - W; i++) {
+    if (ctx.tiles[i] === Terrain.FLOOR) {
+      let n = 0;
+      if (ctx.tiles[i + 1] === Terrain.WALL) n++;
+      if (ctx.tiles[i - 1] === Terrain.WALL) n++;
+      if (ctx.tiles[i + W] === Terrain.WALL) n++;
+      if (ctx.tiles[i - W] === Terrain.WALL) n++;
+      if (rng.int(0, 6) <= n) {
+        ctx.out.markers.emptyDeco.push(i);
+      }
+    }
+  }
+
+  // CavesLevel.java:144-148 — WALL_DECO veins (1-in-12).
+  for (let i = 0; i < W * H; i++) {
+    if (ctx.tiles[i] === Terrain.WALL && rng.int(0, 12) === 0) {
+      ctx.out.markers.wallDeco.push(i);
+    }
+  }
+
+  placeSign(ctx, entranceRoom, entranceCell);
+
+  // CavesLevel.java:158-186 — chasm cuts between adjacent non-connected
+  // STANDARD rooms (not on the depth before a boss level).
+  if (!ctx.bossNext) {
+    for (const r of rooms) {
+      if (r.type !== RoomType.STANDARD) continue;
+      for (const n of r.neighbours) {
+        if (n.type !== RoomType.STANDARD || r.carvedTo.includes(n)) continue;
+        const w = intersectRooms(r, n);
+        if (!w) continue;
+        if (w.l === w.r && w.b - w.t >= 5) {
+          // CavesLevel.java:170-176: w.top += 2; w.bottom -= 1; w.right++;
+          // fill(w.left, w.top, 1, w.height(), CHASM). Rect.height() is
+          // bottom-top (exclusive), so rows are [t+2, b-2].
+          for (let y = w.t + 2; y < w.b - 1; y++) ctx.set(w.l, y, Terrain.CHASM);
+        } else if (w.t === w.b && w.r - w.l >= 5) {
+          // CavesLevel.java:177-183: w.left += 2; w.right -= 1; w.bottom++;
+          // fill(w.left, w.top, w.width(), 1, CHASM) -> cols [l+2, r-2].
+          for (let x = w.l + 2; x < w.r - 1; x++) ctx.set(x, w.t, Terrain.CHASM);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Vanilla `CavesBossLevel.build` (CavesBossLevel.java:81-147): no room
+ * system — carve 8 random chambers (the exit/LOCKED_EXIT sits on the wall
+ * row above the top-most chamber), scatter visible INACTIVE_TRAPs over 1/6
+ * of empty cells, then paint the DM-300 arena: a 7x7 wall square with a
+ * visible TOXIC_TRAP row on top and an empty interior; the arena door
+ * (plain DOOR) on the bottom wall; the entrance inside the arena.
+ * Water blobs (0.45, 6 passes) over remaining empty cells, then
+ * `decorate()` (CavesBossLevel.java:149-176).
+ *
+ * Returns the entrance/exit cells, the arena-door cell, and the arena
+ * bounds (ROOM_LEFT..ROOM_RIGHT x ROOM_TOP..ROOM_BOTTOM, inclusive).
+ */
+export function paintCavesBoss(ctx: PainterCtx): {
+  entrance: number;
+  exit: number;
+  arenaDoor: number;
+  arena: { l: number; t: number; r: number; b: number };
+} {
+  const W = ctx.width;
+  const H = ctx.height;
+  const rng = ctx.rng;
+
+  // CavesBossLevel.java:58-61
+  const ROOM_LEFT = W / 2 - 2;
+  const ROOM_RIGHT = W / 2 + 2;
+  const ROOM_TOP = H / 2 - 2;
+  const ROOM_BOTTOM = H / 2 + 2;
+
+  // CavesBossLevel.java:83-109 — 8 random chambers; the exit goes on the
+  // wall row above the top-most chamber's top edge.
+  let topMost = Number.MAX_SAFE_INTEGER;
+  let exit = -1;
+  for (let i = 0; i < 8; i++) {
+    let left: number;
+    let right: number;
+    let top: number;
+    let bottom: number;
+    if (rng.int(0, 2) === 0) {
+      left = rng.intRange(1, ROOM_LEFT - 3);
+      right = ROOM_RIGHT + 3;
+    } else {
+      left = ROOM_LEFT - 3;
+      right = rng.intRange(ROOM_RIGHT + 3, W - 1);
+    }
+    if (rng.int(0, 2) === 0) {
+      top = rng.intRange(2, ROOM_TOP - 3);
+      bottom = ROOM_BOTTOM + 3;
+    } else {
+      // CavesBossLevel.java:100 — vanilla reads ROOM_LEFT here; it equals
+      // ROOM_TOP on square maps, so the value is unchanged.
+      top = ROOM_LEFT - 3;
+      bottom = rng.intRange(ROOM_TOP + 3, H - 1);
+    }
+    ctx.fillRect(left, top, right - left + 1, bottom - top + 1, Terrain.FLOOR);
+    if (top < topMost) {
+      topMost = top;
+      exit = rng.intRange(left, right) + (top - 1) * W;
+    }
+  }
+  ctx.tiles[exit] = Terrain.EXIT_LOCKED;
+
+  // CavesBossLevel.java:111-115 — visible inactive traps (1/6 of empties).
+  for (let i = 0; i < W * H; i++) {
+    if (ctx.tiles[i] === Terrain.FLOOR && rng.int(0, 6) === 0) {
+      ctx.tiles[i] = Terrain.TRAP_INACTIVE;
+    }
+  }
+
+  // CavesBossLevel.java:117-124 — the arena: 7x7 wall square, toxic-trap
+  // row across the top, empty interior below it.
+  ctx.fillRect(
+    ROOM_LEFT - 1,
+    ROOM_TOP - 1,
+    ROOM_RIGHT - ROOM_LEFT + 3,
+    ROOM_BOTTOM - ROOM_TOP + 3,
+    Terrain.WALL,
+  );
+  ctx.fillRect(
+    ROOM_LEFT,
+    ROOM_TOP + 1,
+    ROOM_RIGHT - ROOM_LEFT + 1,
+    ROOM_BOTTOM - ROOM_TOP,
+    Terrain.FLOOR,
+  );
+  ctx.fillRect(ROOM_LEFT, ROOM_TOP, ROOM_RIGHT - ROOM_LEFT + 1, 1, Terrain.TRAP_TOXIC);
+  for (let x = ROOM_LEFT; x <= ROOM_RIGHT; x++) {
+    ctx.out.traps.push({ x, y: ROOM_TOP, trap: TRAP_ORDER.indexOf('toxic'), hidden: false });
+  }
+
+  // CavesBossLevel.java:126-127 — plain DOOR on the arena's bottom wall.
+  const arenaDoor = rng.intRange(ROOM_LEFT, ROOM_RIGHT) + (ROOM_BOTTOM + 1) * W;
+  ctx.tiles[arenaDoor] = Terrain.DOOR;
+  ctx.out.doors.push({
+    x: arenaDoor % W,
+    y: Math.floor(arenaDoor / W),
+    type: DoorType.REGULAR,
+    tile: Terrain.DOOR,
+  });
+
+  // CavesBossLevel.java:129-131 — the entrance is INSIDE the arena.
+  const entrance =
+    rng.intRange(ROOM_LEFT + 1, ROOM_RIGHT - 1) +
+    rng.intRange(ROOM_TOP + 1, ROOM_BOTTOM - 1) * W;
+  ctx.tiles[entrance] = Terrain.ENTRANCE;
+
+  // CavesBossLevel.java:133-138 — freezing-water blobs (0.45, 6 passes).
+  const patch = generatePatch(rng, 0.45, 6, W, H);
+  for (let i = 0; i < W * H; i++) {
+    if (ctx.tiles[i] === Terrain.FLOOR && patch[i]) ctx.tiles[i] = Terrain.WATER;
+  }
+
+  decorateCavesBoss(ctx, entrance);
+
+  return {
+    entrance,
+    exit,
+    arenaDoor,
+    arena: { l: ROOM_LEFT, t: ROOM_TOP, r: ROOM_RIGHT, b: ROOM_BOTTOM },
+  };
+}
+
+/**
+ * Vanilla `CavesBossLevel.decorate` (CavesBossLevel.java:149-176):
+ * EMPTY_DECO scatter (`Int(8) <= n`), WALL_DECO veins (1-in-8), and a sign
+ * placed at a random arena cell that is not the entrance.
+ */
+function decorateCavesBoss(ctx: PainterCtx, entrance: number): void {
+  const W = ctx.width;
+  const H = ctx.height;
+  const rng = ctx.rng;
+
+  for (let i = W + 1; i < W * H - W; i++) {
+    if (ctx.tiles[i] === Terrain.FLOOR) {
+      let n = 0;
+      if (ctx.tiles[i + 1] === Terrain.WALL) n++;
+      if (ctx.tiles[i - 1] === Terrain.WALL) n++;
+      if (ctx.tiles[i + W] === Terrain.WALL) n++;
+      if (ctx.tiles[i - W] === Terrain.WALL) n++;
+      if (rng.int(0, 8) <= n) {
+        ctx.out.markers.emptyDeco.push(i);
+      }
+    }
+  }
+
+  for (let i = 0; i < W * H; i++) {
+    if (ctx.tiles[i] === Terrain.WALL && rng.int(0, 8) === 0) {
+      ctx.out.markers.wallDeco.push(i);
+    }
+  }
+
+  // CavesBossLevel.java:169-174 — sign inside the arena, never on the entrance.
+  const ROOM_LEFT = W / 2 - 2;
+  const ROOM_RIGHT = W / 2 + 2;
+  const ROOM_TOP = H / 2 - 2;
+  const ROOM_BOTTOM = H / 2 + 2;
+  let sign = -1;
+  let guard = 4096;
+  do {
+    sign = rng.intRange(ROOM_LEFT, ROOM_RIGHT) + rng.intRange(ROOM_TOP, ROOM_BOTTOM) * W;
+  } while (sign === entrance && guard-- > 0);
+  ctx.out.markers.signs.push(sign);
 }
