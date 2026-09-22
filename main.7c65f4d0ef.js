@@ -5570,6 +5570,12 @@ var contentMechanics = {
   tickHeroClock(actor, ctx, cost) {
     tickHeroClock(ctx.rng, ctx, actor, cost);
   },
+  applyTransitionHunger(actor) {
+    const hero = actor;
+    if (!isStarving(hero.hungerLevel)) {
+      hero.hungerLevel = satisfy(hero.hungerLevel, -STARVING / 10);
+    }
+  },
   saveHero(hero) {
     return saveHeroEx(hero);
   },
@@ -5709,6 +5715,7 @@ class Game {
   descend() {
     const depth = this.level.depth + 1;
     this.changeDepth(depth);
+    this.deps.mechanics.applyTransitionHunger(this.hero);
     this.logMsg(`You descend to depth ${depth}.`);
   }
   ascend() {
@@ -5718,6 +5725,7 @@ class Game {
     }
     const depth = this.level.depth - 1;
     this.changeDepth(depth);
+    this.deps.mechanics.applyTransitionHunger(this.hero);
     this.logMsg(`You ascend to depth ${depth}.`);
   }
   tryDescend() {
@@ -5937,8 +5945,21 @@ class Renderer {
     this.canvas.width = Math.round(w * this.dpr);
     this.canvas.height = Math.round(h * this.dpr);
   }
+  syncSize() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round((this.canvas.clientWidth || window.innerWidth) * dpr);
+    const h = Math.round((this.canvas.clientHeight || window.innerHeight) * dpr);
+    if (w !== this.canvas.width || h !== this.canvas.height || dpr !== this.dpr) {
+      this.dpr = dpr;
+      this.canvas.width = w;
+      this.canvas.height = h;
+    }
+  }
   viewSize() {
     return { w: this.canvas.width / this.dpr, h: this.canvas.height / this.dpr };
+  }
+  pixelRatio() {
+    return this.dpr;
   }
   screenToTile(sx, sy) {
     const rect = this.canvas.getBoundingClientRect();
@@ -5957,6 +5978,7 @@ class Renderer {
   }
   render(game) {
     const { ctx } = this;
+    this.syncSize();
     const { w: vw, h: vh } = this.viewSize();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.imageSmoothingEnabled = false;
@@ -7654,10 +7676,6 @@ class UiManager {
   }
   tick(t) {
     const nowMs = typeof performance !== "undefined" ? performance.now() : Date.now();
-    this.view = {
-      w: this.canvas.clientWidth || window.innerWidth,
-      h: this.canvas.clientHeight || window.innerHeight
-    };
     const g = this.game;
     if (g && this.screens.state === "playing" && !g.gameOver) {
       let guard = 500;
@@ -7682,7 +7700,9 @@ class UiManager {
         this.screens.show("dead");
     }
     const { ctx } = this;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.renderer.syncSize();
+    this.view = this.renderer.viewSize();
+    const dpr = this.renderer.pixelRatio();
     if (g) {
       this.renderer.render(g);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
