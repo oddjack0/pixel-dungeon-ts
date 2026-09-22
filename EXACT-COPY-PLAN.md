@@ -237,26 +237,23 @@ Cross-cutting (do when first needed): blob system (Stage 0/1), trap triggers
 
 ---
 
-## 4. OPEN QUESTIONS FOR BRUNO (judgment calls — do not guess)
+## 4. OPEN QUESTIONS — RESOLVED 2026-09-22 (parent, under Bruno's exact-copy mandate)
 
-1. **HUD buff display:** vanilla shows a 7×7 icon strip; port shows canvas text
-   badges. Exact copy → extract original buff icons. OK to proceed?
-   (Assumed yes under exact-copy mandate; flagging since HUD was called out.)
-2. **Buff attach messages / death messages:** vanilla logs ("You catch fire!",
-   "You starved to death...") + badge hooks. Port has no badge system yet.
-   Implement messages now, badges in Stage 6? (Assumed yes.)
-3. **Scroll of Wipe Out** is debug-only in vanilla (not in Generator). Exclude
-   from port? (Assumed yes.)
-4. **Scroll of Upgrade has no price() override** (base price 0) — preserve the
-   quirk or treat as upstream bug? (Assumed preserve; it's never sold.)
-5. **Freerunner "unencumbered"** description vs starvation-only mechanic:
-   follow source code behavior (starvation check only). (Assumed yes.)
-6. **SFX:** vanilla has sound effects, no music. Include original SFX
-   (extracted) with mute toggle? (Assumed yes.)
-7. **Save system:** vanilla saves on quit (Bundlable) and continues across
-   visits. Replace current in-visit-only save? (Assumed yes, Stage 6.)
-8. **Challenges** (vanilla has 4: no food, no armor, no healing, no herbalism?) —
-   include? (Assumed yes, Stage 6, low cost.)
+Bruno's directive ("exact copy of the open source game pixel dungeon,
+mechanics, sprites, everything") answers all of these: in every case the
+resolution is "do what the original does." No simplification permitted.
+Resolutions are binding for all stages.
+
+1. **HUD buff display:** extract the original 7×7 buff icons. PROCEED (Stage 0).
+2. **Buff attach messages / death messages:** implement messages now (Stage 0);
+   badge hooks land with the badge system in Stage 6.
+3. **Scroll of Wipe Out:** EXCLUDE — debug-only in vanilla, not in Generator.
+4. **Scroll of Upgrade price-0 quirk:** PRESERVE (never sold; zero gameplay effect).
+5. **Freerunner:** follow source code behavior (starvation check only).
+6. **SFX:** include original SFX (extracted from vanilla) with a mute toggle. No music (vanilla has none).
+7. **Save system:** replace in-visit-only save with vanilla-style save across
+   visits (Stage 6).
+8. **Challenges:** include all 4 vanilla challenges (Stage 6).
 
 Resolved without Bruno: Torch = Light buff applier (verified in Torch.java);
 weapon damage int truncation for Dagger/Knuckles (follow Java int casts);
