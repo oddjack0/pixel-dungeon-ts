@@ -149,18 +149,18 @@ describe('Cripple and hero speed (Char.speed / Hero.speed)', () => {
   });
   test('Hero.speed: aEnc > 0 -> speed * 1.3^-aEnc', () => {
     const h = buffedHero();
-    h.armor = { name: 'plate', level: 0, str: 15, dr: 4 }; // aEnc = 4
+    h.armor = { name: 'plate', level: 0, str: 15, dr: 4, tier: 5 }; // aEnc = 4
     expect(heroSpeed(h)).toBeCloseTo(Math.pow(1.3, -4), 10);
   });
   test('Hero.speed: weakened STR feeds aEnc (STR() = str - 2)', () => {
     const h = buffedHero();
     h.weakened = true; // STR() = 9
-    h.armor = { name: 'mail', level: 0, str: 11, dr: 3 }; // aEnc = 2
+    h.armor = { name: 'mail', level: 0, str: 11, dr: 3, tier: 3 }; // aEnc = 2
     expect(heroSpeed(h)).toBeCloseTo(Math.pow(1.3, -2), 10);
   });
   test('Hero.speed: cripple stacks with encumbrance (super.speed() first)', () => {
     const h = buffedHero('cripple');
-    h.armor = { name: 'plate', level: 0, str: 15, dr: 4 };
+    h.armor = { name: 'plate', level: 0, str: 15, dr: 4, tier: 5 };
     expect(heroSpeed(h)).toBeCloseTo(0.5 * Math.pow(1.3, -4), 10);
   });
 });

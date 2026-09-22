@@ -37,11 +37,9 @@ const SHOP_TAGS: Array<[tag: string, id: string, price: number]> = [
   ['torch', 'torch', 10],
   // Common stock, every shop (ShopPainter.java:133-147).
   ['potion-of-healing', 'potion_healing', 20],
-  ['random-potion', 'potion_healing', 20], // Generator.random(POTION) -> M1-mapped healing
   ['scroll-of-identify', 'scroll_identify', 15],
-  ['scroll-of-remove-curse', 'scroll_remove_curse', 15],
-  ['scroll-of-magic-mapping', 'scroll_magic_mapping', 15],
-  ['random-scroll', 'scroll', 15], // Generator.random(SCROLL) -> M1-mapped upgrade slot
+  ['scroll-of-remove-curse', 'scroll_removecurse', 15],
+  ['scroll-of-magic-mapping', 'scroll_magicmapping', 15],
   ['overpriced-ration', 'overpriced_ration', 20],
   ['ankh', 'ankh', 50],
 ];
@@ -118,6 +116,12 @@ describe('weapon stats (MeleeWeapon.java:39-45, 77-79, 173-178)', () => {
   test('weapon prices follow 20 * 2^(tier-1)', () => {
     for (const def of Object.values(ITEMS)) {
       if (def.type === 'weapon' && def.weapon && def.id !== 'dart') {
+        // The pickaxe is a quest item: it does not override price(), so
+        // Item.price() = 0 (Item.java:444-446).
+        if (def.id === 'pickaxe') {
+          expect(def.price).toBe(0);
+          continue;
+        }
         expect(def.price).toBe(20 * 2 ** (def.weapon.tier - 1));
       }
     }
@@ -145,12 +149,12 @@ describe('armor stats (Armor.java:145-147, 289-291, 298-303)', () => {
 });
 
 describe('shop scrolls (unidentified price base, Scroll.java)', () => {
-  const cases: Array<[id: string, name: string]> = [
-    ['scroll_identify', 'Scroll of Identify'],
-    ['scroll_remove_curse', 'Scroll of Remove Curse'],
-    ['scroll_magic_mapping', 'Scroll of Magic Mapping'],
+  const cases: Array<[id: string, name: string, sprite: string]> = [
+    ['scroll_identify', 'Scroll of Identify', 'item_scroll_identify'],
+    ['scroll_removecurse', 'Scroll of Remove Curse', 'item_scroll_removecurse'],
+    ['scroll_magicmapping', 'Scroll of Magic Mapping', 'item_scroll_magicmapping'],
   ];
-  for (const [id, name] of cases) {
+  for (const [id, name, sprite] of cases) {
     test(`${id}: name and unidentified price`, () => {
       const def = getItem(id);
       expect(def.name).toBe(name);
@@ -159,7 +163,7 @@ describe('shop scrolls (unidentified price base, Scroll.java)', () => {
       // Scroll.price() = 15; the port has no identification, so the known
       // prices (30/30/25) never apply (ScrollOfIdentify.java etc).
       expect(def.price).toBe(15);
-      expect(def.sprite).toBe('scroll');
+      expect(def.sprite).toBe(sprite);
     });
   }
 
@@ -167,8 +171,8 @@ describe('shop scrolls (unidentified price base, Scroll.java)', () => {
     expect(getItem('scroll_identify').desc).toBe(
       'Permanently reveals all of the secrets of a single item.',
     );
-    expect(getItem('scroll_remove_curse').desc).toContain('instantly strip from');
-    expect(getItem('scroll_magic_mapping').desc).toContain('crystal clarity');
+    expect(getItem('scroll_removecurse').desc).toContain('instantly strip from');
+    expect(getItem('scroll_magicmapping').desc).toContain('crystal clarity');
   });
 });
 

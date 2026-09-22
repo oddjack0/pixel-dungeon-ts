@@ -9,6 +9,8 @@
  * hunger.ts) and the renderer reads `sprite` + buff flags for visuals.
  */
 import type { BuffKind } from './buffs';
+import type { EnchantmentId } from '../content/enchantments.js';
+import type { GlyphId } from '../content/glyphs.js';
 
 /** Minimal buff instance attached to a Char. Engine schedules the ticks. */
 export interface BuffState {
@@ -20,6 +22,16 @@ export interface BuffState {
    * re-rolled every tick. Only meaningful for kind 'bleeding'.
    */
   level?: number;
+  /**
+   * Buff object payload (Charm.object / Terror.object): the other char's
+   * id. Carried on the state so content procs stay structural.
+   */
+  sourceId?: number;
+  /**
+   * Counter payload (Viscosity DeferredDamage pool / Earthroot armor level):
+   * the accumulated/absorb integer.
+   */
+  amount?: number;
 }
 
 /** Base entity. Ports Char.java fields: pos (Char.java:58), HT/HP (63-64),
@@ -66,6 +78,21 @@ export interface WeaponDef {
   dly: number;
   /** True for MissileWeapon subclasses (Dart, etc.). */
   missile: boolean;
+  /**
+   * Per-instance weapon state (Weapon.java: enchantment is an instance
+   * field; durability/curse too). Undefined = unenchanted / uninitialized.
+   */
+  enchantment?: EnchantmentId | null;
+  durability?: number;
+  cursed?: boolean;
+  cursedKnown?: boolean;
+  /** Pickaxe.Quest blood-stained (Pickaxe.java). */
+  bloodStained?: boolean;
+  /**
+   * Item.isUpgradable() (Item.java): false for the pickaxe
+   * (Pickaxe.isUpgradable, Pickaxe.java:110-112). Undefined = upgradable.
+   */
+  upgradable?: boolean;
 }
 
 /** Armor stats needed by combat formulas. */
@@ -79,6 +106,21 @@ export interface ArmorDef {
   /** Damage absorption cap at level 0 (Armor.DR() with level 0:
    *  tier * 2, Armor.java:145-147); effective DR is dr + level. */
   dr: number;
+  /** Vanilla Armor.tier (Armor.java:46): DR per level + auto-repair cost. */
+  tier: number;
+  /**
+   * Per-instance armor state (Armor.java: glyph is an instance field;
+   * durability/curse too). Undefined = unglyphed / uninitialized.
+   */
+  glyph?: GlyphId | null;
+  durability?: number;
+  cursed?: boolean;
+  cursedKnown?: boolean;
+  /**
+   * Item.isUpgradable() (Item.java): armor is always upgradable in vanilla.
+   * Undefined = upgradable.
+   */
+  upgradable?: boolean;
 }
 
 /** The player character. Ports Hero.java fields. */

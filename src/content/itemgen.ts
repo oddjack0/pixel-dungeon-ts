@@ -32,7 +32,8 @@
  *       armor classes -> 'cloth_armor';
  *       potion classes -> 'potion_healing' (strength/might have weight 0 and
  *         never draw; M1 has no unidentified-potion variety);
- *       scroll/wand/ring classes -> 'scroll' (M1's unidentified scroll);
+ *       scroll classes -> 'scroll_<id>'; wand classes -> 'wand_of_<id>';
+ *       ring classes -> 'ring_of_<id>';
  *       seed classes -> 'ration'; bomb -> 'dart:<5..15>'; honeypot ->
  *         'potion_healing'.
  *   - Weapon levels: Weapon.random() can upgrade/degrade (Weapon.java:181-196)
@@ -122,65 +123,67 @@ const GEN_CLASSES: Record<GenCategory, ReadonlyArray<GenClass>> = {
     { cls: 'PlateArmor', prob: 1, m1: () => 'cloth_armor' },
   ],
   // Generator.java: POTION.probs = 45,4,15,10,15,10,0,20,12,10,0,10
+  // Stage 2 (Worker 4): every class maps to its real catalog id.
   potion: [
     { cls: 'PotionOfHealing', prob: 45, m1: () => 'potion_healing' },
-    { cls: 'PotionOfExperience', prob: 4, m1: () => 'potion_healing' },
-    { cls: 'PotionOfToxicGas', prob: 15, m1: () => 'potion_healing' },
-    { cls: 'PotionOfParalyticGas', prob: 10, m1: () => 'potion_healing' },
-    { cls: 'PotionOfLiquidFlame', prob: 15, m1: () => 'potion_healing' },
-    { cls: 'PotionOfLevitation', prob: 10, m1: () => 'potion_healing' },
+    { cls: 'PotionOfExperience', prob: 4, m1: () => 'potion_experience' },
+    { cls: 'PotionOfToxicGas', prob: 15, m1: () => 'potion_toxicgas' },
+    { cls: 'PotionOfParalyticGas', prob: 10, m1: () => 'potion_paralyticgas' },
+    { cls: 'PotionOfLiquidFlame', prob: 15, m1: () => 'potion_liquidflame' },
+    { cls: 'PotionOfLevitation', prob: 10, m1: () => 'potion_levitation' },
     { cls: 'PotionOfStrength', prob: 0, m1: () => 'potion_strength' },
-    { cls: 'PotionOfMindVision', prob: 20, m1: () => 'potion_healing' },
-    { cls: 'PotionOfPurity', prob: 12, m1: () => 'potion_healing' },
-    { cls: 'PotionOfInvisibility', prob: 10, m1: () => 'potion_healing' },
-    { cls: 'PotionOfMight', prob: 0, m1: () => 'potion_healing' },
-    { cls: 'PotionOfFrost', prob: 10, m1: () => 'potion_healing' },
+    { cls: 'PotionOfMindVision', prob: 20, m1: () => 'potion_mindvision' },
+    { cls: 'PotionOfPurity', prob: 12, m1: () => 'potion_purity' },
+    { cls: 'PotionOfInvisibility', prob: 10, m1: () => 'potion_invisibility' },
+    { cls: 'PotionOfMight', prob: 0, m1: () => 'potion_might' },
+    { cls: 'PotionOfFrost', prob: 10, m1: () => 'potion_frost' },
   ],
   // Generator.java: SCROLL.probs = 30,10,15,10,15,12,8,8,4,6,0,1
+  // Stage 2 (Worker 4): every class maps to its real catalog id.
   scroll: [
-    { cls: 'ScrollOfIdentify', prob: 30, m1: () => 'scroll' },
-    { cls: 'ScrollOfTeleportation', prob: 10, m1: () => 'scroll' },
-    { cls: 'ScrollOfRemoveCurse', prob: 15, m1: () => 'scroll' },
-    { cls: 'ScrollOfRecharging', prob: 10, m1: () => 'scroll' },
-    { cls: 'ScrollOfMagicMapping', prob: 15, m1: () => 'scroll' },
-    { cls: 'ScrollOfChallenge', prob: 12, m1: () => 'scroll' },
-    { cls: 'ScrollOfTerror', prob: 8, m1: () => 'scroll' },
-    { cls: 'ScrollOfLullaby', prob: 8, m1: () => 'scroll' },
-    { cls: 'ScrollOfPsionicBlast', prob: 4, m1: () => 'scroll' },
-    { cls: 'ScrollOfMirrorImage', prob: 6, m1: () => 'scroll' },
+    { cls: 'ScrollOfIdentify', prob: 30, m1: () => 'scroll_identify' },
+    { cls: 'ScrollOfTeleportation', prob: 10, m1: () => 'scroll_teleportation' },
+    { cls: 'ScrollOfRemoveCurse', prob: 15, m1: () => 'scroll_removecurse' },
+    { cls: 'ScrollOfRecharging', prob: 10, m1: () => 'scroll_recharging' },
+    { cls: 'ScrollOfMagicMapping', prob: 15, m1: () => 'scroll_magicmapping' },
+    { cls: 'ScrollOfChallenge', prob: 12, m1: () => 'scroll_challenge' },
+    { cls: 'ScrollOfTerror', prob: 8, m1: () => 'scroll_terror' },
+    { cls: 'ScrollOfLullaby', prob: 8, m1: () => 'scroll_lullaby' },
+    { cls: 'ScrollOfPsionicBlast', prob: 4, m1: () => 'scroll_psionicblast' },
+    { cls: 'ScrollOfMirrorImage', prob: 6, m1: () => 'scroll_mirrorimage' },
     { cls: 'ScrollOfUpgrade', prob: 0, m1: () => 'scroll_upgrade' },
     { cls: 'ScrollOfEnchantment', prob: 1, m1: () => 'scroll' },
   ],
   // Generator.java: WAND.probs = 10,10,15,6,10,11,15,10,6,10,0,5,5
   wand: [
-    { cls: 'WandOfTeleportation', prob: 10, m1: () => 'scroll' },
-    { cls: 'WandOfSlowness', prob: 10, m1: () => 'scroll' },
-    { cls: 'WandOfFirebolt', prob: 15, m1: () => 'scroll' },
-    { cls: 'WandOfRegrowth', prob: 6, m1: () => 'scroll' },
-    { cls: 'WandOfPoison', prob: 10, m1: () => 'scroll' },
-    { cls: 'WandOfBlink', prob: 11, m1: () => 'scroll' },
-    { cls: 'WandOfLightning', prob: 15, m1: () => 'scroll' },
-    { cls: 'WandOfAmok', prob: 10, m1: () => 'scroll' },
-    { cls: 'WandOfReach', prob: 6, m1: () => 'scroll' },
-    { cls: 'WandOfFlock', prob: 10, m1: () => 'scroll' },
-    { cls: 'WandOfMagicMissile', prob: 0, m1: () => 'scroll' },
-    { cls: 'WandOfDisintegration', prob: 5, m1: () => 'scroll' },
-    { cls: 'WandOfAvalanche', prob: 5, m1: () => 'scroll' },
+    { cls: 'WandOfTeleportation', prob: 10, m1: () => 'wand_of_teleportation' },
+    { cls: 'WandOfSlowness', prob: 10, m1: () => 'wand_of_slowness' },
+    { cls: 'WandOfFirebolt', prob: 15, m1: () => 'wand_of_firebolt' },
+    { cls: 'WandOfRegrowth', prob: 6, m1: () => 'wand_of_regrowth' },
+    { cls: 'WandOfPoison', prob: 10, m1: () => 'wand_of_poison' },
+    { cls: 'WandOfBlink', prob: 11, m1: () => 'wand_of_blink' },
+    { cls: 'WandOfLightning', prob: 15, m1: () => 'wand_of_lightning' },
+    { cls: 'WandOfAmok', prob: 10, m1: () => 'wand_of_amok' },
+    { cls: 'WandOfReach', prob: 6, m1: () => 'wand_of_reach' },
+    { cls: 'WandOfFlock', prob: 10, m1: () => 'wand_of_flock' },
+    { cls: 'WandOfMagicMissile', prob: 0, m1: () => 'wand_of_magic_missile' },
+    { cls: 'WandOfDisintegration', prob: 5, m1: () => 'wand_of_disintegration' },
+    { cls: 'WandOfAvalanche', prob: 5, m1: () => 'wand_of_avalanche' },
   ],
   // Generator.java: RING.probs = 1,1,1,1,1,1,1,1,1,1,0,0
   ring: [
-    { cls: 'RingOfMending', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfDetection', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfShadows', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfPower', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfHerbalism', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfAccuracy', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfEvasion', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfSatiety', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfHaste', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfElements', prob: 1, m1: () => 'scroll' },
-    { cls: 'RingOfHaggler', prob: 0, m1: () => 'scroll' },
-    { cls: 'RingOfThorns', prob: 0, m1: () => 'scroll' },
+    { cls: 'RingOfMending', prob: 1, m1: () => 'ring_of_mending' },
+    { cls: 'RingOfDetection', prob: 1, m1: () => 'ring_of_detection' },
+    { cls: 'RingOfShadows', prob: 1, m1: () => 'ring_of_shadows' },
+    { cls: 'RingOfPower', prob: 1, m1: () => 'ring_of_power' },
+    { cls: 'RingOfHerbalism', prob: 1, m1: () => 'ring_of_herbalism' },
+    { cls: 'RingOfAccuracy', prob: 1, m1: () => 'ring_of_accuracy' },
+    { cls: 'RingOfEvasion', prob: 1, m1: () => 'ring_of_evasion' },
+    { cls: 'RingOfSatiety', prob: 1, m1: () => 'ring_of_satiety' },
+    { cls: 'RingOfHaste', prob: 1, m1: () => 'ring_of_haste' },
+    { cls: 'RingOfElements', prob: 1, m1: () => 'ring_of_elements' },
+    { cls: 'RingOfHaggler', prob: 0, m1: () => 'ring_of_haggler' },
+    { cls: 'RingOfThorns', prob: 0, m1: () => 'ring_of_thorns' },
   ],
   // Generator.java: SEED.probs = 1,1,1,1,1,1,1,0
   seed: [
@@ -211,7 +214,7 @@ const GEN_CLASSES: Record<GenCategory, ReadonlyArray<GenClass>> = {
   // Generator.java: MISC.probs = 2,1
   misc: [
     { cls: 'Bomb', prob: 2, m1: dart(5, 15) },
-    { cls: 'Honeypot', prob: 1, m1: () => 'potion_healing' },
+    { cls: 'Honeypot', prob: 1, m1: () => 'honeypot' },
   ],
 };
 

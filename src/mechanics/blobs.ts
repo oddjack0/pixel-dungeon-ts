@@ -27,8 +27,8 @@ import type { BuffState } from './char.js';
 import { BURNING_DURATION, PARALYSIS_DURATION } from './buffs.js';
 import { Terrain } from '../core/grid.js';
 
-/** The three Stage 0 blobs (trap-seeded). Extend with the remaining 11 later. */
-export type BlobKind = 'fire' | 'toxic' | 'paralytic';
+/** The Stage 0 blobs (trap-seeded) plus the spinner's web (Stage 2). */
+export type BlobKind = 'fire' | 'toxic' | 'paralytic' | 'web';
 
 /**
  * Minimal char surface a blob evolve needs (vanilla Actor.findChar + Char).
@@ -39,6 +39,10 @@ export interface BlobChar {
   hp: number;
   ht: number;
   paralysed: boolean;
+  /** Set while a Roots buff is attached (Roots.attachTo, Roots.java). */
+  rooted: boolean;
+  /** Flying chars refuse Roots (Roots.attachTo, Roots.java). */
+  flying: boolean;
   buffs: Partial<Record<BuffKind, BuffState>>;
   immunities: string[];
   resistances: string[];
@@ -85,6 +89,11 @@ export interface BlobWorld {
   reigniteBurning(ch: BlobChar): void;
   /** Vanilla Buff.prolong(ch, Paralysis.class, Paralysis.duration(ch)). */
   prolongParalysis(ch: BlobChar, duration: number): void;
+  /**
+   * Vanilla Buff.prolong(ch, Roots.class, TICK) (Web.evolve, Web.java).
+   * Refused by flying chars (Roots.attachTo, Roots.java).
+   */
+  prolongRoots(ch: BlobChar): void;
   /**
    * Vanilla Fire burning out on a flamable tile: Dungeon.level.destroy(pos)
    * + GameScene.updateMap(pos) + Dungeon.observe() + discoverTile when
@@ -366,6 +375,43 @@ export class ParalyticGasBlob extends Blob {
   }
 }
 
+/** Vanilla Web blob (actors/blobs/Web.java) — the spinner's cobweb. */
+export class WebBlob extends Blob {
+  constructor(length: number) {
+    super('web', length);
+  }
+
+  /**
+   * Vanilla Web.evolve() (Web.java): no diffusion — each cell decays by 1,
+   * and chars standing in live web get Roots prolonged by TICK (1).
+   */
+  override evolve(_rng: MechanicsRng, world: BlobWorld): void {
+    for (let i = 0; i < world.length; i++) {
+      const offv = this.cur[i] > 0 ? this.cur[i] - 1 : 0;
+      this.off[i] = offv;
+      if (offv > 0) {
+        this.volume += offv;
+        const ch = world.charAt(i);
+        if (ch !== null) {
+          world.prolongRoots(ch);
+        }
+      }
+    }
+  }
+
+  /**
+   * Vanilla Web.seed(cell, amount) (Web.java): raise to the amount, never
+   * stack — unlike the base Blob.seed which adds.
+   */
+  override seed(cell: number, amount: number): void {
+    const diff = amount - this.cur[cell];
+    if (diff > 0) {
+      this.cur[cell] = amount;
+      this.volume += diff;
+    }
+  }
+}
+
 /** Construct the Blob subclass for a kind. */
 export function createBlob(kind: BlobKind, length: number): Blob {
   switch (kind) {
@@ -375,6 +421,8 @@ export function createBlob(kind: BlobKind, length: number): Blob {
       return new ToxicGasBlob(length);
     case 'paralytic':
       return new ParalyticGasBlob(length);
+    case 'web':
+      return new WebBlob(length);
   }
 }
 

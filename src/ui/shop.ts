@@ -203,7 +203,11 @@ export class ShopPanel {
       const e = readSellable(game)[this.selected];
       if (!e) return;
       const r = sellToShop(game, e, id === 'sell-one' ? 'one' : 'all');
-      this.notice = r.ok ? `Sold ${e.name} for ${r.price}g.` : 'That item is gone.';
+      this.notice = r.ok
+        ? `Sold ${e.name} for ${r.price}g.`
+        : r.reason === 'cursed'
+          ? "You can't sell cursed gear while it's equipped!"
+          : 'That item is gone.';
       this.selected = 0;
     }
   }

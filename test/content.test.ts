@@ -67,6 +67,9 @@ import {
 import type { MechanicsRng } from '../src/mechanics/rng.js';
 import { contentMechanics } from '../src/content/hooks.js';
 import { resetQuestState } from '../src/content/npcs.js';
+import { initIdentification } from '../src/content/identification.js';
+import { potionFamilyDef } from '../src/content/potions.js';
+import { scrollFamilyDef } from '../src/content/scrolls.js';
 import { GooMob, GOO_DEF } from '../src/content/goo-boss.js';
 import {
   heroAttackSkill,
@@ -484,16 +487,16 @@ describe('vanilla item generator (Generator.java)', () => {
     expect(bag.weightOf('weapon')).toBe(15 / 8); // halved once per draw
   });
 
-  test('scroll/wand/ring/seeds collapse onto M1 catalog items', () => {
+  test('scroll/wand/ring draw their real Stage 2 catalog items', () => {
     const bag = new GeneratorBag();
-    expect(bag.randomFrom(new StubRng([0], []), 'scroll', 1)).toBe('scroll');
-    expect(bag.randomFrom(new StubRng([0], []), 'wand', 1)).toBe('scroll');
-    expect(bag.randomFrom(new StubRng([0], []), 'ring', 1)).toBe('scroll');
+    expect(bag.randomFrom(new StubRng([0], []), 'scroll', 1)).toBe('scroll_identify');
+    expect(bag.randomFrom(new StubRng([0], []), 'wand', 1)).toBe('wand_of_teleportation');
+    expect(bag.randomFrom(new StubRng([0], []), 'ring', 1)).toBe('ring_of_mending');
     expect(bag.randomFrom(new StubRng([0], []), 'seed', 1)).toBe('ration');
     expect(bag.randomFrom(new StubRng([0], []), 'potion', 1)).toBe('potion_healing');
     expect(bag.randomFrom(new StubRng([0], []), 'armor', 1)).toBe('cloth_armor');
     expect(bag.randomFrom(new StubRng([0], []), 'misc', 1)).toBe('dart:5'); // Bomb [0,2)
-    expect(bag.randomFrom(new StubRng([2.5 / 3], []), 'misc', 1)).toBe('potion_healing'); // Honeypot [2,3)
+    expect(bag.randomFrom(new StubRng([2.5 / 3], []), 'misc', 1)).toBe('honeypot'); // Honeypot [2,3)
   });
 });
 
@@ -886,6 +889,7 @@ describe('interactions', () => {
   test('drinking a healing potion restores full HP and cures poison', () => {
     const level = makeLevel();
     const c = makeCtx(level, 71);
+    initIdentification(c.ctx.rng, potionFamilyDef(), scrollFamilyDef());
     c.hero.hp = 5;
     c.hero.buffs.poison = { kind: 'poison', left: 5 };
     addToInventory(c.hero, 'potion_healing', 1);
@@ -898,6 +902,7 @@ describe('interactions', () => {
   test('strength potion raises STR', () => {
     const level = makeLevel();
     const c = makeCtx(level, 71);
+    initIdentification(c.ctx.rng, potionFamilyDef(), scrollFamilyDef());
     addToInventory(c.hero, 'potion_strength', 1);
     const slot = c.hero.inventory.findIndex((s) => s.itemId === 'potion_strength');
     useInventorySlot(c.ctx, c.hero, slot);

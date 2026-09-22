@@ -32,6 +32,7 @@ import { getItem, parseItemId } from './items.js';
 import { itemGenerator, resetItemGenerator } from './itemgen.js';
 import { buildMob, nextMobId, type ContentMob } from './mobs.js';
 import {
+  blacksmithQuest,
   ghostQuest,
   initGhostQuest,
   initWandmakerQuest,
@@ -53,6 +54,14 @@ import {
  *   depth 9: Skeleton 3, Shaman 3, Thief 1, Swarm 1, Bat 0.02, Brute 0.01
  *     (Bestiary.java:102-105)
  *   depth 10: Tengu only (PrisonBossLevel; handled by the boss flag, not this table)
+ * --- Stage 2: Caves (Bestiary.java:110-136) ---
+ *   depth 11: Bat 1, Brute 0.2 (Bestiary.java:111-114)
+ *   depth 12: Bat 1, Brute 1, Spinner 0.2 (Bestiary.java:115-119)
+ *   depth 13: Bat 1, Brute 3, Shaman 1, Spinner 1, Elemental 0.02
+ *     (Bestiary.java:120-126)
+ *   depth 14: Bat 1, Brute 3, Shaman 1, Spinner 4, Elemental 0.02, Monk 0.01
+ *     (Bestiary.java:127-135)
+ *   depth 15: DM-300 only (CavesBossLevel; handled by the boss flag, not this table)
  */
 export const SEWER_MOB_TABLE: Readonly<
   Record<number, ReadonlyArray<{ id: string; weight: number }>>
@@ -104,6 +113,32 @@ export const SEWER_MOB_TABLE: Readonly<
     { id: 'bat', weight: 0.02 },
     { id: 'brute', weight: 0.01 },
   ],
+  // --- Stage 2: Caves (Bestiary.java:110-136) ---
+  11: [
+    { id: 'bat', weight: 1 },
+    { id: 'brute', weight: 0.2 },
+  ],
+  12: [
+    { id: 'bat', weight: 1 },
+    { id: 'brute', weight: 1 },
+    { id: 'spinner', weight: 0.2 },
+  ],
+  13: [
+    { id: 'bat', weight: 1 },
+    { id: 'brute', weight: 3 },
+    { id: 'shaman', weight: 1 },
+    { id: 'spinner', weight: 1 },
+    { id: 'elemental', weight: 0.02 },
+  ],
+  14: [
+    { id: 'bat', weight: 1 },
+    { id: 'brute', weight: 3 },
+    { id: 'shaman', weight: 1 },
+    { id: 'spinner', weight: 4 },
+    { id: 'elemental', weight: 0.02 },
+    { id: 'monk', weight: 0.01 },
+  ],
+  // depth 15: DM-300 only — boss flag, no table entry.
 };
 
 /**
@@ -157,7 +192,7 @@ export interface ResolvedMob {
 
 /**
  * Resolve generator mob spawns. MobSpawn kinds (src/dungeon/level.ts):
- * 'mob' -> depth table; 'boss' -> goo (depth 5) / tengu (depth 10);
+ * 'mob' -> depth table; 'boss' -> goo (depth 5) / tengu (depth 10) / dm300 (depth 15);
  * 'ghost' -> the sad ghost (once/run quest NPC); 'wandmaker' -> the old
  * wandmaker (once/run quest NPC); 'shopkeeper' -> the shop NPC;
  * 'ratking'/'statue'/'piranha' -> M1: skipped (no ratking/statue/piranha
@@ -174,7 +209,11 @@ export function resolveMobSpawns(
     if (s.kind === 'mob') {
       out.push({ pos: s.pos, mobId: pickMobId(rng, depth) });
     } else if (s.kind === 'boss') {
-      out.push({ pos: s.pos, mobId: depth === 10 ? 'tengu' : 'goo' });
+      // Bestiary.mob(depth): depth 10 -> Tengu (Bestiary.java:107-110),
+      // depth 15 -> DM-300 (Bestiary.java:133-136). Vanilla's boss levels
+      // (Goo depth 5, Tengu depth 10, DM-300 depth 15) place the boss via
+      // their own level logic; the generator marks the spawn point.
+      out.push({ pos: s.pos, mobId: depth === 15 ? 'dm300' : depth === 10 ? 'tengu' : 'goo' });
     } else if (s.kind === 'ghost') {
       // Vanilla Ghost.Quest.spawn: once per run (Ghost.java:234). The
       // generator marks its own run state, but the quest singleton is the
@@ -202,6 +241,19 @@ export function resolveMobSpawns(
       }
     } else if (s.kind === 'shopkeeper') {
       out.push({ pos: s.pos, mobId: 'shopkeeper' });
+    } else if (s.kind === 'blacksmith') {
+      // Vanilla Blacksmith.Quest.spawn (Blacksmith.java:305-320): once per
+      // run, on depths 12-14 — the generator marks run.blacksmithSpawned when
+      // it assigns the BLACKSMITH room; the quest singleton is the run-level
+      // guard here (ghost/wandmaker pattern). Vanilla sets alternative =
+      // Random.Int(2)==0 and given = false on spawn (Blacksmith.java:315-317).
+      // The NPC entity class is Worker 5's (npcs.ts 'blacksmith' seam).
+      if (!blacksmithQuest.spawned) {
+        blacksmithQuest.spawned = true;
+        blacksmithQuest.alternative = rng.int(0, 2) === 0;
+        blacksmithQuest.given = false;
+        out.push({ pos: s.pos, mobId: 'blacksmith' });
+      }
     }
     // ratking/statue/piranha: skipped for M1.
   }
@@ -326,9 +378,9 @@ export function resolveItemTag(
     case 'scroll-of-identify':
       return 'scroll_identify';
     case 'scroll-of-remove-curse':
-      return 'scroll_remove_curse';
+      return 'scroll_removecurse';
     case 'scroll-of-magic-mapping':
-      return 'scroll_magic_mapping';
+      return 'scroll_magicmapping';
     case 'random-scroll':
       // ShopPainter.java:145 — Generator.random(Category.SCROLL).
       return itemGenerator.randomFrom(rng, 'scroll', depth);

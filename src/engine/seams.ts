@@ -27,6 +27,17 @@ export type HeroIntent =
   | { kind: 'drop'; slot: number }
   | { kind: 'throwItem'; slot: number; targetId: number }
   /**
+   * Stage 2 (Worker 4): Honeypot AC_SHATTER — shatter the honeypot in
+   * `slot` at the hero's own feet (Honeypot.java:61-73). Produced by the
+   * inventory 'shatter' action.
+   */
+  | { kind: 'shatterItem'; slot: number }
+  /**
+   * Stage 2 (Worker 5): Pickaxe AC_MINE — mine an adjacent dark gold vein
+   * (Pickaxe.java:59-108). Produced by the inventory 'mine' action.
+   */
+  | { kind: 'mineItem'; slot: number }
+  /**
    * Talk to an NPC (Sad Ghost / Wandmaker / shopkeeper). Produced by
    * src/engine/input.ts when the tapped tile holds a talkable mob and by
    * Game's path-bump routing when the path ends on one. Vanilla

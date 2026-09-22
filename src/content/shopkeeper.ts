@@ -183,7 +183,7 @@ export function buyFromShop(game: Game, entry: ShopStockEntry, haggling = false)
   return { ok: true, price };
 }
 
-export type SellResult = { ok: true; price: number } | { ok: false; reason: 'gone' };
+export type SellResult = { ok: true; price: number } | { ok: false; reason: 'gone' | 'cursed' };
 
 /**
  * Sell a hero item. Vanilla `WndTradeItem.sell` / `sellOne`
@@ -200,13 +200,19 @@ export function sellToShop(game: Game, entry: SellableEntry, which: 'one' | 'all
   let stack: ItemStack | undefined;
   if (entry.slot === -1) {
     if (hero.weaponId !== entry.itemId) return { ok: false, reason: 'gone' };
-    addToInventory(hero, hero.weaponId, 1);
+    // Selling equipped gear unequips it; cursed gear cannot come off
+    // (EquipableItem.java:70-90).
+    if (hero.weapon?.cursed) return { ok: false, reason: 'cursed' };
+    const inst = hero.weapon;
+    addToInventory(hero, hero.weaponId, 1, inst ? { weapon: inst } : undefined);
     hero.weapon = null;
     hero.weaponId = null;
     stack = hero.inventory[hero.inventory.length - 1];
   } else if (entry.slot === -2) {
     if (hero.armorId !== entry.itemId) return { ok: false, reason: 'gone' };
-    addToInventory(hero, hero.armorId, 1);
+    if (hero.armor?.cursed) return { ok: false, reason: 'cursed' };
+    const inst = hero.armor;
+    addToInventory(hero, hero.armorId, 1, inst ? { armor: inst } : undefined);
     hero.armor = null;
     hero.armorId = null;
     stack = hero.inventory[hero.inventory.length - 1];

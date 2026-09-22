@@ -18,17 +18,21 @@ import type { MechanicsRng } from '../mechanics/rng.js';
 import { CRIPPLE_DURATION } from '../mechanics/buffs.js';
 import { applyDamage } from '../mechanics/combat.js';
 import {
-  gearDisplayName,
   heroAttackSkill,
   heroDamageRoll,
   intentionalSearchLevel,
   passiveSearchLevel,
   searchTimeCost,
-  upgradeArmor,
-  upgradeWeapon,
   vertigoRedirect,
 } from '../mechanics/hero.js';
 import { hasBuff } from '../mechanics/char.js';
+import type { ArmorDef, WeaponDef } from '../mechanics/char.js';
+import {
+  initDurability,
+  TXT_EQUIP_CURSED_ARMOR,
+  TXT_EQUIP_CURSED_WEAPON,
+  TXT_UNEQUIP_CURSED,
+} from '../mechanics/durability.js';
 import {
   MSG_HUNGRY,
   MSG_STARVED_TO_DEATH,
@@ -40,10 +44,14 @@ import {
   isStarving,
   regenTick,
   satisfy,
+  STARVING,
 } from '../mechanics/hunger.js';
 import { pressTrapCell } from '../mechanics/traps.js';
 import { pressArenaCell } from '../dungeon/prisonBoss.js';
+import { pressArenaCell as pressCavesArenaCell } from '../dungeon/cavesBoss.js';
 import { getItem, parseItemId } from './items.js';
+import { drinkPotion as drinkPotionFull } from './potions.js';
+import { readScroll as readScrollFull } from './scrolls.js';
 import {
   addToInventory,
   countItem,
@@ -53,6 +61,9 @@ import {
   type ItemStack,
 } from './hero.js';
 import { heroOf, strikeHeroVsMob, buildMob, nextMobId, type ContentMob } from './mobs.js';
+// Stage 2 (wands/rings worker): id predicates for the inventory use-path.
+import { isWandId } from './wands.js';
+import { isRingId } from './rings.js';
 
 /**
  * Hero.actPickUp (Hero.java:1038-1054): one heap per action, takes 1 turn
@@ -100,6 +111,14 @@ export function useInventorySlot(
     return 1;
   }
   const def = getItem(stack.itemId);
+  // Stage 2 (wands/rings worker): wand/ring instance defs carry type 'misc'
+  // (per-instance level/charges/identification can't live in the static
+  // catalog) — route by id. The wand-zap and ring-equip use-paths land with
+  // their worker; until then the inventory UI offers nothing for these.
+  if (isWandId(stack.itemId) || isRingId(stack.itemId)) {
+    ctx.log('Nothing happens.');
+    return 1;
+  }
   switch (def.type) {
     case 'potion':
       return drinkPotion(ctx, hero, slot, stack);
@@ -131,79 +150,40 @@ export function useInventorySlot(
       // Quest items are handed to NPCs via dialog, not used from inventory.
       // The inventory UI only offers 'drop' for these (actionsFor default).
       return 1;
+    case 'wand':
+    case 'ring':
+      // Intercepted by id above (isWandId/isRingId); unreachable here.
+      // The wand-zap and ring-equip use-paths live in wands.ts/rings.ts.
+      return 1;
   }
 }
 
-/** Potion.apply (Potion.java:68-87) + per-potion effects (shatter/apply). */
+/** Drink a potion: Stage-2 full implementation (Worker 4).
+ * Replaces the M1 healing/strength-only version; covers all 12 vanilla
+ * potions with the exact identification system (potions.ts).
+ */
 function drinkPotion(
   ctx: ActionContext,
   hero: ContentHero,
   slot: number,
-  stack: ItemStack,
+  _stack: ItemStack,
 ): number {
-  const def = getItem(stack.itemId);
-  removeFromInventory(hero, slot, 1);
-  switch (stack.itemId) {
-    case 'potion_healing':
-      // PotionOfHealing: heal to full + detach Weakened/Poison/Crippled
-      // (PotionOfHealing.java:38-48). M1: only poison can exist.
-      hero.hp = hero.ht;
-      delete hero.buffs.poison;
-      ctx.log('Your wounds heal completely.'); // TXT_VALUE
-      break;
-    case 'potion_strength':
-      // PotionOfStrength: STR++ (PotionOfStrength.java:38-47).
-      hero.str += 1;
-      ctx.log('Newfound strength surges through your body.'); // TXT_VALUE
-      break;
-    default:
-      ctx.log(`You drink the ${def.name}. Nothing happens.`);
-      break;
-  }
-  return 1; // TIME_TO_DRINK (Item.java:48)
+  return drinkPotionFull(ctx, hero, slot);
 }
 
 /**
- * Read a scroll (Scroll.execute, Scroll.java:46-58; TIME_TO_READ = 1).
- * M1 note: scrolls are auto-identified — vanilla's rune-label system and
- * identify-on-read (Scroll.java:52-58) arrive with the M2 identification
- * system; until then every scroll reads directly.
+ * Read a scroll: Stage-2 full implementation (Worker 4).
+ * Replaces the M1 upgrade-only version; covers all 12 vanilla scrolls with
+ * the exact identification system (scrolls.ts). The upgrade path keeps its
+ * Stage-1-tested behavior (equipped weapon else armor).
  */
 function readScroll(
   ctx: ActionContext,
   hero: ContentHero,
   slot: number,
-  stack: ItemStack,
+  _stack: ItemStack,
 ): number {
-  switch (stack.itemId) {
-    case 'scroll_upgrade': {
-      // ScrollOfUpgrade.onItemSelected (ScrollOfUpgrade.java:38-48): uncurse
-      // + upgrade. M1 has no curse model; WndBag.Mode.UPGRADEABLE item choice
-      // is simplified to "equipped weapon, else equipped armor" (the
-      // selection UI is M2). Consumes the scroll like any read scroll.
-      const weapon = hero.weapon;
-      const armor = hero.armor;
-      if (!weapon && !armor) {
-        ctx.log('You have nothing to upgrade.');
-        return 1;
-      }
-      removeFromInventory(hero, slot, 1);
-      if (weapon) {
-        // Vanilla: a weapon's quality improves; ScrollOfUpgrade also fixes
-        // broken gear (ScrollOfUpgrade.java:40-44) — M1 has no durability.
-        upgradeWeapon(weapon);
-        ctx.log(`your ${gearDisplayName(weapon)} certainly looks better now`);
-      } else {
-        upgradeArmor(armor!);
-        ctx.log(`your ${gearDisplayName(armor!)} certainly looks better now`);
-      }
-      return 1; // TIME_TO_READ (Scroll.java:35)
-    }
-    default:
-      // Other scrolls have no effects yet (later milestone).
-      ctx.log('You cannot read that yet.'); // TXT_CANT_READ
-      return 1;
-  }
+  return readScrollFull(ctx, hero, slot);
 }
 
 /** Food.execute (Food.java:74-86): satisfy hunger, warrior heals 5. */
@@ -223,7 +203,11 @@ function eatFood(
   return 3; // TIME_TO_EAT (Food.java:35)
 }
 
-/** KindOfWeapon.doEquip (KindOfWeapon.java:32): 1 turn, swaps with old. */
+/**
+ * KindOfWeapon.doEquip (KindOfWeapon.java:32-52): detach from the pack, equip
+ * (the old weapon is unequipped first — which fails when cursed), mark
+ * cursedKnown, and log the cursed-equip line. 1 turn (TIME_TO_EQUIP).
+ */
 function equipWeaponFromInventory(
   ctx: ActionContext,
   hero: ContentHero,
@@ -235,16 +219,36 @@ function equipWeaponFromInventory(
     ctx.log("You can't wield that.");
     return 1;
   }
+  // The old weapon must come off first (doUnequip fails when cursed).
+  if (hero.weapon?.cursed) {
+    ctx.log(TXT_UNEQUIP_CURSED.replace('%s', hero.weapon.name));
+    return 1;
+  }
+  const oldWeapon = hero.weapon;
   const oldId = hero.weaponId;
-  hero.weapon = { ...def.weapon };
-  hero.weaponId = def.id;
+  const inst: WeaponDef = stack.gear?.weapon
+    ? { ...stack.gear.weapon }
+    : { ...def.weapon };
+  if (inst.durability === undefined) initDurability(inst, 'weapon');
   removeFromInventory(hero, slot, 1);
-  if (oldId) addToInventory(hero, oldId, 1);
+  hero.weapon = inst;
+  hero.weaponId = def.id;
+  // doEquip: cursedKnown = true, then the cursed-equip line (GLog.n).
+  hero.weapon.cursedKnown = true;
+  if (oldId && oldWeapon) {
+    addToInventory(hero, oldId, 1, { weapon: oldWeapon });
+  }
   ctx.log(`You equip the ${def.name}.`);
+  if (inst.cursed) {
+    ctx.log(TXT_EQUIP_CURSED_WEAPON.replace('%s', inst.name));
+  }
   return 1; // TIME_TO_EQUIP
 }
 
-/** Armor.doEquip (Armor.java): 1 turn, swaps with old. */
+/**
+ * Armor.doEquip (Armor.java:87-106): same shape as the weapon path, with
+ * the armor cursed-equip line ("your %s constricts around you painfully").
+ */
 function equipArmorFromInventory(
   ctx: ActionContext,
   hero: ContentHero,
@@ -256,12 +260,27 @@ function equipArmorFromInventory(
     ctx.log("You can't wear that.");
     return 1;
   }
+  if (hero.armor?.cursed) {
+    ctx.log(TXT_UNEQUIP_CURSED.replace('%s', hero.armor.name));
+    return 1;
+  }
+  const oldArmor = hero.armor;
   const oldId = hero.armorId;
-  hero.armor = { ...def.armor };
-  hero.armorId = def.id;
+  const inst: ArmorDef = stack.gear?.armor
+    ? { ...stack.gear.armor }
+    : { ...def.armor };
+  if (inst.durability === undefined) initDurability(inst, 'armor');
   removeFromInventory(hero, slot, 1);
-  if (oldId) addToInventory(hero, oldId, 1);
+  hero.armor = inst;
+  hero.armorId = def.id;
+  hero.armor.cursedKnown = true;
+  if (oldId && oldArmor) {
+    addToInventory(hero, oldId, 1, { armor: oldArmor });
+  }
   ctx.log(`You equip the ${def.name}.`);
+  if (inst.cursed) {
+    ctx.log(TXT_EQUIP_CURSED_ARMOR.replace('%s', inst.name));
+  }
   return 1; // TIME_TO_EQUIP
 }
 
@@ -384,8 +403,15 @@ export function equipSlot(
       ctx.log('You wield nothing.');
       return 1;
     }
+    // EquipableItem.doUnequip (EquipableItem.java:70-90): cursed gear
+    // cannot come off ("You can't remove cursed %s!").
+    if (hero.weapon?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace('%s', hero.weapon.name));
+      return 1;
+    }
     const def = getItem(hero.weaponId);
-    addToInventory(hero, hero.weaponId, 1);
+    const inst = hero.weapon;
+    addToInventory(hero, hero.weaponId, 1, inst ? { weapon: inst } : undefined);
     hero.weapon = null;
     hero.weaponId = null;
     ctx.log(`You unwield the ${def.name}.`);
@@ -396,8 +422,13 @@ export function equipSlot(
       ctx.log('You wear nothing.');
       return 1;
     }
+    if (hero.armor?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace('%s', hero.armor.name));
+      return 1;
+    }
     const def = getItem(hero.armorId);
-    addToInventory(hero, hero.armorId, 1);
+    const inst = hero.armor;
+    addToInventory(hero, hero.armorId, 1, inst ? { armor: inst } : undefined);
     hero.armor = null;
     hero.armorId = null;
     ctx.log(`You take off the ${def.name}.`);
@@ -428,6 +459,13 @@ export function dropSlot(
     const equippedId = slot === -1 ? hero.weaponId : hero.armorId;
     if (!equippedId) {
       ctx.log('Nothing in that slot.');
+      return 1;
+    }
+    // Dropping equipped gear unequips it first (Item.doDrop -> detach);
+    // cursed gear cannot come off (EquipableItem.java:70-90).
+    const inst = slot === -1 ? hero.weapon : hero.armor;
+    if (inst?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace('%s', inst.name));
       return 1;
     }
     if (slot === -1) {
@@ -755,6 +793,74 @@ export function noteSignCells(level: object, cells: number[]): void {
 }
 
 /**
+ * Cells with WALL_DECO terrain (dark gold veins), per generated level.
+ * Registered by the engine's level-setup path (hooks.ts spawnMobs) from
+ * PainterMarkers.wallDeco — the veins are wall cells with WALL_DECO tile
+ * data (Level.WALL_DECO), not live actors.
+ */
+const wallDecoCells = new WeakMap<object, Set<number>>();
+
+export function noteWallDecoCells(level: object, cells: number[]): void {
+  wallDecoCells.set(level, new Set(cells));
+}
+
+/**
+ * Pickaxe.execute AC_MINE (Pickaxe.java:59-108): outside depths 11-15, or
+ * with no WALL_DECO cell in the 8 neighbors, log TXT_NO_VEIN (no time
+ * spent — the spend happens only when a vein is found). On a vein: spend
+ * TIME_TO_MINE (2), convert the vein to plain wall, grant one dark gold
+ * ore, and satisfy non-starving hunger by STARVING/10 (36).
+ */
+export function mineDarkGold(
+  ctx: ActionContext,
+  hero: ContentHero,
+  slot: number,
+): number {
+  const stack = hero.inventory[slot];
+  if (!stack || stack.itemId !== 'pickaxe') {
+    ctx.log('Nothing to mine with.');
+    return 0;
+  }
+  if (ctx.level.depth < 11 || ctx.level.depth > 15) {
+    ctx.log(TXT_NO_VEIN); // GLog.w
+    return 0;
+  }
+  const veins = wallDecoCells.get(ctx.level);
+  const w = ctx.level.w;
+  const hx = hero.pos % w;
+  const hy = Math.floor(hero.pos / w);
+  let vein: number | null = null;
+  for (let dy = -1; dy <= 1 && vein === null; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const pos = (hy + dy) * w + (hx + dx);
+      if (veins?.has(pos)) {
+        vein = pos;
+        break;
+      }
+    }
+  }
+  if (vein === null) {
+    ctx.log(TXT_NO_VEIN); // GLog.w
+    return 0;
+  }
+  veins!.delete(vein);
+  // Level.set(pos, Terrain.WALL) + GameScene.updateMap(pos)
+  // (Pickaxe.java:90-91): the port's painters store WALL_DECO veins as plain
+  // WALL tiles (painters.ts:59), so deleting the marker cell IS the
+  // conversion — no tile-map change is needed.
+  // DarkGold.doPickUp → "You now have dark gold ore" (Hero.TXT_YOU_NOW_HAVE).
+  addToInventory(hero, 'darkgold', 1);
+  ctx.log('You now have dark gold ore');
+  if (hero.hungerLevel < STARVING) {
+    hero.hungerLevel = satisfy(hero.hungerLevel, -STARVING / 10);
+  }
+  return 2; // TIME_TO_MINE
+}
+
+const TXT_NO_VEIN = 'There is no dark gold vein near you to mine';
+
+/**
  * Sign.read (Sign.java:72-102). Vanilla trigger: a Move action that cannot
  * move while standing on a SIGN (Hero.actMove, Hero.java:485-498) — reading
  * spends no time (ready(), not spend()). The port has no tap-self move, so
@@ -793,6 +899,10 @@ export function moveHero(
   dy: number,
 ): number {
   const level = ctx.level;
+  // Hero.getCloser (Hero.java:908-913): a rooted hero cannot step — the
+  // camera shake is visual (renderer territory); the turn is still spent
+  // (the vanilla action branch spends regardless of getCloser's result).
+  if (hero.rooted) return 1; // TIME_TO_MOVE (Hero.java:36)
   let nx = hero.x + dx;
   let ny = hero.y + dy;
   if (!level.inBounds(nx, ny)) return 1;
@@ -873,20 +983,40 @@ export function moveHero(
     // PrisonBossLevel.press (PrisonBossLevel.java:303-328): the hero's first
     // step inside the Tengu arena spawns Tengu (HUNTING) at a free arena cell
     // and re-locks the arena door. No-op on levels without an arena.
-    pressArenaCell(ctx.level, ctx.rng, hero.pos, {
-      occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
-      spawn: (pos) => {
-        // Bestiary.mob(depth) at depth 10 -> Tengu (Bestiary.java:107-110);
-        // boss.state = boss.HUNTING; GameScene.add( boss ) (PrisonBossLevel.java:316-319).
-        const tengu = buildMob('tengu', nextMobId(), pos, level.w);
-        tengu.state = 'hunting';
-        ctx.addMob(tengu);
-        // boss.notice() -> Tengu.notice() yell (Tengu.java:170-174).
-        tengu.notice(ctx);
-        // mobPress( boss ) (PrisonBossLevel.java:322): the arena interior is
-        // inactive-trap fill, so there is nothing to trigger.
-      },
-    });
+    // CavesBossLevel.press (CavesBossLevel.java:184-214): the hero's first
+    // step OUTSIDE the entrance room spawns DM-300 (HUNTING) at a random
+    // passable, non-visible cell outside the room and collapses the arena
+    // door to WALL. Depth-gated: both levels reuse the bossArena /
+    // arenaDoorCell fields, so the wrong hook must never fire.
+    if (ctx.level.depth === 10) {
+      pressArenaCell(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          // Bestiary.mob(depth) at depth 10 -> Tengu (Bestiary.java:107-110);
+          // boss.state = boss.HUNTING; GameScene.add( boss ) (PrisonBossLevel.java:316-319).
+          const tengu = buildMob('tengu', nextMobId(), pos, level.w);
+          tengu.state = 'hunting';
+          ctx.addMob(tengu);
+          // boss.notice() -> Tengu.notice() yell (Tengu.java:170-174).
+          tengu.notice(ctx);
+          // mobPress( boss ) (PrisonBossLevel.java:322): the arena interior is
+          // inactive-trap fill, so there is nothing to trigger.
+        },
+      });
+    } else if (ctx.level.depth === 15) {
+      pressCavesArenaCell(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          // Bestiary.mob(depth) at depth 15 -> DM300 (Bestiary.java:133-136);
+          // boss.state = boss.HUNTING; GameScene.add( boss ) (CavesBossLevel.java:199-201).
+          const dm300 = buildMob('dm300', nextMobId(), pos, level.w);
+          dm300.state = 'hunting';
+          ctx.addMob(dm300);
+          // boss.notice() -> DM300.notice() yell (DM300.java:147-150).
+          dm300.notice(ctx);
+        },
+      });
+    }
     // Vanilla Level.press continues after traps: HIGH_GRASS trample, then
     // WELL, ALCHEMY, then DOOR enter (Level.java:622-704). Wells and the
     // alchemy pot are later milestones; grass and doors are handled here.

@@ -18,7 +18,7 @@ import type {
   MobSaveData,
 } from '../engine/seams.js';
 import type { BuffKind } from '../mechanics/buffs.js';
-import type { BuffState } from '../mechanics/char.js';
+import type { ArmorDef, BuffState, WeaponDef } from '../mechanics/char.js';
 import {
   heroAttackSkill,
   heroDamageRoll,
@@ -33,8 +33,10 @@ import {
 import {
   dropSlot,
   equipSlot,
+  mineDarkGold,
   moveHero,
   noteSignCells,
+  noteWallDecoCells,
   pickupAt,
   searchIntentional,
   throwDart,
@@ -42,6 +44,10 @@ import {
   useInventorySlot,
   waitTurn,
 } from './actions.js';
+import { throwPotion, isPotionId, potionUiInfo } from './potions.js';
+import { scrollUiInfo } from './scrolls.js';
+import { throwHoneypot, HONEYPOT_ID } from './honeypot.js';
+import { shatterHoneypotInHands } from './honeypot.js';
 import {
   createStarterHero,
   syncDarts,
@@ -67,6 +73,7 @@ import {
 import type { Game } from '../engine/loop.js';
 import './goo-boss.js'; // registers the Goo constructor for buildMob
 import './tengu-boss.js'; // registers the Tengu constructor for buildMob
+import './dm300-boss.js'; // registers the DM-300 constructor for buildMob
 import './npcs.js'; // registers the quest-NPC builder for buildMob
 import { resetQuestState, type NpcMob } from './npcs.js';
 
@@ -97,6 +104,8 @@ function catalogKind(def: ItemDef): ItemKind {
     case 'quest':
     case 'bag':
     case 'misc':
+    case 'wand':
+    case 'ring':
       return 'misc';
   }
 }
@@ -105,15 +114,20 @@ function contentInventoryAdapter(game: Game): UiItem[] {
   const hero = game.hero as unknown as ContentHero;
   const items: UiItem[] = hero.inventory.map((s, slot) => {
     const def = getItem(s.itemId);
+    // Stage 2 (Worker 4): potions/scrolls show their run-assigned
+    // color/rune names and sprites once the ID system is initialized.
+    const potionInfo = potionUiInfo(s.itemId, def.name, def.sprite);
+    const scrollInfo = potionInfo ? null : scrollUiInfo(s.itemId, def.name, def.sprite);
+    const info = potionInfo ?? scrollInfo;
     return {
       slot,
       id: s.itemId,
-      name: def.name,
-      sprite: def.sprite,
+      name: info?.name ?? def.name,
+      sprite: info?.sprite ?? def.sprite,
       qty: s.qty,
       kind: catalogKind(def),
       equipped: false,
-      identified: true,
+      identified: info?.identified ?? true,
     };
   });
   if (hero.weaponId) {
@@ -162,6 +176,13 @@ export interface HeroSaveEx extends Record<string, unknown> {
   str: number;
   weaponId: string | null;
   armorId: string | null;
+  /**
+   * Live per-instance state of the equipped gear (level, enchantment/glyph,
+   * durability, curse). Vanilla saves these as the item objects themselves
+   * (Bundle); the port saves the instance beside the id.
+   */
+  weapon: WeaponDef | null;
+  armor: ArmorDef | null;
   inventory: ItemStack[];
   gold: number;
   hungerLevel: number;
@@ -209,7 +230,17 @@ function saveHeroEx(hero: ContentHero): HeroSaveEx {
     str: hero.str,
     weaponId: hero.weaponId,
     armorId: hero.armorId,
-    inventory: hero.inventory.map((s) => ({ ...s })),
+    weapon: hero.weapon ? { ...hero.weapon } : null,
+    armor: hero.armor ? { ...hero.armor } : null,
+    inventory: hero.inventory.map((s) => ({
+      ...s,
+      gear: s.gear
+        ? {
+            weapon: s.gear.weapon ? { ...s.gear.weapon } : undefined,
+            armor: s.gear.armor ? { ...s.gear.armor } : undefined,
+          }
+        : undefined,
+    })),
     gold: hero.gold,
     hungerLevel: hero.hungerLevel,
     hungerClock: hero.hungerClock,
@@ -226,17 +257,29 @@ function reviveHeroEx(save: HeroSaveEx): ContentHero {
   hero.lvl = save.lvl;
   hero.exp = save.exp;
   hero.str = save.str;
-  // Re-equip from the catalog (weapon/armor defs are data, not state).
+  // Re-equip the saved live instances (vanilla saves the item objects).
   hero.inventory = save.inventory.map((s) => ({ ...s }));
   hero.weaponId = save.weaponId;
   hero.armorId = save.armorId;
   if (save.weaponId) {
-    const wdef = getItem(save.weaponId).weapon;
-    hero.weapon = wdef ? { ...wdef } : null;
+    hero.weapon = save.weapon
+      ? { ...save.weapon }
+      : (() => {
+          const wdef = getItem(save.weaponId).weapon;
+          return wdef ? { ...wdef } : null;
+        })();
+  } else {
+    hero.weapon = null;
   }
   if (save.armorId) {
-    const adef = getItem(save.armorId).armor;
-    hero.armor = adef ? { ...adef } : null;
+    hero.armor = save.armor
+      ? { ...save.armor }
+      : (() => {
+          const adef = getItem(save.armorId).armor;
+          return adef ? { ...adef } : null;
+        })();
+  } else {
+    hero.armor = null;
   }
   syncDarts(hero);
   hero.gold = save.gold;
@@ -316,6 +359,9 @@ export const contentMechanics: MechanicsHooks = {
     // Stage 0 (exact copy): register the painter's sign markers so the
     // 'wait' intent can read signs (Sign.java).
     noteSignCells(level, result.markers.signs);
+    // Stage 2 (Worker 5): register the painter's wall-deco markers so the
+    // pickaxe's MINE action can find dark gold veins (Pickaxe.java).
+    noteWallDecoCells(level, result.markers.wallDeco);
     const resolved = resolveMobSpawns(rng, result.level.depth, result.mobs, result.level);
     return buildMobs(resolved, result.level.w, result.level.depth);
   },
@@ -383,12 +429,30 @@ export const contentMechanics: MechanicsHooks = {
           cost = 1;
           break;
         }
-        cost = throwDart(
-          ctx,
-          hero,
-          intent.slot,
-          target.y * ctx.level.w + target.x,
-        );
+        const targetCell = target.y * ctx.level.w + target.x;
+        const thrownId = hero.inventory[intent.slot]?.itemId;
+        // Stage 2 (Worker 4): potions and the honeypot throw at a cell
+        // (Potion.doThrow / Honeypot.onThrow), not at a mob's HP.
+        if (thrownId === HONEYPOT_ID) {
+          cost = throwHoneypot(ctx, hero, intent.slot, targetCell);
+          break;
+        }
+        if (thrownId !== undefined && isPotionId(thrownId)) {
+          cost = throwPotion(ctx, hero, intent.slot, targetCell);
+          break;
+        }
+        cost = throwDart(ctx, hero, intent.slot, targetCell);
+        break;
+      }
+      case 'shatterItem': {
+        // Stage 2 (Worker 4): Honeypot AC_SHATTER — shatter at own feet.
+        cost = shatterHoneypotInHands(ctx, hero, intent.slot);
+        break;
+      }
+      case 'mineItem': {
+        // Stage 2 (Worker 5): Pickaxe AC_MINE — mine an adjacent dark
+        // gold vein (Pickaxe.java:59-108).
+        cost = mineDarkGold(ctx, hero, intent.slot);
         break;
       }
       case 'talk': {

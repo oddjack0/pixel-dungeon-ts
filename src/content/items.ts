@@ -18,6 +18,11 @@
 import type { ArmorDef, WeaponDef } from '../mechanics/char';
 import { SPRITES } from '../assets/sprites';
 import { ORIGINAL_SPRITES } from '../assets/original_sprites';
+import { POTION_DEFS } from './potions.js';
+import { SCROLL_DEFS } from './scrolls.js';
+import { HONEYPOT_DEF } from './honeypot.js';
+import { WAND_SPECS } from '../mechanics/wands.js';
+import { RING_SPECS } from '../mechanics/rings.js';
 
 export type ItemType =
   | 'weapon'
@@ -32,7 +37,9 @@ export type ItemType =
   | 'seed'
   | 'bag'
   | 'misc'
-  | 'quest';
+  | 'quest'
+  | 'wand'
+  | 'ring';
 
 export interface ItemDef {
   /** Catalog id. Gold drops encode the amount as `gold:<n>` (see Gold below). */
@@ -57,6 +64,45 @@ export interface ItemDef {
    */
   price?: number;
 }
+
+/** DarkGold (DarkGold.java): stackable quest ore, non-upgradable, always
+ *  identified; price() = quantity (DarkGold.java:63-65). The blacksmith's
+ *  gold variant wants 15 of these plus the pickaxe. */
+const DARK_GOLD: ItemDef = {
+  id: 'darkgold',
+  name: 'dark gold ore',
+  sprite: 'item_darkgold',
+  type: 'misc',
+  stackable: true,
+  desc: 'A chunk of dark gold ore, prized by the blacksmith of the caves.',
+  price: 1,
+};
+
+/** Pickaxe (Pickaxe.java): STR 14, min 3, max 12 (Pickaxe.java:33-35),
+ *  non-upgradable, always identified; mines dark gold veins on depths
+ *  11-15 and can be blood-stained by killing a bat with it. */
+const PICKAXE: ItemDef = {
+  id: 'pickaxe',
+  name: 'pickaxe',
+  sprite: 'item_pickaxe',
+  type: 'weapon',
+  stackable: false,
+  desc: 'A sturdy pickaxe, useful for mining dark gold veins.',
+  weapon: {
+    name: 'pickaxe',
+    tier: 1,
+    level: 0,
+    min: 3,
+    max: 12,
+    str: 14,
+    acu: 1,
+    dly: 1,
+    missile: false,
+    bloodStained: false,
+    upgradable: false, // Pickaxe.isUpgradable (Pickaxe.java:110-112)
+  },
+  price: 0,
+};
 
 /** ShortSword: tier 1 (super(1, 1f, 1f), ShortSword.java:54-55), STR 11
  *  (ShortSword.java:57); min = tier = 1 (MeleeWeapon.java:41-42);
@@ -97,7 +143,7 @@ const CLOTH_ARMOR: ItemDef = {
   type: 'armor',
   stackable: false,
   desc: 'This lightweight armor offers basic protection.',
-  armor: { name: 'cloth armor', level: 0, str: 9, dr: 2 },
+  armor: { name: 'cloth armor', level: 0, tier: 1, str: 9, dr: 2 },
   /** Armor.price() = 10 * 2^(tier-1), tier 1 (Armor.java). */
   price: 10,
 };
@@ -449,7 +495,7 @@ const LEATHER_ARMOR: ItemDef = {
   type: 'armor',
   stackable: false,
   desc: 'Armor made from tanned monster hide. Not as light as cloth armor but provides better protection.',
-  armor: { name: 'leather armor', level: 0, str: 11, dr: 4 },
+  armor: { name: 'leather armor', level: 0, tier: 2, str: 11, dr: 4 },
   price: 20,
 };
 
@@ -461,7 +507,7 @@ const MAIL_ARMOR: ItemDef = {
   type: 'armor',
   stackable: false,
   desc: 'Interlocking metal links make for a tough but flexible suit of armor.',
-  armor: { name: 'mail armor', level: 0, str: 13, dr: 6 },
+  armor: { name: 'mail armor', level: 0, tier: 3, str: 13, dr: 6 },
   price: 40,
 };
 
@@ -473,7 +519,7 @@ const SCALE_ARMOR: ItemDef = {
   type: 'armor',
   stackable: false,
   desc: 'The metal scales sewn onto a leather vest create a flexible, yet protective armor.',
-  armor: { name: 'scale armor', level: 0, str: 15, dr: 8 },
+  armor: { name: 'scale armor', level: 0, tier: 4, str: 15, dr: 8 },
   price: 80,
 };
 
@@ -485,7 +531,7 @@ const PLATE_ARMOR: ItemDef = {
   type: 'armor',
   stackable: false,
   desc: 'Enormous plates of metal are joined together into a suit that provides unmatched protection to any adventurer strong enough to bear its staggering weight.',
-  armor: { name: 'plate armor', level: 0, str: 17, dr: 10 },
+  armor: { name: 'plate armor', level: 0, tier: 5, str: 17, dr: 10 },
   price: 160,
 };
 
@@ -571,46 +617,6 @@ const ANKH: ItemDef = {
   price: 50,
 };
 
-/**
- * Shop-stock scrolls (ShopPainter.java common stock). All unidentified in
- * vanilla, so price() is the Scroll base = 15 (Scroll.java); the port has no
- * identification system, so the known prices (30/30/25) never apply.
- * Sprite: the unidentified scroll rune (same as the generic scroll).
- */
-
-/** ScrollOfIdentify: "Scroll of Identify" (ScrollOfIdentify.java). */
-const SCROLL_IDENTIFY: ItemDef = {
-  id: 'scroll_identify',
-  name: 'Scroll of Identify',
-  sprite: 'scroll',
-  type: 'scroll',
-  stackable: true,
-  desc: 'Permanently reveals all of the secrets of a single item.',
-  price: 15,
-};
-
-/** ScrollOfRemoveCurse: "Scroll of Remove Curse" (ScrollOfRemoveCurse.java). */
-const SCROLL_REMOVE_CURSE: ItemDef = {
-  id: 'scroll_remove_curse',
-  name: 'Scroll of Remove Curse',
-  sprite: 'scroll',
-  type: 'scroll',
-  stackable: true,
-  desc: "The incantation on this scroll will instantly strip from the reader's weapon, armor, rings and carried items any evil enchantments that might prevent the wearer from removing them.",
-  price: 15,
-};
-
-/** ScrollOfMagicMapping: "Scroll of Magic Mapping" (ScrollOfMagicMapping.java). */
-const SCROLL_MAGIC_MAPPING: ItemDef = {
-  id: 'scroll_magic_mapping',
-  name: 'Scroll of Magic Mapping',
-  sprite: 'scroll',
-  type: 'scroll',
-  stackable: true,
-  desc: 'When this scroll is read, an image of crystal clarity will be etched into your memory, alerting you to the precise layout of the level and revealing all hidden secrets. The locations of items and creatures will remain unknown.',
-  price: 15,
-};
-
 /** OverpricedRation: "overpriced food ration" (OverpricedRation.java);
  *  energy = STARVING - HUNGRY = 360 - 260 = 100 (Hunger.java:36-37);
  *  price() = 20 (OverpricedRation.java). Shop common stock (x2). */
@@ -624,6 +630,44 @@ const OVERPRICED_RATION: ItemDef = {
   energy: 100,
   price: 20,
 };
+
+/**
+ * Base catalog defs for the 13 wands (bare `wand_of_<id>` ids, before
+ * pickup normalization mints an instance). Price: Wand.price() base 50
+ * (Wand.java:381); per-instance pricing lives in the wand system.
+ */
+const WAND_BASE_DEFS: Record<string, ItemDef> = {};
+for (const spec of WAND_SPECS) {
+  const id = `wand_of_${spec.id}`;
+  WAND_BASE_DEFS[id] = {
+    id,
+    name: spec.name,
+    sprite: spec.sprite,
+    type: 'wand',
+    stackable: false,
+    desc: spec.desc,
+    price: 50,
+  };
+}
+
+/**
+ * Base catalog defs for the 12 rings (bare `ring_of_<id>` ids).
+ * Price: Ring.price() base 80 (Ring.java:322); per-instance pricing
+ * (considerState) lives in the ring system.
+ */
+const RING_BASE_DEFS: Record<string, ItemDef> = {};
+for (const spec of RING_SPECS) {
+  const id = `ring_of_${spec.id}`;
+  RING_BASE_DEFS[id] = {
+    id,
+    name: spec.name,
+    sprite: spec.spriteKey,
+    type: 'ring',
+    stackable: false,
+    desc: spec.desc,
+    price: 80,
+  };
+}
 
 export const ITEMS: Readonly<Record<string, ItemDef>> = {
   shortsword: SHORT_SWORD,
@@ -663,10 +707,19 @@ export const ITEMS: Readonly<Record<string, ItemDef>> = {
   weightstone: WEIGHTSTONE,
   torch: TORCH,
   ankh: ANKH,
-  scroll_identify: SCROLL_IDENTIFY,
-  scroll_remove_curse: SCROLL_REMOVE_CURSE,
-  scroll_magic_mapping: SCROLL_MAGIC_MAPPING,
   overpriced_ration: OVERPRICED_RATION,
+  // Stage 2 (Worker 4): full potion/scroll catalogs + honeypot.
+  ...POTION_DEFS,
+  ...SCROLL_DEFS,
+  honeypot: HONEYPOT_DEF,
+  darkgold: DARK_GOLD,
+  pickaxe: PICKAXE,
+  // Stage 2 (wands/rings): base defs for the 13 wands + 12 rings. These are
+  // the static catalog entries for bare base ids (wand_of_firebolt);
+  // per-instance state (charges/level/identification) lives in the
+  // wand/ring instance systems (wands.ts/rings.ts instanceItemDef).
+  ...WAND_BASE_DEFS,
+  ...RING_BASE_DEFS,
 };
 
 export function getItem(id: string): ItemDef {

@@ -16,7 +16,7 @@ import type { Hero } from '../mechanics/char.js';
 import { drawButton, drawPanel, inRect, roundRect, TAP, UI, type Rect, type SpriteSource, type View } from './palette.js';
 
 export type ItemKind = 'weapon' | 'armor' | 'missile' | 'potion' | 'food' | 'scroll' | 'misc';
-export type ItemAction = 'use' | 'equip' | 'drop' | 'throw';
+export type ItemAction = 'use' | 'equip' | 'drop' | 'throw' | 'shatter' | 'mine';
 
 export interface UiItem {
   /** Slot index understood by the mechanics' useItem/equip/drop intents. */
@@ -142,6 +142,11 @@ export function readInventory(game: Game): UiItem[] {
 
 /** Context-aware actions for an item, in display order. */
 export function actionsFor(item: UiItem): ItemAction[] {
+  // Stage 2 (Worker 4): the honeypot throws or shatters at the hero's
+  // feet (Honeypot.java:50-73); potions are throwable (Potion AC_THROW).
+  // Stage 2 (Worker 5): the pickaxe's default action is MINE
+  // (Pickaxe.java:45, defaultAction = AC_MINE).
+  if (item.id === 'pickaxe') return ['mine', 'equip', 'drop'];
   switch (item.kind) {
     case 'weapon':
     case 'armor':
@@ -149,6 +154,7 @@ export function actionsFor(item: UiItem): ItemAction[] {
     case 'missile':
       return ['throw', 'drop'];
     case 'potion':
+      return ['use', 'throw', 'drop'];
     case 'food':
     case 'scroll':
       return ['use', 'drop'];
@@ -167,6 +173,10 @@ export function actionLabel(action: ItemAction, item: UiItem): string {
       return 'Drop';
     case 'throw':
       return 'Throw';
+    case 'shatter':
+      return 'Shatter'; // Honeypot AC_SHATTER
+    case 'mine':
+      return 'Mine'; // Pickaxe AC_MINE
   }
 }
 
@@ -187,6 +197,12 @@ export function doItemAction(game: Game, item: UiItem, action: ItemAction): 'don
       return 'done';
     case 'throw':
       return 'throw-targeting';
+    case 'shatter':
+      game.queueIntent({ kind: 'shatterItem', slot: item.slot });
+      return 'done';
+    case 'mine':
+      game.queueIntent({ kind: 'mineItem', slot: item.slot });
+      return 'done';
   }
 }
 

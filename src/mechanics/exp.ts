@@ -68,7 +68,11 @@ export function earnExp(state: LevelState, amount: number): number {
  *  Tengu: EXP 20, maxLvl default 30 (Tengu.java:56; Mob.java:69).
  *  Albino: Rat stats — EXP 1, maxLvl 5 (Albino.java overrides HP only).
  *  Bandit: Thief stats — EXP 5, maxLvl 10 (Bandit.java).
- *  Shielded: Brute stats — EXP 8, maxLvl 15 (Shielded.java). */
+ *  Shielded: Brute stats — EXP 8, maxLvl 15 (Shielded.java).
+ *  Spinner: EXP 9, maxLvl 16 (Spinner.java:41-42).
+ *  Elemental: EXP 10, maxLvl 20 (Elemental.java:42-43).
+ *  Monk: EXP 11, maxLvl 21 (Monk.java:42-43).
+ *  DM300: EXP 30, maxLvl default 30 (DM300.java:58; Mob.java:69). */
 export const MOB_EXP: Readonly<Record<string, { exp: number; maxLvl: number }>> = {
   rat: { exp: 1, maxLvl: 5 },
   gnoll: { exp: 2, maxLvl: 8 },
@@ -88,6 +92,10 @@ export const MOB_EXP: Readonly<Record<string, { exp: number; maxLvl: number }>> 
   curse: { exp: 3, maxLvl: 5 },
   bandit: { exp: 5, maxLvl: 10 },
   shielded: { exp: 8, maxLvl: 15 },
+  spinner: { exp: 9, maxLvl: 16 },
+  elemental: { exp: 10, maxLvl: 20 },
+  monk: { exp: 11, maxLvl: 21 },
+  dm300: { exp: 30, maxLvl: 30 },
 };
 
 /** EXP granted for a kill (Mob.exp, Mob.java:353-355). */

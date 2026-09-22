@@ -22,13 +22,37 @@ import type {
 import type { BuffKind } from '../mechanics/buffs.js';
 import type { BuffState } from '../mechanics/char.js';
 import { charTimeScale } from '../mechanics/char.js';
+import { initDurability } from '../mechanics/durability.js';
 import { heroSpeed } from '../mechanics/hero.js';
 import { getItem } from './items.js';
+// Stage 2 (wands/rings worker): per-instance wand/ring defs. wands.ts
+// imports ContentHero from this module, but only uses it inside function
+// bodies, so this import is cycle-safe (neither module touches the other
+// at evaluation time).
+import { instanceItemDef } from './wands.js';
 
 /** One inventory slot: catalog id + count (stacks merge for stackables). */
 export interface ItemStack {
   itemId: string;
   qty: number;
+  /**
+   * Per-instance gear state (upgrade level, enchantment/glyph, durability,
+   * curse flags) for weapon/armor stacks. Vanilla items are objects with
+   * instance fields — this is the port's equivalent for inventory-resident
+   * gear, so two swords in the pack can differ (the blacksmith's reforge
+   * needs two distinct same-class instances). Initialized on pickup;
+   * equipped gear transfers its live instance here on unequip.
+   */
+  gear?: GearInstance;
+}
+
+/**
+ * The live per-instance state of one weapon/armor item (WeaponDef/ArmorDef
+ * already carry the instance fields).
+ */
+export interface GearInstance {
+  weapon?: WeaponDef;
+  armor?: ArmorDef;
 }
 
 /**
@@ -155,8 +179,11 @@ export function addToInventory(
   hero: ContentHero,
   itemId: string,
   qty: number,
+  gear?: GearInstance,
 ): void {
-  const def = getItem(itemId);
+  // Wand/ring instance ids (Stage 2) carry per-instance state and cannot
+  // live in the static ITEMS catalog; their defs come from the wand module.
+  const def = instanceItemDef(itemId) ?? getItem(itemId);
   if (qty <= 0) return;
   if (def.stackable) {
     const existing = hero.inventory.find((s) => s.itemId === itemId);
@@ -167,10 +194,53 @@ export function addToInventory(
     }
   } else {
     for (let i = 0; i < qty; i++) {
-      hero.inventory.push({ itemId, qty: 1 });
+      // Each non-stackable gear item is its own instance (vanilla items are
+      // objects): carry the supplied live state, else a fresh def copy with
+      // initialized durability. The first of `qty` takes the supplied gear.
+      const stack: ItemStack = { itemId, qty: 1 };
+      if (def.weapon || def.armor) {
+        const inst: GearInstance =
+          gear && i === 0
+            ? gear
+            : {
+                weapon: def.weapon ? { ...def.weapon } : undefined,
+                armor: def.armor ? { ...def.armor } : undefined,
+              };
+        if (inst.weapon && inst.weapon.durability === undefined) {
+          initDurability(inst.weapon, 'weapon');
+        }
+        if (inst.armor && inst.armor.durability === undefined) {
+          initDurability(inst.armor, 'armor');
+        }
+        stack.gear = inst;
+      }
+      hero.inventory.push(stack);
     }
   }
   syncDarts(hero);
+}
+
+/**
+ * Ensure an inventory stack of weapon/armor carries its per-instance gear
+ * state (old saves and test-built stacks may lack it).
+ */
+export function ensureStackGear(stack: ItemStack): GearInstance | null {
+  const def = getItem(stack.itemId);
+  if (!def.weapon && !def.armor) return null;
+  if (!stack.gear) {
+    stack.gear = {
+      weapon: def.weapon ? { ...def.weapon } : undefined,
+      armor: def.armor ? { ...def.armor } : undefined,
+    };
+  }
+  const g = stack.gear;
+  if (g.weapon && g.weapon.durability === undefined) {
+    initDurability(g.weapon, 'weapon');
+  }
+  if (g.armor && g.armor.durability === undefined) {
+    initDurability(g.armor, 'armor');
+  }
+  return g;
 }
 
 /**
@@ -186,6 +256,11 @@ export function removeFromInventory(
   if (!stack || qty <= 0) return null;
   const take = Math.min(qty, stack.qty);
   const removed: ItemStack = { itemId: stack.itemId, qty: take };
+  // Per-instance gear state travels with the removed item (vanilla items
+  // are objects). Non-stackable gear takes the whole stack's instance.
+  if (stack.gear && take >= stack.qty) {
+    removed.gear = stack.gear;
+  }
   stack.qty -= take;
   if (stack.qty <= 0) {
     hero.inventory.splice(slot, 1);

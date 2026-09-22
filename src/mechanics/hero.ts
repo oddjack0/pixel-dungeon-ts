@@ -14,6 +14,7 @@
 import type { ArmorDef, Hero, WeaponDef } from './char';
 import { charSpeed, strEff } from './char';
 import type { MechanicsRng } from './rng';
+import { eraseArmorMagic, eraseWeaponMagic, upgradeItem } from './durability.js';
 
 /** ShortSword: tier 1 (super(1, 1f, 1f), ShortSword.java:54-55), STR 11
  *  (ShortSword.java:57); min = min0() = tier = 1 (MeleeWeapon.java:41-42);
@@ -52,6 +53,7 @@ export const CLOTH_ARMOR: ArmorDef = {
   level: 0,
   str: 9,
   dr: 2,
+  tier: 1,
 };
 
 /** Create a fresh level-1 Warrior, exactly as HeroClass.initWarrior does. */
@@ -119,10 +121,13 @@ export function speedFactor(weapon: WeaponDef, heroStr: number): number {
  */
 export function heroAttackSkill(
   hero: Hero,
-  opts: { ranged: boolean; adjacent: boolean },
+  opts: { ranged: boolean; adjacent: boolean; accuracyBonus?: number },
 ): number {
   let accuracy = 1;
   if (opts.ranged && opts.adjacent) accuracy *= 0.5;
+  // RingOfAccuracy (Hero.java:261-264): accuracy *= 1.4^bonus (bonus = sum
+  // of equipped Accuracy ring levels; 1.4^0 == 1 so the default is exact).
+  accuracy *= accuracyMultiplier(opts.accuracyBonus ?? 0);
   const wep = opts.ranged ? hero.rangedWeapon ?? DART : hero.weapon;
   if (wep) {
     return Math.floor(hero.attackSkill * accuracy * accuracyFactor(wep, strEff(hero)));
@@ -131,14 +136,71 @@ export function heroAttackSkill(
 }
 
 /**
+ * Ring of Accuracy multiplier (RingOfAccuracy.java:39-44):
+ * `bonus == 0 ? 1 : 1.4^bonus`.
+ */
+export function accuracyMultiplier(bonus: number): number {
+  return bonus === 0 ? 1 : Math.pow(1.4, bonus);
+}
+
+/**
+ * Ring of Evasion multiplier (RingOfEvasion.java:39-44):
+ * `bonus == 0 ? 1 : 1.2^bonus`.
+ */
+export function evasionMultiplier(bonus: number): number {
+  return bonus === 0 ? 1 : Math.pow(1.2, bonus);
+}
+
+/**
+ * Ring of Haste time multiplier (Hero.spend, Hero.java:358-364):
+ * `hasteLevel == 0 ? 1 : 1.1^-hasteLevel`. Vanilla scales the spent time;
+ * the port's scheduler divides cost by getTimeScale(), so the hero's time
+ * scale is MULTIPLIED by 1.1^hasteLevel — exactly equivalent.
+ */
+export function hasteTimeMultiplier(hasteLevel: number): number {
+  return hasteLevel === 0 ? 1 : Math.pow(1.1, -hasteLevel);
+}
+
+/**
+ * Ring of Detection search radius (Hero.search, Hero.java:1301-1311):
+ * `distance = 1 + positive + negative` where positive is the highest
+ * positive Detection level and negative the sum of the negative levels.
+ * When distance <= 0 the discovery chance is divided by (2 - distance)
+ * and the search uses distance 1.
+ */
+export function detectionSearch(
+  detectionLevels: number[],
+  awareness: number,
+  intentional: boolean,
+): { distance: number; level: number } {
+  const positive = detectionLevels.reduce((m, l) => (l > 0 ? Math.max(m, l) : m), 0);
+  const negative = detectionLevels.reduce((s, l) => (l < 0 ? s + l : s), 0);
+  let distance = 1 + positive + negative;
+  let level = intentional
+    ? intentionalSearchLevel(awareness)
+    : passiveSearchLevel(awareness);
+  if (distance <= 0) {
+    level /= 2 - distance;
+    distance = 1;
+  }
+  return { distance, level };
+}
+
+/**
  * Hero defense skill (Hero.defenseSkill, Hero.java:276-305).
  * M1: no RingOfEvasion (evasion = 1); non-rogue, so when armor STR - STR() <= 0
  * the result is simply defenseSkill (Hero.java:301-303). ClothArmor STR 9 vs
  * warrior STR 11 gives aEnc = -2, so defenseSkill = 5.
  * Paralysed halves evasion (Hero.java:283-285).
+ * Stage 2: `evasionBonus` is the sum of equipped RingOfEvasion levels
+ * (Hero.java:281: evasion *= 1.2^bonus when bonus != 0).
  */
-export function heroDefenseSkill(hero: Hero): number {
-  const evasion = hero.paralysed ? 1 / 2 : 1;
+export function heroDefenseSkill(
+  hero: Hero,
+  opts: { evasionBonus?: number } = {},
+): number {
+  let evasion = evasionMultiplier(opts.evasionBonus ?? 0);
+  if (hero.paralysed) evasion /= 2; // Hero.java:283-285
   const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
   if (aEnc > 0) {
     return Math.floor((hero.defenseSkill * evasion) / Math.pow(1.5, aEnc));
@@ -208,21 +270,43 @@ export function heroAttackDelay(hero: Hero, opts: { ranged: boolean }): number {
 }
 
 /**
- * Item.upgrade() (Item.java:265-274): level++ (and fix(), uncursing — M1 has
- * no durability/curse model yet). Weapon.upgrade keeps STR
- * (Weapon.java:150-164 has no STR change).
+ * Weapon.upgrade(boolean) (Weapon.java:150-164): the erasure check runs
+ * FIRST at the pre-upgrade level when not enchant-preserving, then
+ * Item.upgrade() (Item.java:265-274: uncurses, cursedKnown, +1 level,
+ * fix()). Weapon.upgrade keeps STR (no STR change). ScrollOfUpgrade passes
+ * enchant=false; the scroll-of-enchantment path would pass true.
  */
-export function upgradeWeapon(weapon: WeaponDef): void {
-  weapon.level += 1;
+export function upgradeWeapon(
+  weapon: WeaponDef,
+  rng: MechanicsRng,
+  opts: { preserveEnchant?: boolean; log?: (msg: string) => void } = {},
+): void {
+  eraseWeaponMagic(
+    weapon,
+    rng,
+    opts.preserveEnchant ?? false,
+    opts.log ?? (() => undefined),
+  );
+  upgradeItem(weapon, 'weapon');
 }
 
 /**
- * Armor.upgrade(boolean) (Armor.java:150-168): STR-- per upgrade plus
- * Item.upgrade() level++. (M1: no glyph/inscribe logic.)
+ * Armor.upgrade(boolean) (Armor.java:150-168): erasure check at the
+ * pre-upgrade level, then STR-- (Armor.java:167), then Item.upgrade().
  */
-export function upgradeArmor(armor: ArmorDef): void {
+export function upgradeArmor(
+  armor: ArmorDef,
+  rng: MechanicsRng,
+  opts: { preserveGlyph?: boolean; log?: (msg: string) => void } = {},
+): void {
+  eraseArmorMagic(
+    armor,
+    rng,
+    opts.preserveGlyph ?? false,
+    opts.log ?? (() => undefined),
+  );
   armor.str -= 1;
-  armor.level += 1;
+  upgradeItem(armor, 'armor');
 }
 
 /** Display name with the vanilla "+N" upgrade suffix (e.g. "short sword +2"). */

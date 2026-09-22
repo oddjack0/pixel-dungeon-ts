@@ -237,6 +237,14 @@ export function makeBlobWorld(
     reigniteBurning: (ch) => {
       // NPC.add(Buff) is a no-op (NPC.java:41-43).
       if (ch.invulnerable) return;
+      // Elemental.add (Elemental.java:67-76): a Burning attach heals the
+      // elemental 1 HP instead (if hurt) and never sticks. Only the fire
+      // elemental lists Burning among its immunities, so the tag check is
+      // exact for the reachable roster.
+      if (ch.immunities.includes('burning')) {
+        if (ch.hp < ch.ht) ch.hp += 1;
+        return;
+      }
       // Buff.affect(ch, Burning.class).reignite(ch): left = duration = 8
       // (Burning.java:109-111; no RingOfElements in M1).
       ch.buffs.burning = { kind: 'burning', left: BURNING_DURATION };
@@ -250,6 +258,16 @@ export function makeBlobWorld(
       const cur = ch.buffs.paralysis?.left ?? 0;
       ch.buffs.paralysis = { kind: 'paralysis', left: Math.max(cur, duration) };
       ch.paralysed = true;
+    },
+    prolongRoots: (ch) => {
+      // NPC.add(Buff) is a no-op (NPC.java:41-43).
+      if (ch.invulnerable) return;
+      // Roots.attachTo refuses flying chars (Roots.java); prolong = max
+      // with TICK = 1 (Buff.java:85-89; Web.java prolongs by TICK).
+      if (ch.flying) return;
+      const cur = ch.buffs.roots?.left ?? 0;
+      ch.buffs.roots = { kind: 'roots', left: Math.max(cur, 1) };
+      ch.rooted = true;
     },
     burnOutTile: (pos) => {
       // Fire burning out on a flamable tile (Fire.java): oldTile = map[pos];

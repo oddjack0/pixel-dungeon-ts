@@ -34,6 +34,12 @@ import {
 } from '../src/content/hero.js';
 import { useInventorySlot } from '../src/content/actions.js';
 import {
+  initIdentification,
+  resetIdentification,
+} from '../src/content/identification.js';
+import { potionFamilyDef } from '../src/content/potions.js';
+import { scrollFamilyDef } from '../src/content/scrolls.js';
+import {
   gearDisplayName,
   heroDR,
   upgradeArmor,
@@ -61,6 +67,10 @@ function makeCtx(level: Level, seed = 1234): Ctx {
   const rng = new RNG(seed);
   const hero = createStarterHero(5 * level.w + 5, level.w);
   const logs: string[] = [];
+  // Run-start identification (the game calls initIdentification on run
+  // start; readScroll identifies every scroll it reads).
+  resetIdentification();
+  initIdentification(rng, potionFamilyDef(), scrollFamilyDef());
   const ctx: ActionContext = {
     rng,
     level,
@@ -176,7 +186,7 @@ describe('upgrade mechanics (Item.java / Armor.java / MeleeWeapon.java)', () => 
     const rng = midRng();
     const w = { ...ITEMS['shortsword']!.weapon! };
     const before = weaponDamageRoll(rng, w, { str: 11, ranged: false });
-    upgradeWeapon(w);
+    upgradeWeapon(w, rng);
     expect(w.level).toBe(1);
     // midpoint of (1..12) is 6; midpoint of (2..13) is 7.
     expect(before).toBe(6);
@@ -186,7 +196,7 @@ describe('upgrade mechanics (Item.java / Armor.java / MeleeWeapon.java)', () => 
   test('upgradeArmor: +1 level, DR +1, STR req -1', () => {
     const a = { ...ITEMS['cloth_armor']!.armor! };
     expect(a.str).toBe(9);
-    upgradeArmor(a);
+    upgradeArmor(a, midRng());
     expect(a.level).toBe(1);
     expect(a.str).toBe(8); // Armor.upgrade(): STR-- (Armor.java:167)
   });
@@ -194,7 +204,7 @@ describe('upgrade mechanics (Item.java / Armor.java / MeleeWeapon.java)', () => 
   test('heroDR follows armor level (Armor.DR = tier*(2+level))', () => {
     const c = makeCtx(makeLevel());
     expect(heroDR(c.hero)).toBe(2);
-    upgradeArmor(c.hero.armor!);
+    upgradeArmor(c.hero.armor!, midRng());
     expect(heroDR(c.hero)).toBe(3);
   });
 
@@ -252,12 +262,13 @@ describe('reading a Scroll of Upgrade', () => {
     expect(c.logs.some((m) => m.includes('nothing to upgrade'))).toBe(true);
   });
 
-  test('other scrolls still cannot be read yet (M1)', () => {
+  test('M1 placeholder scroll is inert (not a real scroll id)', () => {
     const c = makeCtx(makeLevel());
     addToInventory(c.hero, 'scroll', 1);
     const slot = slotOf(c.hero, 'scroll');
     useInventorySlot(c.ctx, c.hero, slot);
-    expect(c.logs.some((m) => m.includes('cannot read'))).toBe(true);
+    // The M1 placeholder 'scroll' is not in the scroll catalog
+    // (isScrollId): reading it does nothing and does not consume it.
     expect(slotOf(c.hero, 'scroll')).toBe(slot);
   });
 });

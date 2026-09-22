@@ -71,13 +71,75 @@ export type BuffKind =
   | 'cripple'
   | 'blindness'
   | 'hunger'
-  | 'regeneration';
+  | 'regeneration'
+  | 'frost'
+  | 'levitation'
+  | 'invisibility'
+  | 'mindvision'
+  | 'gasesimmunity'
+  | 'terror'
+  | 'rage'
+  // Stage 2 (wands/rings worker): Amok debuff + the 12 RingBuff kinds
+  // (items/rings/Ring.java: RingBuff subclasses). Ring buffs are permanent
+  // while equipped; their `level` field carries the ring's (possibly
+  // negative) level, exactly like vanilla RingBuff.level().
+  | 'amok'
+  | 'ring_mending'
+  | 'ring_detection'
+  | 'ring_shadows'
+  | 'ring_power'
+  | 'ring_herbalism'
+  | 'ring_accuracy'
+  | 'ring_evasion'
+  | 'ring_satiety'
+  | 'ring_haste'
+  | 'ring_haggler'
+  | 'ring_elements'
+  | 'ring_thorns'
+  // Stage 2 (enchantments/glyphs worker): weapon enchantment + armor glyph
+  // buffs. 'slow' is consumed by Char.spend's time scale (charTimeScale,
+  // Char.java:303-314); 'vertigo'/'charm' are flavor buffs the engine ticks
+  // down (Vertigo/Charm.java); 'deferredDamage' pays out 1 damage per tick
+  // (Viscosity.DeferedDamage, Viscosity.java:88-127); 'earthrootArmor' is a
+  // permanent counter buff holding the remaining absorb pool
+  // (Earthroot.Armor, Earthroot.java) — the buff never expires; its
+  // `amount` field is the armor level.
+  | 'slow'
+  | 'vertigo'
+  | 'charm'
+  | 'deferredDamage'
+  | 'earthrootArmor';
 
 export const BURNING_DURATION = 8;
 export const POISON_TRAP_BASE = 4;
 export const PARALYSIS_DURATION = 10;
 /** Cripple duration (Cripple.java:24). Halves speed (Char.java:248). */
 export const CRIPPLE_DURATION = 10;
+/** Slow base duration (Slow.java:26). */
+export const SLOW_DURATION = 10;
+/** Vertigo base duration (Vertigo.java:24). */
+export const VERTIGO_DURATION = 10;
+
+/**
+ * RingOfElements duration factor (RingOfElements.java:66-74):
+ * `level < 0 ? 1 : (2 + 0.5*level) / (2 + level)`. Multiplies the durations
+ * of Burning, Poison, Paralysis, Slow, Vertigo and other elemental effects.
+ * `null` = no Ring of Elements equipped.
+ */
+export function elementsDurationFactor(elementsLevel: number | null): number {
+  if (elementsLevel === null || elementsLevel < 0) return 1;
+  return (2 + 0.5 * elementsLevel) / (2 + elementsLevel);
+}
+
+/** Slow.duration(ch) (Slow.java:28-30): factor * SLOW_DURATION. */
+export function slowDuration(elementsLevel: number | null): number {
+  return elementsDurationFactor(elementsLevel) * SLOW_DURATION;
+}
+
+/** Vertigo.duration(ch) (Vertigo.java:26-28): factor * VERTIGO_DURATION. */
+export function vertigoDuration(elementsLevel: number | null): number {
+  return elementsDurationFactor(elementsLevel) * VERTIGO_DURATION;
+}
 export const SLEEP_POSTPONE = 1.5;
 export const OOZE_DAMAGE = 1;
 

@@ -60,7 +60,17 @@ import {
 } from './hero.js';
 import { getItem } from './items.js';
 import { itemGenerator } from './itemgen.js';
+// Stage 2 (wands worker): real Wandmaker wand rewards (Wandmaker.java).
+import {
+  createWandReward,
+  getWandState,
+  identifyWandType,
+  instanceItemDef,
+  parseWandId,
+} from './wands.js';
 import { pressTrapCell } from '../mechanics/traps.js';
+import { upgradeItem, type DurableItem } from '../mechanics/durability.js';
+import { tickHeroClock } from './actions.js';
 import { showDialog, uiBridge } from '../ui/dialog.js';
 import { Shopkeeper } from './shopkeeper.js';
 import type { Game } from '../engine/loop.js';
@@ -110,9 +120,11 @@ export interface WandmakerQuestState {
   type: WandmakerQuestType | null;
   given: boolean;
   /**
-   * The exact wand identities drawn at spawn (Wandmaker.java:203-230).
-   * Stored as descriptor ids ('wand_avalanche', ...); the wand item classes
-   * themselves are the items worker's Stage-1/2 system.
+   * The two reward wand INSTANCE ids rolled at quest spawn
+   * (Wandmaker.java:203-230: each choice is `new XxxWand().random().upgrade()`
+   * at spawn, not at selection). Stored as instance ids
+   * (`wand_of_avalanche#3`) so the exact spawn roll (level, charges)
+   * survives until the hero chooses. Quest.complete() clears both.
    */
   wand1: string | null;
   wand2: string | null;
@@ -257,25 +269,13 @@ export function initWandmakerQuest(rng: RNG, waterCells: number, levelLength: nu
   wandmakerQuest.given = false;
 
   // wand1: battle wand, wand2: non-battle wand (Wandmaker.java:205-230).
-  // random().upgrade() randomizes then +1s the wand level; the wand item
-  // classes are the items worker's system, so the quest stores the exact
-  // identities and the upgrade is applied when the real wands land.
-  const battle = [
-    'wand_avalanche',
-    'wand_disintegration',
-    'wand_firebolt',
-    'wand_lightning',
-    'wand_poison',
-  ];
-  const nonBattle = [
-    'wand_amok',
-    'wand_blink',
-    'wand_regrowth',
-    'wand_slowness',
-    'wand_reach',
-  ];
-  wandmakerQuest.wand1 = rng.pick(battle);
-  wandmakerQuest.wand2 = rng.pick(nonBattle);
+  // Each choice is random().upgrade() AT SPAWN: the level/charge roll is
+  // made now via createWandReward and the instance id is stored, so the
+  // hero receives the exact wand that was drawn (not a re-roll at pickup).
+  const battle = ['avalanche', 'disintegration', 'firebolt', 'lightning', 'poison'];
+  const nonBattle = ['amok', 'blink', 'regrowth', 'slowness', 'reach'];
+  wandmakerQuest.wand1 = createWandReward(rng, rng.pick(battle));
+  wandmakerQuest.wand2 = createWandReward(rng, rng.pick(nonBattle));
 }
 
 // ---------------------------------------------------------------------------
@@ -769,14 +769,17 @@ function grantWandReward(
   const hero = heroOf(ctx);
   const slot = questItemSlot(hero, questItemId);
   if (slot !== -1) removeFromInventory(hero, slot, 1);
-  const wandDesc = value === 'battle' ? wandmakerQuest.wand1 : wandmakerQuest.wand2;
-  const grantId = resolveWandReward(wandDesc);
+  const rewardId = value === 'battle' ? wandmakerQuest.wand1 : wandmakerQuest.wand2;
+  const grantId = resolveWandRewardInstance(ctx.rng, rewardId);
   if (grantId) {
-    // identify(): the port has no identification system (auto-identified).
-    // Vanilla: doPickUp into the pack, else drop at the wandmaker's tile.
-    // The port's pack is unbounded (M1), so the drop fallback is unreachable.
+    // WndWandmaker.onSelect: wand.identify() then doPickUp into the pack,
+    // else drop at the wandmaker's tile. The port's pack is unbounded, so
+    // the drop fallback is unreachable — kept as the vanilla comment.
+    const parsed = parseWandId(grantId);
+    if (parsed) identifyWandType(parsed.wandId, ctx.log);
     addToInventory(hero, grantId, 1);
-    ctx.log(`You now have the ${getItem(grantId).name}.`); // Hero.TXT_YOU_NOW_HAVE
+    // The reward is an instance id; its def comes from the wand module.
+    ctx.log(`You now have the ${instanceItemDef(grantId)?.name ?? grantId}.`); // Hero.TXT_YOU_NOW_HAVE
   }
   ctx.log(fillClassName('The old wandmaker yells: ' + TXT_FAREWELL_WANDMAKER));
   ctx.removeMob(wandmaker); // wandmaker.destroy(): silent, no death pipeline
@@ -786,19 +789,33 @@ function grantWandReward(
 }
 
 /**
- * Map the drawn wand identity to a grantable catalog id. The ten wand
- * classes (WandOfAvalanche, WandOfDisintegration, WandOfFirebolt,
- * WandOfLightning, WandOfPoison, WandOfAmok, WandOfBlink, WandOfRegrowth,
- * WandOfSlowness, WandOfReach — Wandmaker.java:205-230) are the items
- * worker's Stage-1/2 system; until they land, the quest grants the scroll
- * placeholder the generator already uses for unported wand scrolls
- * (itemgen.ts: the quest stores the exact wand identity in wandmakerQuest
- * so the grant upgrades cleanly to the real wand).
+ * Resolve the stored reward instance id to a grantable id.
+ * The instance state lives in the wand module; if it was lost (e.g. a
+ * save/load round-trip before wand-state persistence is wired), re-roll
+ * an equivalent reward from the wand id embedded in the instance id so
+ * the quest never grants nothing.
+ */
+function resolveWandRewardInstance(
+  rng: RNG,
+  rewardId: string | null,
+): string | null {
+  if (rewardId === null) return null;
+  if (getWandState(rewardId)) return rewardId;
+  const parsed = parseWandId(rewardId);
+  if (!parsed) return null;
+  return createWandReward(rng, parsed.wandId);
+}
+
+/**
+ * Legacy descriptor mapper (Stage-1 quest states stored 'wand_avalanche'
+ * style descriptors). Maps them to wand ids; current quest states store
+ * reward instance ids directly (see WandmakerQuestState).
  */
 export function resolveWandReward(wandDesc: string | null): string | null {
   if (wandDesc === null) return null;
-  void wandDesc;
-  return 'scroll'; // STAGE-1 PLACEHOLDER: replaced by the real wand class id
+  if (wandDesc.startsWith('wand_of_') || wandDesc.includes('#')) return wandDesc;
+  if (wandDesc.startsWith('wand_')) return wandDesc.slice('wand_'.length);
+  return null;
 }
 
 /**
@@ -1021,6 +1038,399 @@ export class ShopkeeperMob extends NpcMob {
 }
 
 // ---------------------------------------------------------------------------
+// Blacksmith (Worker 5: quest dialog + reforge)
+// ---------------------------------------------------------------------------
+
+/** Blacksmith.java quest dialog strings (Blacksmith.java:47-68). */
+const TXT_GOLD_1 =
+  "Hey human! Wanna be useful, eh? Take dis pickaxe and mine me some _dark gold ore_, _15 pieces_ should be enough. " +
+  "What do you mean, how am I gonna pay? You greedy...\n" +
+  "Ok, ok, I don't have money to pay, but I can do some smithin' for you. Consider yourself lucky, " +
+  "I'm the only blacksmith around.";
+const TXT_BLOOD_1 =
+  "Hey human! Wanna be useful, eh? Take dis pickaxe and _kill a bat_ wit' it, I need its blood on the head. " +
+  "What do you mean, how am I gonna pay? You greedy...\n" +
+  "Ok, ok, I don't have money to pay, but I can do some smithin' for you. Consider yourself lucky, " +
+  "I'm the only blacksmith around.";
+const TXT2 = "Are you kiddin' me? Where is my pickaxe?!";
+const TXT3 = "Dark gold ore. 15 pieces. Seriously, is it dat hard?";
+const TXT4 = "I said I need bat blood on the pickaxe. Chop chop!";
+const TXT_COMPLETED = "Oh, you have returned... Better late dan never.";
+const TXT_GET_LOST = "I'm busy. Get lost!";
+/** Blacksmith.TXT_LOOKS_BETTER (Blacksmith.java:68): GLog.p on reforge. */
+const TXT_LOOKS_BETTER = "your %s certainly looks better now";
+/** WndBlacksmith.TXT_PROMPT (WndBlacksmith.java:49-51). */
+const TXT_REFORGE_PROMPT =
+  "Ok, a deal is a deal, dat's what I can do for you: I can reforge " +
+  "2 items and turn them into one of a better quality.";
+/** WndBlacksmith.TXT_SELECT (WndBlacksmith.java:52-53). */
+const TXT_REFORGE_SELECT = "Select an item to reforge";
+/** WndBlacksmith.TXT_REFORGE (WndBlacksmith.java:54-55). */
+const TXT_REFORGE_BUTTON = "Reforge them";
+
+/**
+ * A reforge candidate: one weapon/armor instance from the hero's inventory
+ * or equipped gear.
+ */
+interface ReforgeCandidate {
+  /** 'inv:<slot>' | 'wielded' | 'worn'. */
+  key: string;
+  itemId: string;
+  isWeapon: boolean;
+  label: string;
+}
+
+/**
+ * The troll blacksmith (Blacksmith.java): quest giver + reforge smith.
+ * Vanilla name "troll blacksmith" (Blacksmith.java:71), npc_blacksmith
+ * sprite, NPC defaults (non-hostile, PASSIVE, invulnerable like the other
+ * quest NPCs; NpcMob.throwItem covers act()).
+ */
+export class BlacksmithMob extends NpcMob {
+  constructor(id: number, pos: number, w: number) {
+    super(
+      id,
+      npcDef('blacksmith', 'troll blacksmith', 'npc_blacksmith', 1, false),
+      pos,
+      w,
+    );
+    this.state = 'passive'; // NPC default (NPC.java:30)
+  }
+
+  /**
+   * Blacksmith.interact (Blacksmith.java:79-152): quest offer, quest
+   * turn-in, reforge window, or the get-lost line, by quest state.
+   */
+  override onTalk(ctx: ActionContext): void {
+    void this.interact(ctx);
+  }
+
+  private async interact(ctx: ActionContext): Promise<void> {
+    const hero = heroOf(ctx);
+    const q = blacksmithQuest;
+
+    if (!q.given) {
+      // WndQuest(TXT_GOLD_1/TXT_BLOOD_1); onBackPressed gives the pickaxe
+      // (Blacksmith.java:83-107).
+      await showDialog({
+        title: 'Troll blacksmith',
+        sprite: this.sprite,
+        text: q.alternative ? TXT_BLOOD_1 : TXT_GOLD_1,
+        choices: [],
+      });
+      q.given = true;
+      q.completed = false;
+      addToInventory(hero, 'pickaxe', 1);
+      ctx.log('You now have pickaxe'); // Hero.TXT_YOU_NOW_HAVE
+      return;
+    }
+
+    if (!q.completed) {
+      await this.turnIn(ctx, hero);
+      return;
+    }
+
+    if (!q.reforged) {
+      await this.reforgeFlow(ctx, hero);
+      return;
+    }
+
+    await showDialog({
+      title: 'Troll blacksmith',
+      sprite: this.sprite,
+      text: TXT_GET_LOST,
+      choices: [],
+    });
+  }
+
+  /**
+   * Quest turn-in (Blacksmith.java:109-150). Belongings.getItem searches
+   * equipped gear first, then the backpack (Belongings.java:98-107,
+   * 243-249), so an equipped pickaxe counts; it is unequipped without
+   * collecting, then detached (Blacksmith.java:132-140: unequip, detach
+   * pick, detachAll gold — in that order).
+   */
+  private async turnIn(ctx: ActionContext, hero: ContentHero): Promise<void> {
+    const q = blacksmithQuest;
+    const pickEquipped = hero.weaponId === 'pickaxe' && hero.weapon !== null;
+    const pickSlot = hero.inventory.findIndex((s) => s.itemId === 'pickaxe');
+    if (pickSlot === -1 && !pickEquipped) {
+      await this.tell(TXT2);
+      return;
+    }
+    const bloodStained = pickEquipped
+      ? hero.weapon!.bloodStained === true
+      : hero.inventory[pickSlot]?.gear?.weapon?.bloodStained === true;
+    if (q.alternative) {
+      if (!bloodStained) {
+        await this.tell(TXT4);
+        return;
+      }
+    } else {
+      const goldQty = hero.inventory
+        .filter((s) => s.itemId === 'darkgold')
+        .reduce((sum, s) => sum + s.qty, 0);
+      if (goldQty < 15) {
+        await this.tell(TXT3);
+        return;
+      }
+    }
+    // Blacksmith.java:132-140 order: unequip the pickaxe (no collect),
+    // detach it, then detachAll the dark gold (gold variant).
+    if (pickEquipped) {
+      hero.weapon = null;
+      hero.weaponId = null;
+    } else {
+      removeFromInventory(hero, pickSlot, 1);
+    }
+    if (!q.alternative) {
+      for (let i = hero.inventory.length - 1; i >= 0; i--) {
+        if (hero.inventory[i]?.itemId === 'darkgold') {
+          removeFromInventory(hero, i, hero.inventory[i]!.qty);
+        }
+      }
+    }
+    await this.tell(TXT_COMPLETED);
+    q.completed = true;
+    q.reforged = false;
+  }
+
+  /** WndQuest(this, text) (Blacksmith.java:154-156). */
+  private tell(text: string): Promise<string> {
+    return showDialog({
+      title: 'Troll blacksmith',
+      sprite: this.sprite,
+      text,
+      choices: [],
+    });
+  }
+
+  /**
+   * WndBlacksmith (WndBlacksmith.java) mapped onto the dialog system: pick
+   * the first item (TXT_PROMPT), pick the second (TXT_SELECT), verify, then
+   * the "Reforge them" confirmation runs Blacksmith.upgrade.
+   */
+  private async reforgeFlow(ctx: ActionContext, hero: ContentHero): Promise<void> {
+    const first = await this.pickItem(hero, TXT_REFORGE_PROMPT, null);
+    if (!first) return;
+    const second = await this.pickItem(hero, TXT_REFORGE_SELECT, first);
+    if (!second) return;
+    const err = verifyReforge(hero, first, second);
+    if (err) {
+      // Vanilla shows the error inline and disables the reforge button
+      // (WndBlacksmith.java:113-122); the dialog flow restarts selection.
+      await showDialog({
+        title: 'Troll blacksmith',
+        sprite: this.sprite,
+        text: err,
+        choices: [],
+      });
+      return;
+    }
+    const confirm = await showDialog({
+      title: 'Troll blacksmith',
+      sprite: this.sprite,
+      text: `Reforge the ${first.label} and the ${second.label} into one?`,
+      choices: [
+        { label: TXT_REFORGE_BUTTON, value: 'yes' },
+        { label: 'Never mind', value: 'no' },
+      ],
+    });
+    if (confirm === 'yes') {
+      reforgeItems(ctx, hero, first, second);
+    }
+  }
+
+  /**
+   * Item-selection dialog (GameScene.selectItem, WndBag.Mode.UPGRADEABLE:
+   * upgradable items only, WndBag.java:387). The port also lists equipped
+   * gear — the vanilla upgrade() handles equipped items, and the port's
+   * inventory UI surfaces them.
+   */
+  private async pickItem(
+    hero: ContentHero,
+    prompt: string,
+    exclude: ReforgeCandidate | null,
+  ): Promise<ReforgeCandidate | null> {
+    const candidates = reforgeCandidates(hero).filter(
+      (c) => !exclude || c.key !== exclude.key,
+    );
+    if (candidates.length === 0) {
+      await showDialog({
+        title: 'Troll blacksmith',
+        sprite: this.sprite,
+        text: 'You have nothing I can reforge.',
+        choices: [],
+      });
+      return null;
+    }
+    const value = await showDialog({
+      title: 'Troll blacksmith',
+      sprite: this.sprite,
+      text: prompt,
+      choices: candidates.map((c) => ({ label: c.label, value: c.key })),
+    });
+    return candidates.find((c) => c.key === value) ?? null;
+  }
+
+  /** Flavor text (Blacksmith.description(), Blacksmith.java:233-238). */
+  description(): string {
+    return (
+      "This troll blacksmith looks like all trolls look: he is tall and lean, and his skin resembles stone " +
+      "in both color and texture. The troll blacksmith is tinkering with unproportionally small tools."
+    );
+  }
+}
+
+/**
+ * Upgradable weapon/armor instances: inventory gear plus equipped gear
+ * (see BlacksmithMob.pickItem).
+ */
+export function reforgeCandidates(hero: ContentHero): ReforgeCandidate[] {
+  const out: ReforgeCandidate[] = [];
+  const push = (
+    key: string,
+    itemId: string,
+    isWeapon: boolean,
+    level: number,
+    upgradable: boolean | undefined,
+  ) => {
+    if (upgradable === false) return; // WndBag.Mode.UPGRADEABLE
+    const def = getItem(itemId);
+    out.push({
+      key,
+      itemId,
+      isWeapon,
+      label: level > 0 ? `${def.name} +${level}` : def.name,
+    });
+  };
+  hero.inventory.forEach((s, slot) => {
+    const g = s.gear;
+    if (g?.weapon) {
+      push(`inv:${slot}`, s.itemId, true, g.weapon.level, g.weapon.upgradable);
+    } else if (g?.armor) {
+      push(`inv:${slot}`, s.itemId, false, g.armor.level, g.armor.upgradable);
+    } else {
+      // Bare stacks (old saves): fall back to the catalog def.
+      const def = getItem(s.itemId);
+      if (def.weapon) {
+        push(`inv:${slot}`, s.itemId, true, def.weapon.level, def.weapon.upgradable);
+      } else if (def.armor) {
+        push(`inv:${slot}`, s.itemId, false, def.armor.level, def.armor.upgradable);
+      }
+    }
+  });
+  if (hero.weaponId && hero.weapon) {
+    push('wielded', hero.weaponId, true, hero.weapon.level, hero.weapon.upgradable);
+  }
+  if (hero.armorId && hero.armor) {
+    push('worn', hero.armorId, false, hero.armor.level, hero.armor.upgradable);
+  }
+  return out;
+}
+
+/**
+ * Blacksmith.verify (Blacksmith.java:158-184): returns the refusal string
+ * or null. The port has no weapon/armor identification model (potions and
+ * scrolls only), so the "identify them first" check cannot fire — noted as
+ * a gap; all other checks are exact.
+ */
+export function verifyReforge(
+  hero: ContentHero,
+  c1: ReforgeCandidate,
+  c2: ReforgeCandidate,
+): string | null {
+  if (c1.key === c2.key) {
+    return 'Select 2 different items, not the same item twice!';
+  }
+  if (c1.itemId !== c2.itemId) {
+    return 'Select 2 items of the same type!';
+  }
+  const g1 = reforgeGear(hero, c1);
+  const g2 = reforgeGear(hero, c2);
+  if ((g1?.cursed || g2?.cursed) === true) {
+    return "I don't work with cursed items!";
+  }
+  if ((g1?.level ?? 0) < 0 || (g2?.level ?? 0) < 0) {
+    return "It's a junk, the quality is too poor!";
+  }
+  if (g1?.upgradable === false || g2?.upgradable === false) {
+    return "I can't reforge these items!";
+  }
+  return null;
+}
+
+/** The live gear instance behind a reforge candidate. */
+function reforgeGear(
+  hero: ContentHero,
+  c: ReforgeCandidate,
+): { level: number; cursed?: boolean; upgradable?: boolean } | null {
+  if (c.key === 'wielded') return hero.weapon;
+  if (c.key === 'worn') return hero.armor;
+  const slot = Number(c.key.slice(4));
+  const g = hero.inventory[slot]?.gear;
+  return (c.isWeapon ? g?.weapon : g?.armor) ?? null;
+}
+
+/**
+ * Blacksmith.upgrade (Blacksmith.java:186-214): the higher-level item
+ * survives (ties keep the first), is upgraded once via Item.upgrade()
+ * (clears curse, +1 level, fix — NO enchantment/glyph transfer), the
+ * other is destroyed, 2 turns pass, Quest.reforged is set.
+ */
+export function reforgeItems(
+  ctx: ActionContext,
+  hero: ContentHero,
+  c1: ReforgeCandidate,
+  c2: ReforgeCandidate,
+): void {
+  const l1 = reforgeGear(hero, c1)?.level ?? 0;
+  const l2 = reforgeGear(hero, c2)?.level ?? 0;
+  const first = l2 > l1 ? c2 : c1;
+  const second = first === c1 ? c2 : c1;
+
+  // Unequip the survivor into the pack (vanilla: doUnequip(hero, true)
+  // collects it into the backpack, Blacksmith.java:198-200), then upgrade.
+  const survivorGear = reforgeGear(hero, first);
+  if (first.key === 'wielded' && hero.weapon) {
+    const inst = hero.weapon;
+    hero.weapon = null;
+    hero.weaponId = null;
+    addToInventory(hero, first.itemId, 1, { weapon: inst });
+  } else if (first.key === 'worn' && hero.armor) {
+    const inst = hero.armor;
+    hero.armor = null;
+    hero.armorId = null;
+    addToInventory(hero, first.itemId, 1, { armor: inst });
+  }
+  if (survivorGear && 'enchantment' in survivorGear) {
+    upgradeItem(survivorGear as DurableItem, 'weapon');
+  } else if (survivorGear) {
+    upgradeItem(survivorGear as DurableItem, 'armor');
+  }
+
+  // Destroy the second (vanilla: unequip without collect, then detachAll,
+  // Blacksmith.java:207-210).
+  if (second.key === 'wielded') {
+    hero.weapon = null;
+    hero.weaponId = null;
+  } else if (second.key === 'worn') {
+    hero.armor = null;
+    hero.armorId = null;
+  } else {
+    removeFromInventory(hero, Number(second.key.slice(4)), 1);
+  }
+
+  ctx.log(TXT_LOOKS_BETTER.replace('%s', first.label)); // GLog.p
+  // Dungeon.hero.spendAndNext( 2f ) (Blacksmith.java:203): the talk intent
+  // already cost 0, so the 2 turns advance the hero clock directly
+  // (hunger/regen for the smithing time).
+  tickHeroClock(ctx.rng, ctx, hero, 2);
+  blacksmithQuest.reforged = true;
+  // Journal.remove( Journal.Feature.TROLL ): no journal in the port.
+}
+
+// ---------------------------------------------------------------------------
 // Builder registration
 // ---------------------------------------------------------------------------
 
@@ -1052,6 +1462,8 @@ export function buildNpc(
       return new CurseMob(id, pos, w, depth);
     case 'shopkeeper':
       return new ShopkeeperMob(id, pos, w);
+    case 'blacksmith':
+      return new BlacksmithMob(id, pos, w);
     default:
       return null;
   }
