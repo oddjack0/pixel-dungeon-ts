@@ -1,0 +1,170 @@
+import { RNG } from '../core/rng.js';
+import { Region } from '../core/grid.js';
+import { Level, type PlacedItem } from '../dungeon/level.js';
+import { Game } from './loop.js';
+import {
+  type HeroSaveData,
+  type MechanicsHooks,
+  type MobSaveData,
+  mobsToPlaced,
+} from './seams.js';
+
+/**
+ * Save/load full run state to localStorage (JSON).
+ * Full format documented in docs/ENGINE-REPORT.md.
+ */
+
+export const SAVE_KEY = 'pdv2-save-1';
+const SAVE_VERSION = 1;
+
+interface LevelSaveData {
+  w: number;
+  h: number;
+  depth: number;
+  region: Region;
+  tiles: number[];
+  explored: number[];
+  stairsUp: number;
+  stairsDown: number;
+  doors: number[];
+  traps: number[];
+  items: PlacedItem[];
+  /** Boss-arena seal state (SewerBossLevel.seal/unseal). */
+  sealed?: boolean;
+  bossLevel?: boolean;
+}
+
+interface RunSaveData {
+  version: number;
+  seed: number;
+  rngState: number;
+  depth: number;
+  turnCount: number;
+  schedulerNow: number;
+  gameOver: boolean;
+  log: string[];
+  level: LevelSaveData;
+  hero: HeroSaveData;
+  mobs: MobSaveData[];
+}
+
+export function hasSave(key: string = SAVE_KEY): boolean {
+  try {
+    return localStorage.getItem(key) !== null;
+  } catch {
+    return false;
+  }
+}
+
+export function clearSave(key: string = SAVE_KEY): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+}
+
+export function saveGame(game: Game, mechanics: MechanicsHooks, key: string = SAVE_KEY): void {
+  const lvl = game.level;
+  const data: RunSaveData = {
+    version: SAVE_VERSION,
+    seed: game.seed,
+    rngState: game.rng.serialize(),
+    depth: lvl.depth,
+    turnCount: game.turnCount,
+    schedulerNow: game.scheduler.now,
+    gameOver: game.gameOver,
+    log: game.log,
+    level: {
+      w: lvl.w,
+      h: lvl.h,
+      depth: lvl.depth,
+      region: lvl.region,
+      tiles: Array.from(lvl.tiles),
+      explored: Array.from(lvl.explored),
+      stairsUp: lvl.stairsUp,
+      stairsDown: lvl.stairsDown,
+      doors: [...lvl.doors],
+      traps: [...lvl.traps],
+      items: lvl.items.map((it) => ({ ...it })),
+      sealed: lvl.sealed,
+      bossLevel: lvl.bossLevel,
+    },
+    hero: mechanics.saveHero(game.hero),
+    mobs: game.mobs.map((m) => mechanics.saveMob(m)),
+  };
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    game.logMsg(`Save failed: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+/**
+ * Rebuild a Game from a save. The dungeon generator is NOT re-run: the level
+ * is restored tile-for-tile from the save. `mechanics` must implement
+ * reviveHero/reviveMob (their save blobs are mechanics-owned).
+ * Returns null when no valid save exists.
+ */
+export function loadGame(
+  mechanics: MechanicsHooks,
+  key: string = SAVE_KEY,
+): Game | null {
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+
+  let data: RunSaveData;
+  try {
+    data = JSON.parse(raw) as RunSaveData;
+  } catch {
+    return null;
+  }
+  if (data.version !== SAVE_VERSION || !data.level || !data.hero) return null;
+
+  // Rebuild the level first; hand it to Game via a fixed LevelGen so the
+  // constructor's normal boot path runs, then overwrite the actor state.
+  const lvl = new Level(data.level.w, data.level.h);
+  lvl.depth = data.level.depth;
+  lvl.region = data.level.region;
+  lvl.tiles = Uint8Array.from(data.level.tiles);
+  lvl.explored = Uint8Array.from(data.level.explored);
+  lvl.stairsUp = data.level.stairsUp;
+  lvl.stairsDown = data.level.stairsDown;
+  lvl.doors = [...data.level.doors];
+  lvl.traps = [...data.level.traps];
+  lvl.items = data.level.items.map((it) => ({ ...it }));
+  // Seal state must survive a reload: tiles are restored tile-for-tile, so a
+  // sealed entrance stays water; the flag keeps ascend blocked.
+  lvl.sealed = data.level.sealed ?? false;
+  lvl.bossLevel = data.level.bossLevel ?? false;
+
+  const rng = RNG.restore(data.seed, data.rngState);
+  const game = new Game(data.seed, {
+    gen: { generate: () => lvl },
+    mechanics,
+  });
+
+  // Overwrite the freshly-booted placeholder state with the saved run.
+  game.rng = rng;
+  game.turnCount = data.turnCount;
+  game.gameOver = data.gameOver;
+  game.log = [...data.log];
+
+  const hero = mechanics.reviveHero(rng, data.hero);
+  game.hero = hero;
+  game.mobs = data.mobs.map((md) => mechanics.reviveMob(rng, md));
+  game.level.mobs = mobsToPlaced(game.mobs);
+
+  game.scheduler.clear();
+  game.scheduler.now = data.schedulerNow;
+  game.scheduler.add(hero);
+  for (const m of game.mobs) game.scheduler.add(m);
+
+  game.level.updateFov(hero.x, hero.y, hero.sight);
+  return game;
+}
