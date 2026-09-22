@@ -282,3 +282,24 @@ Boomerang durability value (read Boomerang.java when porting).
   interlevel seam); keys not depth-matched; OPEN_DOOR renders as floor;
   camera smoothing (vanilla _scroll easing) not yet ported; Dew Vial absent
   (dewdrops heal directly, as vanilla does without a vial).
+- 2026-09-22: **STAGE 1 COMPLETE** (Prison depths 6–10, Tengu, shops, quests,
+  newly reachable items + camera-viewport verification).
+  Commits on main: 4a85c43 (ShopPainter port — 15/15/15/14/11 stock per depth,
+  price()×5×(depth/5+1) buy / price() sell per WndTradeItem.java, shopkeeper
+  trade UI), c2f66e6 (Shaman/Bat/Brute/Tengu + Albino/Bandit/Shielded 1/30
+  mutations, Bestiary tables 6–10, Blindness buff), 9a68ff7 (depths 6–9 gen,
+  PrisonBossLevel depth 10 — arena ≥7×7 ≥3 rooms away, iron-key chest in
+  anteroom, Tengu HUNTING on arena entry, skeleton-key unseal,
+  PrisonLevel water 0.45/grass 0.40, TUNNEL→PASSAGE, wandmaker 7–9,
+  shopOnLevel 6/11/16), c4583d4 (Sad Ghost + Wandmaker quest state machines,
+  NPC talk routing, modal dialogs, Fetid Rat, Curse), 7b4c55b (camera
+  regression pin: full-window cameraTileRect, 5 window sizes), a501449
+  (22-item catalog expansion — tier 2–5 weapons/armor, bags, prices,
+  129/129 sprites pixel-identical), a3503fe (integration fixes).
+  625/625 tests pass, typecheck clean. Fresh dist built (main.2d416dd158.js).
+  Camera finding resolved: no fixed viewport exists in current code (Stage 0
+  commits 71520a4/22350de already full-window); pinned by regression tests.
+  Known gaps: full wand/ring/potion/scroll catalog + identification → Stage 2;
+  Wandmaker rewards generic until wands exist; quest state not yet in save/load;
+  honeypot/bee not implemented; zoom formula still fixed 48px (vanilla
+  defaultZoom+scaleUp picks ~96px on desktop — flagged for Bruno's call).
