@@ -38,8 +38,22 @@ import {
   poisonTrapDuration,
   oozeTick,
   paralysisDuration,
+  burningInventoryTick,
+  buffDeathMessage,
+  burnsUpMessage,
+  comboMessage,
+  DEATH_MESSAGE_RE,
   BURNING_DURATION,
   SLEEP_POSTPONE,
+  MSG_BURNED_TO_DEATH,
+  MSG_DIED_FROM_POISON,
+  MSG_OOZE_KILLED,
+  MSG_BLED_TO_DEATH,
+  MSG_STARVED_TO_DEATH,
+  MSG_HUNGRY,
+  MSG_STARVING,
+  MSG_BURNS_UP,
+  MSG_COMBO,
 } from '../src/mechanics/buffs';
 import {
   gooDamageRoll,
@@ -460,5 +474,106 @@ describe('seeded RNG sanity', () => {
       if (n === 3) middles++;
     }
     expect(middles).toBeGreaterThan(extremes);
+  });
+});
+
+describe('buff messages (exact Java strings)', () => {
+  test('death messages are verbatim from the Java sources', () => {
+    expect(MSG_BURNED_TO_DEATH).toBe('You burned to death...'); // Burning.java:46
+    expect(MSG_DIED_FROM_POISON).toBe('You died from poison...'); // Poison.java:94
+    expect(MSG_OOZE_KILLED).toBe('Caustic ooze killed you...'); // Ooze.java:29 + toString
+    expect(MSG_BLED_TO_DEATH).toBe('You bled to death...'); // Bleeding.java:77
+    expect(MSG_STARVED_TO_DEATH).toBe('You starved to death...'); // Hunger.java:41
+  });
+
+  test('act-time messages are verbatim', () => {
+    expect(MSG_HUNGRY).toBe('You are hungry.'); // Hunger.java:39
+    expect(MSG_STARVING).toBe('You are starving!'); // Hunger.java:40
+    expect(MSG_BURNS_UP).toBe('%s burns up!'); // Burning.java:45
+    expect(MSG_COMBO).toBe('%d hit combo!'); // Combo.java:27
+  });
+
+  test('buffDeathMessage maps killer buffs, null otherwise', () => {
+    expect(buffDeathMessage('burning')).toBe(MSG_BURNED_TO_DEATH);
+    expect(buffDeathMessage('poison')).toBe(MSG_DIED_FROM_POISON);
+    expect(buffDeathMessage('ooze')).toBe(MSG_OOZE_KILLED);
+    expect(buffDeathMessage('hunger')).toBe(MSG_STARVED_TO_DEATH);
+    expect(buffDeathMessage('bleeding')).toBe(MSG_BLED_TO_DEATH);
+    expect(buffDeathMessage('paralysis')).toBeNull();
+    expect(buffDeathMessage('roots')).toBeNull();
+    expect(buffDeathMessage('sleep')).toBeNull();
+    expect(buffDeathMessage('regeneration')).toBeNull();
+    expect(buffDeathMessage('cripple')).toBeNull();
+  });
+
+  test('DEATH_MESSAGE_RE matches every vanilla death line', () => {
+    for (const m of [
+      MSG_BURNED_TO_DEATH,
+      MSG_DIED_FROM_POISON,
+      MSG_OOZE_KILLED,
+      MSG_BLED_TO_DEATH,
+      MSG_STARVED_TO_DEATH,
+    ]) {
+      expect(DEATH_MESSAGE_RE.test(m)).toBe(true);
+    }
+    expect(DEATH_MESSAGE_RE.test('You are starving!')).toBe(false);
+    expect(DEATH_MESSAGE_RE.test('You died...')).toBe(false);
+  });
+
+  test('message formatters', () => {
+    expect(burnsUpMessage('a scroll')).toBe('a scroll burns up!');
+    expect(comboMessage(3)).toBe('3 hit combo!');
+  });
+});
+
+describe('burning inventory side effects (Burning.java:76-98)', () => {
+  const isScroll = (id: string) => id === 'scroll' || id === 'scroll_upgrade';
+  const isMeat = (id: string) => id === 'mystery_meat';
+
+  test('empty pack: nothing burns', () => {
+    expect(burningInventoryTick(new ScriptRng(), [], isScroll, isMeat)).toBeNull();
+  });
+
+  test('scroll burns up (destroyed, no replacement)', () => {
+    const r = burningInventoryTick(
+      new ScriptRng(),
+      [{ itemId: 'scroll', qty: 1 }],
+      isScroll,
+      isMeat,
+    );
+    expect(r).toEqual({ stackIndex: 0, cookedId: null });
+  });
+
+  test('mystery meat cooks into chargrilled meat', () => {
+    const r = burningInventoryTick(
+      new ScriptRng(),
+      [{ itemId: 'mystery_meat', qty: 1 }],
+      isScroll,
+      isMeat,
+    );
+    expect(r).toEqual({ stackIndex: 0, cookedId: 'chargrilled_meat' });
+  });
+
+  test('other items are untouched', () => {
+    const r = burningInventoryTick(
+      new ScriptRng(),
+      [{ itemId: 'potion_healing', qty: 2 }],
+      isScroll,
+      isMeat,
+    );
+    expect(r).toBeNull();
+  });
+
+  test('pick is uniform over instances (qty-weighted), like Random.element(backpack.items)', () => {
+    // stacks: [scroll x1, potion x3]; ScriptRng int picks raw instance index.
+    const stacks = [
+      { itemId: 'scroll', qty: 1 },
+      { itemId: 'potion_healing', qty: 3 },
+    ];
+    const pickScroll = burningInventoryTick(new ScriptRng([], [0]), stacks, isScroll, isMeat);
+    expect(pickScroll?.stackIndex).toBe(0);
+    const pickPotion = burningInventoryTick(new ScriptRng([], [2]), stacks, isScroll, isMeat);
+    // instance 2 is a potion -> untouched
+    expect(pickPotion).toBeNull();
   });
 });

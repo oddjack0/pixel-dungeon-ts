@@ -151,6 +151,20 @@ const I = (key: string, idx: number, note: string): Slice => ({
   h: 16,
   note,
 });
+/**
+ * buffs.png: 7x7 buff icons; TextureFilm(texture, 7, 7) (BuffIndicator.java).
+ * cols = 128 / 7 = 18, rows = 16 / 7 = 2; frame i at ((i % 18) * 7, (i / 18 | 0) * 7).
+ * Constants = BuffIndicator.java icon indices (MIND_VISION = 0 .. SACRIFICE = 31).
+ */
+const B = (key: string, idx: number, note: string): Slice => ({
+  key,
+  file: 'buffs.png',
+  x: (idx % 18) * 7,
+  y: Math.floor(idx / 18) * 7,
+  w: 7,
+  h: 7,
+  note,
+});
 
 const SLICES: Slice[] = [
   // --- hero & mobs: idle frame 0, per the original *Sprite.java classes ---
@@ -209,6 +223,58 @@ const SLICES: Slice[] = [
   T('trap_lightning', 32, 'Terrain.LIGHTNING_TRAP'),
   T('trap_gripping', 37, 'Terrain.GRIPPING_TRAP'),
   T('trap_summoning', 39, 'Terrain.SUMMONING_TRAP'),
+  // Secret (hidden) trap tiles: vanilla renders SECRET_*_TRAP map cells with
+  // these floor-like tiles (DungeonTilemap draws the map tile directly).
+  T('trap_toxic_secret', 18, 'Terrain.SECRET_TOXIC_TRAP'),
+  T('trap_fire_secret', 20, 'Terrain.SECRET_FIRE_TRAP'),
+  T('trap_paralytic_secret', 22, 'Terrain.SECRET_PARALYTIC_TRAP'),
+  T('trap_inactive', 23, 'Terrain.INACTIVE_TRAP (visible, inert)'),
+  T('trap_poison_secret', 28, 'Terrain.SECRET_POISON_TRAP'),
+  T('trap_alarm_secret', 31, 'Terrain.SECRET_ALARM_TRAP'),
+  T('trap_lightning_secret', 33, 'Terrain.SECRET_LIGHTNING_TRAP'),
+  T('trap_gripping_secret', 38, 'Terrain.SECRET_GRIPPING_TRAP'),
+  T('trap_summoning_secret', 40, 'Terrain.SECRET_SUMMONING_TRAP'),
+  // High grass and sign tiles (indices = Terrain.java constants).
+  T('high_grass', 15, 'Terrain.HIGH_GRASS'),
+  T('sign', 29, 'Terrain.SIGN'),
+  // --- buff icons: 7x7, BuffIndicator.java constants (buffs.png) ---
+  B('bufficon_mind_vision', 0, 'BuffIndicator.MIND_VISION'),
+  B('bufficon_levitation', 1, 'BuffIndicator.LEVITATION'),
+  B('bufficon_fire', 2, 'BuffIndicator.FIRE'),
+  B('bufficon_poison', 3, 'BuffIndicator.POISON'),
+  B('bufficon_paralysis', 4, 'BuffIndicator.PARALYSIS'),
+  B('bufficon_hunger', 5, 'BuffIndicator.HUNGER'),
+  B('bufficon_starvation', 6, 'BuffIndicator.STARVATION'),
+  B('bufficon_slow', 7, 'BuffIndicator.SLOW'),
+  B('bufficon_ooze', 8, 'BuffIndicator.OOZE'),
+  B('bufficon_amok', 9, 'BuffIndicator.AMOK'),
+  B('bufficon_terror', 10, 'BuffIndicator.TERROR'),
+  B('bufficon_roots', 11, 'BuffIndicator.ROOTS'),
+  B('bufficon_invisible', 12, 'BuffIndicator.INVISIBLE'),
+  B('bufficon_shadows', 13, 'BuffIndicator.SHADOWS'),
+  B('bufficon_weakness', 14, 'BuffIndicator.WEAKNESS'),
+  B('bufficon_frost', 15, 'BuffIndicator.FROST'),
+  B('bufficon_blindness', 16, 'BuffIndicator.BLINDNESS'),
+  B('bufficon_combo', 17, 'BuffIndicator.COMBO'),
+  B('bufficon_fury', 18, 'BuffIndicator.FURY'),
+  B('bufficon_healing', 19, 'BuffIndicator.HEALING'),
+  B('bufficon_armor', 20, 'BuffIndicator.ARMOR'),
+  B('bufficon_heart', 21, 'BuffIndicator.HEART'),
+  B('bufficon_light', 22, 'BuffIndicator.LIGHT'),
+  B('bufficon_cripple', 23, 'BuffIndicator.CRIPPLE'),
+  B('bufficon_barkskin', 24, 'BuffIndicator.BARKSKIN'),
+  B('bufficon_immunity', 25, 'BuffIndicator.IMMUNITY'),
+  B('bufficon_bleeding', 26, 'BuffIndicator.BLEEDING'),
+  B('bufficon_mark', 27, 'BuffIndicator.MARK'),
+  B('bufficon_deferred', 28, 'BuffIndicator.DEFERRED'),
+  B('bufficon_vertigo', 29, 'BuffIndicator.VERTIGO'),
+  B('bufficon_rage', 30, 'BuffIndicator.RAGE'),
+  B('bufficon_sacrifice', 31, 'BuffIndicator.SACRIFICE'),
+  // NOTE: status_pane.png has NO opaque "strip background" art — its shield
+  // interior is alpha 0 in the source PNG (verified with PIL against the raw
+  // file; vanilla draws the buff icons directly on the pane, whose interior
+  // shows the black scene behind it). The icon strip therefore needs no
+  // additional chrome; the HUD's dark top bar is its background.
 ];
 
 function extract(s: Slice): { w: number; h: number; b64: string } {
@@ -270,3 +336,26 @@ lines.push('};', '');
 writeFileSync(OUT, lines.join('\n'));
 const bytes = SLICES.length;
 console.log(`extracted ${bytes} sprites -> ${OUT}`);
+
+// --- pixel verification: re-read the generated file and compare every
+// entry byte-for-byte against a fresh slice of the source PNG. ---
+{
+  const gen = readFileSync(OUT, 'utf8');
+  const entry = /^  (\w+): \{ w: (\d+), h: (\d+), rgba: '([A-Za-z0-9+/=]+)' \},$/gm;
+  let verified = 0;
+  let m: RegExpExecArray | null;
+  while ((m = entry.exec(gen)) !== null) {
+    const [, key, w, h, b64] = m;
+    const slice = SLICES.find((s) => s.key === key);
+    if (!slice) throw new Error(`verify: unknown key ${key} in generated file`);
+    const fresh = extract(slice);
+    if (Number(w) !== fresh.w || Number(h) !== fresh.h || b64 !== fresh.b64) {
+      throw new Error(`verify FAILED for ${key}: generated pixels differ from ${slice.file}`);
+    }
+    verified++;
+  }
+  if (verified !== SLICES.length) {
+    throw new Error(`verify: only ${verified}/${SLICES.length} entries checked`);
+  }
+  console.log(`verified ${verified}/${SLICES.length} pixel-identical to source PNGs`);
+}

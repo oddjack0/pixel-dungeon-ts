@@ -22,7 +22,9 @@ export type ItemType =
   | 'food'
   | 'scroll'
   | 'gold'
-  | 'key';
+  | 'key'
+  | 'dewdrop'
+  | 'seed';
 
 export interface ItemDef {
   /** Catalog id. Gold drops encode the amount as `gold:<n>` (see Gold below). */

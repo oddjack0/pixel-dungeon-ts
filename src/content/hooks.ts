@@ -81,6 +81,8 @@ function catalogKind(def: ItemDef): ItemKind {
       return 'scroll';
     case 'key':
     case 'gold':
+    case 'dewdrop':
+    case 'seed':
       return 'misc';
   }
 }

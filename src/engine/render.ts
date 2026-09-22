@@ -228,8 +228,10 @@ export class Renderer {
         break;
       case Terrain.FLOOR:
       case Terrain.WALKWAY:
-      case Terrain.TRAP_INACTIVE:
         name = (x * 7 + y * 13) % 3 === 0 ? 'floor1' : 'floor0';
+        break;
+      case Terrain.TRAP_INACTIVE:
+        name = 'trap_inactive'; // Terrain.INACTIVE_TRAP tile 23: visible, inert
         break;
       case Terrain.EMBERS:
         name = 'embers';
@@ -251,8 +253,10 @@ export class Renderer {
         name = 'water';
         break;
       case Terrain.GRASS:
-      case Terrain.HIGH_GRASS:
         name = 'grass';
+        break;
+      case Terrain.HIGH_GRASS:
+        name = 'high_grass'; // Terrain.HIGH_GRASS tile 15
         break;
       case Terrain.CHASM:
         name = 'chasm';
@@ -263,26 +267,50 @@ export class Renderer {
       case Terrain.TRAP_TOXIC:
         name = 'trap_toxic';
         break;
+      case Terrain.TRAP_TOXIC_HIDDEN:
+        name = 'trap_toxic_secret';
+        break;
       case Terrain.TRAP_FIRE:
         name = 'trap_fire';
+        break;
+      case Terrain.TRAP_FIRE_HIDDEN:
+        name = 'trap_fire_secret';
         break;
       case Terrain.TRAP_PARALYTIC:
         name = 'trap_paralytic';
         break;
+      case Terrain.TRAP_PARALYTIC_HIDDEN:
+        name = 'trap_paralytic_secret';
+        break;
       case Terrain.TRAP_POISON:
         name = 'trap_poison';
+        break;
+      case Terrain.TRAP_POISON_HIDDEN:
+        name = 'trap_poison_secret';
         break;
       case Terrain.TRAP_ALARM:
         name = 'trap_alarm';
         break;
+      case Terrain.TRAP_ALARM_HIDDEN:
+        name = 'trap_alarm_secret';
+        break;
       case Terrain.TRAP_LIGHTNING:
         name = 'trap_lightning';
+        break;
+      case Terrain.TRAP_LIGHTNING_HIDDEN:
+        name = 'trap_lightning_secret';
         break;
       case Terrain.TRAP_GRIPPING:
         name = 'trap_gripping';
         break;
+      case Terrain.TRAP_GRIPPING_HIDDEN:
+        name = 'trap_gripping_secret';
+        break;
       case Terrain.TRAP_SUMMONING:
         name = 'trap_summoning';
+        break;
+      case Terrain.TRAP_SUMMONING_HIDDEN:
+        name = 'trap_summoning_secret';
         break;
       // Special-room tiles (indices = original Terrain.java constants).
       case Terrain.ALCHEMY:
@@ -309,7 +337,7 @@ export class Renderer {
         name = 'tomb';
         break;
       default:
-        // Hidden trap variants render as floor (their cover).
+        // Unmapped terrain renders as floor.
         name = (x * 7 + y * 13) % 3 === 0 ? 'floor1' : 'floor0';
     }
     return this.getSprite(name, region);

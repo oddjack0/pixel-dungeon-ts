@@ -411,3 +411,74 @@ describe('Hud', () => {
     expect(L.dartBtn.h).toBeGreaterThanOrEqual(44);
   });
 });
+
+describe('buff icon strip (bufficons.ts, BuffIndicator.java)', () => {
+  test('M1 buffs map to their original 7x7 icons', async () => {
+    const { buffIconKey } = await import('../src/ui/bufficons.js');
+    expect(buffIconKey('burning')).toBe('bufficon_fire');
+    expect(buffIconKey('poison')).toBe('bufficon_poison');
+    expect(buffIconKey('paralysis')).toBe('bufficon_paralysis');
+    expect(buffIconKey('ooze')).toBe('bufficon_ooze');
+    expect(buffIconKey('roots')).toBe('bufficon_roots');
+  });
+
+  test('buffs with BuffIndicator.NONE map to null (hunger, sleep, regeneration)', async () => {
+    const { buffIconKey } = await import('../src/ui/bufficons.js');
+    expect(buffIconKey('hunger')).toBeNull();
+    expect(buffIconKey('sleep')).toBeNull();
+    expect(buffIconKey('regeneration')).toBeNull();
+    expect(buffIconKey('unknown')).toBeNull();
+  });
+
+  test('strip keeps attach order, skips NONE, dedupes', async () => {
+    const { buffStripKeys } = await import('../src/ui/bufficons.js');
+    expect(buffStripKeys(['poison', 'hunger', 'burning', 'poison'])).toEqual([
+      'bufficon_poison',
+      'bufficon_fire',
+    ]);
+    expect(buffStripKeys(['hunger'])).toEqual([]);
+  });
+
+  test('icon pitch is vanilla (7+2) at 3x scale', async () => {
+    const {
+      buffIconX,
+      BUFF_ICON_PX,
+      BUFF_ICON_DRAW,
+      BUFF_ICON_PITCH,
+    } = await import('../src/ui/bufficons.js');
+    expect(BUFF_ICON_PX).toBe(7);
+    expect(BUFF_ICON_DRAW).toBe(21);
+    expect(BUFF_ICON_PITCH).toBe(27);
+    expect(buffIconX(8, 0)).toBe(8);
+    expect(buffIconX(8, 3)).toBe(8 + 3 * 27);
+  });
+
+  test('removal poof: scale 1->6, fade over 0.6s (BuffIndicator.java)', async () => {
+    const { removedIconTransform } = await import('../src/ui/bufficons.js');
+    expect(removedIconTransform(1000, 1000)).toEqual({ scale: 1, alpha: 1 });
+    expect(removedIconTransform(1000, 1300)).toEqual({ scale: 3.5, alpha: 0.5 });
+    expect(removedIconTransform(1000, 1600)).toBeNull();
+    expect(removedIconTransform(1000, 2000)).toBeNull();
+  });
+
+  test('trackRemovedIcons detects removals at their strip position', async () => {
+    const { trackRemovedIcons, removedIconTransform } = await import(
+      '../src/ui/bufficons.js'
+    );
+    const now = 5000;
+    const live = trackRemovedIcons(
+      { keys: ['bufficon_fire', 'bufficon_poison'], x0: 8 },
+      ['bufficon_fire'],
+      [],
+      now,
+    );
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ key: 'bufficon_poison', x: 8 + 27, at: now });
+    // poof survives while the tween runs, expires after
+    const kept = trackRemovedIcons({ keys: ['bufficon_fire'], x0: 8 }, ['bufficon_fire'], live, now + 300);
+    expect(kept).toHaveLength(1);
+    const gone = trackRemovedIcons({ keys: ['bufficon_fire'], x0: 8 }, ['bufficon_fire'], live, now + 700);
+    expect(gone).toHaveLength(0);
+    expect(removedIconTransform(live[0]!.at, now + 700)).toBeNull();
+  });
+});

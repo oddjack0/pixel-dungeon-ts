@@ -160,7 +160,10 @@ export class UiManager {
   private deathCause(g: Game): string {
     for (let i = g.log.length - 1; i >= Math.max(0, g.log.length - 20); i--) {
       const line = g.log[i];
-      if (/killed by|slain|you died/i.test(line)) return line;
+      // Matches the vanilla buff death lines ("You burned to death...",
+      // "You died from poison...", "Caustic ooze killed you...") as well as
+      // the generic fallback.
+      if (/killed by|slain|you died|to death\.\.\.|killed you\.\.\./i.test(line)) return line;
     }
     return 'The dungeon claims another.';
   }

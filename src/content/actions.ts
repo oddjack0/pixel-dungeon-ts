@@ -28,6 +28,11 @@ import {
 } from '../mechanics/hero.js';
 import { hasBuff } from '../mechanics/char.js';
 import {
+  MSG_HUNGRY,
+  MSG_STARVED_TO_DEATH,
+  MSG_STARVING,
+} from '../mechanics/buffs.js';
+import {
   HUNGER_STEP,
   hungerTick,
   isStarving,
@@ -103,6 +108,11 @@ export function useInventorySlot(
     case 'key':
       return useKey(ctx, hero, slot, stack);
     case 'gold':
+      return 1;
+    case 'dewdrop':
+    case 'seed':
+      // Dewdrops auto-heal on pickup (never used from inventory); seed
+      // planting/throwing arrives with the plant system. No-op for now.
       return 1;
   }
 }
@@ -607,11 +617,14 @@ export function tickHeroClock(
       paralysed: hero.paralysed,
     });
     hero.hungerLevel = t.level;
-    if (t.becameStarving) ctx.log('You are starving!'); // Hunger.java:88
-    else if (t.becameHungry) ctx.log('You are hungry.'); // Hunger.java:80
+    if (t.becameStarving) ctx.log(MSG_STARVING); // Hunger.java:84
+    else if (t.becameHungry) ctx.log(MSG_HUNGRY); // Hunger.java:91
     if (t.damage > 0) {
+      // While starving, every 30% damage proc also re-logs "You are
+      // starving!" (Hunger.java:66-72) — not just the threshold crossing.
+      ctx.log(MSG_STARVING); // Hunger.java:68
       hero.hp = Math.max(hero.hp - t.damage, 0);
-      if (!hero.isAlive()) ctx.log('You starved to death...'); // Hunger.java:96
+      if (!hero.isAlive()) ctx.log(MSG_STARVED_TO_DEATH); // Hunger.java:156
     }
     if (hero.isAlive()) {
       hero.hp = regenTick(hero.hp, hero.ht, isStarving(hero.hungerLevel));

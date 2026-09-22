@@ -7,14 +7,22 @@
  */
 import type { Game } from '../engine/loop.js';
 import { regionForDepth } from '../core/grid.js';
-import { buffLabel, readHeroView } from './heroView.js';
+import { readHeroView } from './heroView.js';
 import { readInventory } from './inventory.js';
+import {
+  BUFF_ICON_DRAW,
+  BUFF_ICON_PITCH,
+  buffIconCanvas,
+  buffStripKeys,
+  removedIconTransform,
+  trackRemovedIcons,
+  type RemovedIcon,
+} from './bufficons.js';
 import {
   drawBar,
   drawCoin,
   drawDrumstick,
   drawPanel,
-  roundRect,
   UI,
   type Rect,
   type SpriteSource,
@@ -67,6 +75,10 @@ const SLOT = 56;
 
 export class Hud {
   readonly logBuffer = new LogBuffer();
+  /** Buff-strip state: vanilla tweens removed icons in place (BuffIndicator). */
+  private prevStripKeys: string[] = [];
+  private removedStripIcons: RemovedIcon[] = [];
+  private stripX0 = 8;
 
   /** Button rects for the UiManager's tap routing. */
   layout(view: View): HudLayout {
@@ -85,7 +97,7 @@ export class Hud {
   ): void {
     const hv = readHeroView(game);
     const L = this.layout(view);
-    this.drawTopBar(ctx, game, view, hv);
+    this.drawTopBar(ctx, game, view, hv, opts.now);
     this.drawLog(ctx, view);
     this.drawQuickSlots(ctx, game, sprites, view, L, opts.throwMode);
   }
@@ -95,6 +107,7 @@ export class Hud {
     game: Game,
     view: View,
     hv: ReturnType<typeof readHeroView>,
+    now?: number,
   ): void {
     // translucent dark strip so the bar reads over any tile
     ctx.fillStyle = 'rgba(10, 8, 14, 0.78)';
@@ -164,26 +177,58 @@ export class Hud {
     ctx.font = 'bold 12px system-ui, sans-serif';
     ctx.fillText(`${hv.gold}`, gx + 12, 52);
 
-    // Buff badges
-    let bx = 8;
-    ctx.font = 'bold 10px system-ui, sans-serif';
-    for (const b of hv.buffs) {
-      if (b === 'hunger') continue;
-      const label = buffLabel(b);
-      const w = ctx.measureText(label).width + 14;
-      ctx.fillStyle = buffColor(b);
-      ctx.strokeStyle = UI.ink;
-      ctx.lineWidth = 1.5;
-      roundRect(ctx, { x: bx, y: 44, w, h: 16 }, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fff';
-      ctx.textAlign = 'center';
-      ctx.fillText(label, bx + w / 2, 52.5);
-      ctx.textAlign = 'left';
-      bx += w + 6;
-      if (bx > view.w - 110) break;
+    // Buff icon strip: the original 7x7 buff icons (BuffIndicator.java) in
+    // attach order, 2px pitch. Hunger's icon is NONE in vanilla — the
+    // drumstick badge above covers it.
+    this.drawBuffStrip(ctx, view, hv.buffs, 8, 43, now);
+  }
+
+  /**
+   * Vanilla buff strip (BuffIndicator.layout): icons in buff order at
+   * x + n*(7+2), with the 0.6s scale-up/fade poof on removal.
+   */
+  private drawBuffStrip(
+    ctx: CanvasRenderingContext2D,
+    view: View,
+    buffs: string[],
+    x0: number,
+    y: number,
+    now?: number,
+  ): void {
+    const t = now ?? Date.now();
+    const keys = buffStripKeys(buffs);
+    this.removedStripIcons = trackRemovedIcons(
+      { keys: this.prevStripKeys, x0: this.stripX0 },
+      keys,
+      this.removedStripIcons,
+      t,
+    );
+    this.prevStripKeys = keys;
+    this.stripX0 = x0;
+
+    ctx.imageSmoothingEnabled = false;
+    const maxX = view.w - 110;
+    let bx = x0;
+    for (const key of keys) {
+      const img = buffIconCanvas(key);
+      if (img) ctx.drawImage(img, bx, y, BUFF_ICON_DRAW, BUFF_ICON_DRAW);
+      bx += BUFF_ICON_PITCH;
+      if (bx > maxX) break;
     }
+    // Removal poofs: scale 1->6 about the icon center while fading
+    // (BuffIndicator.java AlphaTweener + scale.set(1 + 5*progress)).
+    for (const r of this.removedStripIcons) {
+      const tr = removedIconTransform(r.at, t);
+      if (!tr) continue;
+      const img = buffIconCanvas(r.key);
+      if (!img) continue;
+      const size = BUFF_ICON_DRAW * tr.scale;
+      const cx = r.x + BUFF_ICON_DRAW / 2;
+      const cy = y + BUFF_ICON_DRAW / 2;
+      ctx.globalAlpha = Math.max(0, tr.alpha);
+      ctx.drawImage(img, cx - size / 2, cy - size / 2, size, size);
+    }
+    ctx.globalAlpha = 1;
   }
 
   private drawLog(ctx: CanvasRenderingContext2D, view: View): void {
@@ -266,23 +311,6 @@ export class Hud {
     ctx.textAlign = 'center';
     ctx.fillText(hint, r.x + r.w / 2, r.y + r.h - 5);
     ctx.textAlign = 'left';
-  }
-}
-
-function buffColor(kind: string): string {
-  switch (kind) {
-    case 'burning':
-      return UI.buffBurn;
-    case 'poison':
-      return UI.buffPoison;
-    case 'ooze':
-      return UI.buffOoze;
-    case 'paralysis':
-      return UI.buffPara;
-    case 'roots':
-      return UI.buffRoot;
-    default:
-      return '#6e7484';
   }
 }
 

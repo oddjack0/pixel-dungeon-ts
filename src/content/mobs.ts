@@ -27,7 +27,11 @@ import {
   skeletonDeathBurst,
 } from '../mechanics/combat.js';
 import {
+  buffDeathMessage,
+  burningInventoryTick,
   burningTick,
+  burnsUpMessage,
+  bleedingTick,
   oozeTick,
   poisonTick,
   type BuffKind,
@@ -37,7 +41,8 @@ import { heroDefenseSkill, heroDR } from '../mechanics/hero.js';
 import type { BuffState } from '../mechanics/char.js';
 import { charTimeScale, crippleFactor } from '../mechanics/char.js';
 import type { ContentHero, ItemStack } from './hero.js';
-import { getItem } from './items.js';
+import { addToInventory, removeFromInventory } from './hero.js';
+import { getItem, ITEMS } from './items.js';
 
 /** Mob AI states (Mob.SLEEPEING/WANDERING/HUNTING/FLEEING/PASSIVE, Mob.java:70-76). */
 export type MobAiState = 'sleeping' | 'wandering' | 'hunting' | 'fleeing' | 'passive';
@@ -157,6 +162,8 @@ export interface Buffable {
   immunities: string[];
   resistances: string[];
   buffs: Partial<Record<BuffKind, BuffState>>;
+  /** 'hero' on the hero (ContentHero.kind); drives hero-only buff branches. */
+  kind?: string;
   isAlive(): boolean;
 }
 
@@ -184,14 +191,51 @@ export function tickBuffs(
   rng: MechanicsRng,
   level: Level,
   ch: Buffable,
-  _log: (msg: string) => void,
+  log: (msg: string) => void,
 ): void {
   const inWater = level.getAt(ch.pos) === Terrain.WATER;
   const b = ch.buffs;
+  // The hero drives hero-only branches (inventory loss, "You ..." death
+  // lines); ContentHero carries kind='hero' + inventory, mobs carry neither.
+  const hero = ch.kind === 'hero' ? (ch as unknown as ContentHero) : null;
+  /** Log the vanilla death line when a buff just killed the hero. */
+  const logBuffDeath = (kind: BuffKind): void => {
+    if (hero && !hero.isAlive()) {
+      const msg = buffDeathMessage(kind);
+      if (msg) log(msg);
+    }
+  };
   if (b.burning && ch.isAlive()) {
     const t = burningTick(rng, ch.hp, ch.ht, b.burning.left, inWater, ch.flying);
     const applied = applyDamage(rng, buffTarget(ch), t.damage, 'burning');
     ch.hp = applied.hp;
+    if (hero) {
+      // Burning.act hero branch (Burning.java:76-98): each tick one random
+      // backpack item burns up; scrolls are destroyed, mystery meat cooks
+      // into chargrilled meat (kept). Happens even on the killing tick —
+      // vanilla does the damage first, then the item loss, then onDeath.
+      const burn = burningInventoryTick(
+        rng,
+        hero.inventory,
+        (id) => getItem(id).type === 'scroll',
+        (id) => id === 'mystery_meat',
+      );
+      if (burn) {
+        const stack = hero.inventory[burn.stackIndex];
+        if (stack) {
+          const name = getItem(stack.itemId).name;
+          removeFromInventory(hero, burn.stackIndex, 1);
+          // Vanilla: steak.collect(backpack), else drop at the hero's feet
+          // (Burning.java:88-90). M1's pack has no capacity limit, so the
+          // drop branch is unreachable; the catalog also has no meat yet.
+          if (burn.cookedId !== null && burn.cookedId in ITEMS) {
+            addToInventory(hero, burn.cookedId, 1);
+          }
+          log(burnsUpMessage(name)); // GLog.w, Burning.java:83/94
+        }
+      }
+    }
+    logBuffDeath('burning'); // "You burned to death...", Burning.java:152
     if (t.detached) delete b.burning;
     else b.burning.left = t.left;
     if (applied.paralysisBroken) {
@@ -203,6 +247,7 @@ export function tickBuffs(
     const t = poisonTick(b.poison.left);
     const applied = applyDamage(rng, buffTarget(ch), t.damage, 'poison');
     ch.hp = applied.hp;
+    logBuffDeath('poison'); // "You died from poison...", Poison.java:94
     if (t.detached) delete b.poison;
     else b.poison.left = t.left;
     if (applied.paralysisBroken) {
@@ -214,6 +259,7 @@ export function tickBuffs(
     const t = oozeTick(inWater);
     const applied = applyDamage(rng, buffTarget(ch), t.damage, 'ooze');
     ch.hp = applied.hp;
+    logBuffDeath('ooze'); // "Caustic ooze killed you...", Ooze.java:50
     if (t.detached) delete b.ooze;
     if (applied.paralysisBroken) {
       ch.paralysed = false;

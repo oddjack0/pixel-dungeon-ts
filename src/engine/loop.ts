@@ -3,6 +3,7 @@ import { Scheduler } from '../core/turn.js';
 import type { XY } from '../core/grid.js';
 import { Level, type LevelGen } from '../dungeon/level.js';
 import { resetSpecials } from '../dungeon/rooms.js';
+import { DEATH_MESSAGE_RE } from '../mechanics/buffs.js';
 import {
   type ActionContext,
   type HeroActor,
@@ -261,7 +262,13 @@ export class Game {
   private checkHeroDeath(): void {
     if (!this.hero.isAlive() && !this.gameOver) {
       this.gameOver = true;
-      this.logMsg('You died...');
+      // Buff kills already logged their own vanilla death line (e.g.
+      // "You burned to death...") via tickBuffs/tickHeroClock; only add the
+      // generic fallback when nothing specific was logged.
+      const last = this.log[this.log.length - 1] ?? '';
+      if (!DEATH_MESSAGE_RE.test(last) && last !== 'You died...') {
+        this.logMsg('You died...');
+      }
     }
   }
 
