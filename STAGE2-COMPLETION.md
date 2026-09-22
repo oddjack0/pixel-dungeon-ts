@@ -8,8 +8,8 @@ gold mining, Caves shop stock, and quest-state persistence.
 ## Deployed
 - Repo: https://github.com/oddjack0/pixel-dungeon-ts
 - Playable: https://oddjack0.github.io/pixel-dungeon-ts/
-- Live bundle: `main.9891c49b93.js` (verified served 2026-09-22 ~22:45 UTC)
-- `main` HEAD: `b67d58c`; gh-pages deploy commit `a3a3b68`
+- Live bundle: `main.955756eb82.js` (verified served 2026-09-22 ~23:00 UTC)
+- `main` HEAD: `f1add76`; gh-pages deploy commit `616bbd2`
 
 ## Commits (main)
 - `d74de6b` Worker 6: 65 new original sprites (194/194 pixel-identical),
@@ -30,6 +30,9 @@ gold mining, Caves shop stock, and quest-state persistence.
 - `b67d58c` Integration: central catalog base defs for wands/rings, new
   'wand'/'ring' item types wired through inventory + UI, itemgen mappers,
   Blacksmith reforge dialog, pickaxe/dark gold, stale-test repairs.
+- `f1add76` Fidelity fixes from the Java audit: wandPrice is
+  considerState(50) (not level*20); teleportation retries up to 11x on
+  both paths; flock sheep HP 1 and lifespan power+3+Random.Float(2).
 
 ## Verification
 - `bun run typecheck`: clean.
