@@ -20,6 +20,7 @@ import { findPath } from '../core/path.js';
 import { Terrain } from '../core/grid.js';
 import { type Level } from '../dungeon/level.js';
 import { onItemDropped } from '../dungeon/prisonBoss.js';
+import { onItemDropped as cavesOnItemDropped } from '../dungeon/cavesBoss.js';
 import type { ActionContext, MobActor } from '../engine/seams.js';
 import type { MechanicsRng } from '../mechanics/rng.js';
 import {
@@ -38,10 +39,19 @@ import {
   type BuffKind,
 } from '../mechanics/buffs.js';
 import { earnExp, expForKill, MOB_EXP } from '../mechanics/exp.js';
-import { heroDefenseSkill, heroDR } from '../mechanics/hero.js';
+import { tickPotionBuffs } from './potions.js';
+import { heroDefenseSkill, heroDR, heroDamageRoll } from '../mechanics/hero.js';
 import type { BuffState } from '../mechanics/char.js';
 import { charTimeScale, crippleFactor } from '../mechanics/char.js';
+import { satisfy, isStarving, STARVING } from '../mechanics/hunger.js';
 import { seedBlob } from '../mechanics/blobs.js';
+import { pressTrapCell, mobPressTrapCell, type TrapMob } from '../mechanics/traps.js';
+import {
+  weaponAttackProc,
+  type ProcChar,
+  type ProcFx,
+} from './enchantments.js';
+import { armorDefenseProc } from './glyphs.js';
 import type { ContentHero, ItemStack } from './hero.js';
 import { addToInventory, removeFromInventory } from './hero.js';
 import { getItem, ITEMS } from './items.js';
@@ -199,6 +209,43 @@ export const MOB_DEFS: Readonly<Record<string, MobDef>> = {
     speed: 1, flying: false, ability: null, attackDelay: 1,
     immunities: ['terror'], resistances: [],
   },
+  // --- Stage 2: Caves depths (Bestiary.java:111-127) ---
+  /** Spinner.java:33-62 — "cave spinner": HP/HT 50, def 14, atk 20,
+   *  NormalIntRange(12,16), dr 6, EXP 9, maxLvl 16; resists Poison
+   *  ('poison'), immune to Roots ('roots'); loot MysteryMeat @ 0.125
+   *  (Spinner.java:44) — M1's only food is the ration (crab pattern). */
+  spinner: {
+    id: 'spinner', name: 'cave spinner', sprite: 'mob_spinner',
+    hp: 50, atk: 20, def: 14, dmgMin: 12, dmgMax: 16, triangular: true, dr: 6,
+    exp: MOB_EXP.spinner.exp, maxLvl: MOB_EXP.spinner.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 1,
+    immunities: ['roots'], resistances: ['poison'],
+  },
+  /** Elemental.java:33-60 — "fire elemental": HP/HT 65, def 20, atk 25,
+   *  NormalIntRange(16,20), dr 5, EXP 10, maxLvl 20, flying; immune to
+   *  Burning/Fire/Firebolt/PsionicBlast ('burning' tag consumed by the
+   *  fire-attach sites; the rest are forward-looking); loot
+   *  PotionOfLiquidFlame @ 0.1 (Elemental.java:47) — not in the item
+   *  catalog yet, gated like Tengu's tome. */
+  elemental: {
+    id: 'elemental', name: 'fire elemental', sprite: 'mob_elemental',
+    hp: 65, atk: 25, def: 20, dmgMin: 16, dmgMax: 20, triangular: true, dr: 5,
+    exp: MOB_EXP.elemental.exp, maxLvl: MOB_EXP.elemental.maxLvl, // single-sourced
+    speed: 1, flying: true, ability: null, attackDelay: 1,
+    immunities: ['burning', 'fire', 'firebolt', 'psionic_blast'], resistances: [],
+  },
+  /** Monk.java:33-59 — "dwarf monk": HP/HT 70, def 30, atk 30,
+   *  NormalIntRange(12,16), dr 2, attackDelay 0.5, defenseVerb "parried",
+   *  EXP 11, maxLvl 21, immune to Amok/Terror ('amok'/'terror',
+   *  forward-looking — no such buffs in the port yet); loot Food @ 0.083
+   *  (Monk.java:43) — the port's ration is Food.java-based. */
+  monk: {
+    id: 'monk', name: 'dwarf monk', sprite: 'mob_monk',
+    hp: 70, atk: 30, def: 30, dmgMin: 12, dmgMax: 16, triangular: true, dr: 2,
+    exp: MOB_EXP.monk.exp, maxLvl: MOB_EXP.monk.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 0.5,
+    immunities: ['amok', 'terror'], resistances: [],
+  },
 };
 
 let mobIdCounter = 1;
@@ -221,6 +268,8 @@ export interface Buffable {
   ht: number;
   flying: boolean;
   paralysed: boolean;
+  /** Set while a Roots buff is attached (Roots.attachTo, Roots.java). */
+  rooted: boolean;
   immunities: string[];
   resistances: string[];
   buffs: Partial<Record<BuffKind, BuffState>>;
@@ -362,6 +411,19 @@ export function tickBuffs(
     b.cripple.left -= 1;
     if (b.cripple.left <= 0) delete b.cripple;
   }
+  // Roots (Roots.java): FlavourBuff countdown; while attached the char is
+  // rooted (Roots.attachTo sets target.rooted) and cannot move
+  // (Mob.getCloser / Hero.getCloser return false when rooted).
+  // Stage 2 applier: the spinner's web blob (Web.evolve, Web.java).
+  if (b.roots) {
+    b.roots.left -= 1;
+    if (b.roots.left <= 0) {
+      delete b.roots;
+      ch.rooted = false; // Roots.detach (Roots.java)
+    } else {
+      ch.rooted = true;
+    }
+  }
   // Blindness (Blindness.java): FlavourBuff countdown; a blinded char
   // sees nothing (Level.updateFieldOfView, Level.java:793). Stage 1
   // applier: the crazy bandit's steal (Bandit.steal, Bandit.java:39-49).
@@ -369,6 +431,55 @@ export function tickBuffs(
     b.blindness.left -= 1;
     if (b.blindness.left <= 0) delete b.blindness;
   }
+  // Viscosity.DeferedDamage.act (Viscosity.java:88-127): the deferred pool
+  // pays out exactly 1 damage per tick (spend(TICK) semantics); the buff
+  // detaches when the pool is exhausted. The pool never merges with
+  // normal damage: every hit is either fully deferred or fully taken.
+  if (b.deferredDamage && ch.isAlive()) {
+    const pool = Math.floor(b.deferredDamage.amount ?? 0);
+    if (pool <= 0) {
+      delete b.deferredDamage;
+    } else {
+      b.deferredDamage.amount = pool - 1;
+      const applied = applyDamage(rng, buffTarget(ch), 1, 'deferredDamage');
+      ch.hp = applied.hp;
+      // DeferedDamage.onDeath (Viscosity.java:112-117): the deferred pool
+      // is dropped on death; no death line of its own.
+      if (applied.died) delete b.deferredDamage;
+      else if ((b.deferredDamage.amount ?? 0) <= 0) delete b.deferredDamage;
+      logBuffDeath('deferredDamage');
+      if (applied.paralysisBroken) {
+        ch.paralysed = false;
+        delete b.paralysis;
+      }
+    }
+  }
+  // Slow (Slow.java): FlavourBuff countdown; the speed effect lives in
+  // Char.spend's time scale (charTimeScale, Char.java:303-314) — the port
+  // reads b.slow there.
+  if (b.slow) {
+    b.slow.left -= 1;
+    if (b.slow.left <= 0) delete b.slow;
+  }
+  // Vertigo (Vertigo.java): FlavourBuff countdown (movement scramble is
+  // renderer/input-owned; no movement-direction system in the port yet).
+  if (b.vertigo) {
+    b.vertigo.left -= 1;
+    if (b.vertigo.left <= 0) delete b.vertigo;
+  }
+  // Charm (Charm.java): FlavourBuff countdown. The charmed-mob retargeting
+  // (Mob.chooseEnemy picking the charmer's enemies) is not ported — the
+  // port's selectEnemy always returns the hero (pre-existing Stage 1 gap).
+  if (b.charm) {
+    b.charm.left -= 1;
+    if (b.charm.left <= 0) delete b.charm;
+  }
+  // Stage 2 (Worker 4): tick the potion/scroll buffs down in one place
+  // (FlavourBuff spend semantics shared by all of them).
+  tickPotionBuffs(b, ch, () => {
+    const m = ch as unknown as { aiState?: string };
+    if (m.aiState === 'sleeping') m.aiState = 'wandering';
+  });
 }
 
 /** The live hero, cast from the engine seam. */
@@ -485,9 +596,17 @@ export function randomDestination(rng: MechanicsRng, level: Level): number {
 /** Drop an item on the floor (Dungeon.level.drop). */
 export function dropItemAt(ctx: ActionContext, pos: number, itemId: string): void {
   ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
-  // PrisonBossLevel.drop (PrisonBossLevel.java:331-343): the first SkeletonKey
-  // dropped on the prison boss level turns the arena door into an ordinary door.
-  onItemDropped(ctx.level, itemId);
+  // Boss-arena key drops: PrisonBossLevel.drop turns the arena door into an
+  // ordinary door on depth 10 (PrisonBossLevel.java:331-343); CavesBossLevel
+  // drop re-opens the collapsed arena door (EMPTY_DECO, stored as FLOOR in
+  // the port) on depth 15 (CavesBossLevel.java:217-231). Depth-gated so the
+  // two hooks never fire on each other's level — both reuse the
+  // bossArena/arenaDoorCell/enteredArena/keyDropped fields.
+  if (ctx.level.depth === 10) {
+    onItemDropped(ctx.level, itemId);
+  } else if (ctx.level.depth === 15) {
+    cavesOnItemDropped(ctx.level, itemId);
+  }
 }
 
 /**
@@ -1134,6 +1253,132 @@ export class BanditMob extends ThiefMob {
   }
 }
 
+/**
+ * Cave spinner (Spinner.java:33-143).
+ *
+ * - attackProc (Spinner.java:87-96): half of all successful hits poison
+ *   the enemy for Random.Int(7,9) * Poison.durationFactor(enemy) — the
+ *   port has no Resistance ring, so the factor is 1 — and the spinner
+ *   starts FLEEING.
+ * - act (Spinner.java:80-85): after the turn, a fleeing spinner whose
+ *   enemy is visible and no longer poisoned returns to HUNTING
+ *   ("wait in the distance while their victim slowly dies"). The port has
+ *   no Terror buff (documented Stage 1), so that guard is dropped.
+ * - move (Spinner.java:99-104): while fleeing, each move seeds a Web blob
+ *   of Random.Int(5,7) at the cell being left.
+ * - nowhereToRun (Spinner.java:139-143): back to HUNTING when cornered
+ *   (no Terror in the port).
+ */
+export class SpinnerMob extends ContentMob {
+  override attackProc(
+    ctx: ActionContext,
+    hero: ContentHero,
+    damage: number,
+  ): number {
+    if (ctx.rng.int(0, 2) === 0) {
+      // Buff.affect(enemy, Poison.class).set(...) (Spinner.java:89-90):
+      // Poison.set overwrites the duration (Poison.java:50-52).
+      hero.buffs.poison = {
+        kind: 'poison',
+        left: ctx.rng.int(7, 9) * 1, // * Poison.durationFactor — no Resistance ring in the port
+      };
+      this.state = 'fleeing';
+    }
+    return damage;
+  }
+
+  protected override afterMove(ctx: ActionContext, oldPos: number): void {
+    // GameScene.add(Blob.seed(pos, Random.Int(5, 7), Web.class)) BEFORE
+    // super.move(step) (Spinner.java:99-104): the web is left at the cell
+    // the spinner moves FROM, and only while fleeing.
+    if (this.state === 'fleeing') {
+      seedBlob(
+        ctx.level.blobs,
+        'web',
+        oldPos,
+        ctx.rng.int(5, 7),
+        ctx.level.w * ctx.level.h,
+      );
+    }
+    super.afterMove(ctx, oldPos);
+  }
+
+  protected override nowhereToRun(_ctx: ActionContext): void {
+    this.state = 'hunting';
+  }
+
+  /** Spinner.act (Spinner.java:76-86). */
+  override takeTurn(ctx: ActionContext): number {
+    const cost = super.takeTurn(ctx);
+    if (this.state === 'fleeing' && this.enemySeen) {
+      const hero = heroOf(ctx);
+      if (hero.isAlive() && !hero.buffs.poison) {
+        this.state = 'hunting';
+      }
+    }
+    return cost;
+  }
+}
+
+/**
+ * Fire elemental (Elemental.java:33-119).
+ *
+ * - attackProc (Elemental.java:63-70): half of all successful hits reignite
+ *   Burning on the enemy (Buff.affect(enemy, Burning).reignite(enemy) —
+ *   left = BURNING_DURATION, Burning.java:109-111).
+ * - add (Elemental.java:72-84): a Burning attach heals 1 HP instead of
+ *   sticking (implemented at the fire-attach site in traps.ts); a Frost
+ *   attach would deal Random.NormalIntRange(1, HT*2/3) — no frost effects
+ *   exist in the port yet (forward-looking, documented).
+ */
+export class ElementalMob extends ContentMob {
+  override attackProc(
+    _ctx: ActionContext,
+    hero: ContentHero,
+    damage: number,
+  ): number {
+    if (_ctx.rng.int(0, 2) === 0) {
+      hero.buffs.burning = { kind: 'burning', left: 8 }; // reignite, Burning.java:109-111
+    }
+    return damage;
+  }
+}
+
+/**
+ * Dwarf monk (Monk.java:33-114).
+ *
+ * - attackDelay 0.5 (Monk.java:64-66), defenseVerb "parried"
+ *   (Monk.java:74-76).
+ * - attackProc (Monk.java:90-106): 1/6 of successful hits disarm the hero —
+ *   the equipped weapon drops at the hero's feet and the weapon slot is
+ *   cleared, with the TXT_DISARM log. Vanilla skips Knuckles and cursed
+ *   weapons; the port has no cursed items (documented) and no knuckles in
+ *   the catalog yet (guarded by id for when the item worker adds it).
+ * - die (Monk.java:79-84): Imp.Quest.process — the imp is a Stage 4 NPC;
+ *   the hook lands with it (documented).
+ */
+export class MonkMob extends ContentMob {
+  /** Monk.defenseVerb (Monk.java:74-76). */
+  override defenseVerb(): string {
+    return 'parried';
+  }
+
+  override attackProc(
+    ctx: ActionContext,
+    hero: ContentHero,
+    damage: number,
+  ): number {
+    if (ctx.rng.int(0, 6) === 0 && hero.weaponId !== null && hero.weaponId !== 'knuckles') {
+      const def = getItem(hero.weaponId);
+      dropItemAt(ctx, hero.pos, hero.weaponId); // Dungeon.level.drop(weapon, hero.pos)
+      hero.weapon = null;
+      hero.weaponId = null;
+      ctx.log(`${this.name} has knocked the ${def.name} from your hands!`); // TXT_DISARM, Monk.java:34
+    }
+    return damage;
+  }
+}
+
 /** Build a live mob from a resolved spawn (spawns.ts) or a save blob. */
 export function buildMob(mobId: string, id: number, pos: number, w: number, depth = 0): ContentMob {
   if (mobId === 'goo') {
@@ -1156,6 +1401,12 @@ export function buildMob(mobId: string, id: number, pos: number, w: number, dept
     if (!ctor) throw new Error('tengu-boss not registered (import src/content/tengu-boss.js)');
     return new ctor(id, pos, w);
   }
+  if (mobId === 'dm300') {
+    // DM-300 lives in dm300-boss.ts; it registers itself here to avoid a cycle.
+    const ctor = dm300Ctor;
+    if (!ctor) throw new Error('dm300-boss not registered (import src/content/dm300-boss.js)');
+    return new ctor(id, pos, w);
+  }
   const def = MOB_DEFS[mobId];
   if (!def) throw new Error(`unknown mob id: ${mobId}`);
   switch (mobId) {
@@ -1166,6 +1417,9 @@ export function buildMob(mobId: string, id: number, pos: number, w: number, dept
     case 'albino': return new AlbinoMob(id, def, pos, w);
     case 'bandit': return new BanditMob(id, def, pos, w);
     case 'shielded': return new ShieldedMob(id, def, pos, w);
+    case 'spinner': return new SpinnerMob(id, def, pos, w);
+    case 'elemental': return new ElementalMob(id, def, pos, w);
+    case 'monk': return new MonkMob(id, def, pos, w);
     default: return new ContentMob(id, def, pos, w);
   }
 }
@@ -1182,6 +1436,13 @@ type TenguCtor = new (id: number, pos: number, w: number) => ContentMob;
 let tenguCtor: TenguCtor | null = null;
 export function registerTengu(ctor: TenguCtor): void {
   tenguCtor = ctor;
+}
+
+/** DM-300 constructor registration (avoids a dm300-boss <-> mobs import cycle). */
+type Dm300Ctor = new (id: number, pos: number, w: number) => ContentMob;
+let dm300Ctor: Dm300Ctor | null = null;
+export function registerDM300(ctor: Dm300Ctor): void {
+  dm300Ctor = ctor;
 }
 
 /** NPC builder registration (avoids an npcs <-> mobs import cycle). */
@@ -1481,6 +1742,35 @@ function rollMobLoot(ctx: ActionContext, mob: ContentMob): void {
     // albino: Rat has no loot table (Rat.java) — none.
     // bandit: Thief's RingOfHaggler 0.01 skipped like the thief — no M1 rings.
     // thief: RingOfHaggler 0.01 (Thief.java:52-53) — no M1 rings; skipped.
+    // --- Stage 2: Caves ---
+    case 'spinner':
+      // loot = MysteryMeat, lootChance 0.125 (Spinner.java:43-44); M1's only
+      // food is the ration (crab pattern).
+      if (rng.float(0, 1) < 0.125) {
+        dropItemAt(ctx, mob.pos, 'ration');
+      }
+      break;
+    case 'elemental':
+      // loot = PotionOfLiquidFlame, lootChance 0.1 (Elemental.java:46-47);
+      // not in the item catalog yet — gated like Tengu's tome of mastery.
+      if (rng.float(0, 1) < 0.1 && ITEMS['potion_liquid_flame']) {
+        dropItemAt(ctx, mob.pos, 'potion_liquid_flame');
+      }
+      break;
+    case 'monk':
+      // loot = Food, lootChance 0.083 (Monk.java:42-43) — the port's ration
+      // is Food.java-based (energy 260).
+      if (rng.float(0, 1) < 0.083) {
+        dropItemAt(ctx, mob.pos, 'ration');
+      }
+      break;
+    case 'dm300':
+      // loot = new RingOfThorns().random(), lootChance 0.333 (DM300.java:60-61);
+      // rings have no mechanics in the port yet — gated like Tengu's tome.
+      if (rng.float(0, 1) < 0.333 && ITEMS['ring_of_thorns']) {
+        dropItemAt(ctx, mob.pos, 'ring_of_thorns');
+      }
+      break;
     // goo: LloydsBeacon 0.333 (Goo.java:58-59) — no M1 beacons; skipped.
     default:
       break;
@@ -1492,6 +1782,138 @@ function rollMobLoot(ctx: ActionContext, mob: ContentMob): void {
  * damage roll -> defenseProc (swarm split may mutate mob.hp first) ->
  * damage application -> wake/alert -> death pipeline.
  */
+/**
+ * Build the enchantment/glyph ProcFx for live combat (content/enchantments.ts).
+ * Every effect maps to its vanilla call; visuals with no port seam
+ * (lightning arcs, emitters, floating status, camera shake) are
+ * renderer-owned and omitted or no-ops.
+ */
+function combatProcFx(ctx: ActionContext): ProcFx {
+  const level = ctx.level;
+  const hero = heroOf(ctx);
+  const charAtPos = (pos: number): ProcChar | null => {
+    if (hero.pos === pos && hero.isAlive()) return hero as unknown as ProcChar;
+    const m = ctx.mobs.find((mm) => (mm as ContentMob).pos === pos && (mm as ContentMob).isAlive());
+    return (m as unknown as ProcChar) ?? null;
+  };
+  const unoccupied = (pos: number): boolean =>
+    !(hero.isAlive() && hero.pos === pos) &&
+    !ctx.mobs.some((mm) => (mm as ContentMob).isAlive() && (mm as ContentMob).pos === pos);
+  return {
+    rng: ctx.rng,
+    log: (msg) => ctx.log(msg),
+    directDamage: (target, amount, source) => {
+      // Char.damage (Char.java:260-300): frost detaches on ANY damage,
+      // then immunity/resistance (applyDamage), then HP write-back.
+      if (target.hp <= 0) return;
+      delete target.buffs.frost;
+      const applied = applyDamage(
+        ctx.rng,
+        {
+          hp: target.hp,
+          ht: target.ht,
+          paralysed: target.buffs.paralysis !== undefined,
+          immunities: target.immunities,
+          resistances: target.resistances,
+        },
+        amount,
+        source,
+      );
+      target.hp = applied.hp;
+      if (applied.paralysisBroken) {
+        delete target.buffs.paralysis;
+      }
+      // The death pipeline runs at the strike-site checkpoints
+      // (killMob / hero-death line), not here — vanilla's die() likewise
+      // fires inside damage(), before the attack sequence resumes.
+    },
+    heal: (target, amount) => {
+      const before = target.hp;
+      target.hp = Math.min(target.ht, target.hp + amount);
+      return target.hp - before;
+    },
+    attackerDamageRoll: (attacker) => {
+      // Luck.java: attacker.damageRoll(). Only the hero carries
+      // enchantments in the port's combat paths; the mob branch exists for
+      // structural completeness of the ProcChar contract.
+      if (attacker.kind === 'hero') {
+        return heroDamageRoll(ctx.rng, hero, { ranged: false });
+      }
+      const mob = attacker as unknown as ContentMob;
+      return ctx.rng.intRange(mob.def.dmgMin, mob.def.dmgMax);
+    },
+    showStatus: (_target, _text) => {
+      // CharSprite.showStatus floating text: renderer-owned, no port seam.
+    },
+    isWater: (pos) => level.getAt(pos) === Terrain.WATER,
+    charsAround: (pos) => {
+      const { x, y } = level.xy(pos);
+      const out: ProcChar[] = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h) continue;
+          const ch = charAtPos(ny * level.w + nx);
+          if (ch) out.push(ch);
+        }
+      }
+      return out;
+    },
+    isFreeCell: (pos) => {
+      const { x, y } = level.xy(pos);
+      // Bounce.java: (Level.passable || Level.avoid) && findChar == null.
+      // The port's isPassable covers avoid (NpcMob.throwItem comment).
+      return level.isPassable(x, y) && unoccupied(pos);
+    },
+    isVisible: (pos) => level.visible[pos] === 1,
+    // Displacement.java: `if (!Dungeon.bossLevel())` (level.bossLevel is
+    // set by the generator, generator.ts:591).
+    isBossLevel: () => level.bossLevel,
+    teleport: (ch, pos) => {
+      ch.pos = pos;
+      // WandOfBlink.appear visuals + Dungeon.observe(): renderer/engine
+      // owned (FOV recomputes per action in the port).
+    },
+    pressCell: (ch) => {
+      // Level.press(cell, ch): traps/pits under the landing cell
+      // (Bounce.java:53, Displacement.java:57).
+      const noop = (): void => undefined;
+      if (ch.kind === 'hero') {
+        pressTrapCell(ctx, ch.pos, hero, noop);
+      } else {
+        mobPressTrapCell(ctx, ch as unknown as TrapMob, noop);
+      }
+    },
+    seedGas: (pos, amount) => {
+      // Stench.java: GameScene.add(Blob.seed(pos, 20, ToxicGas.class)).
+      seedBlob(level.blobs, 'toxic', pos, amount, level.w * level.h);
+    },
+    spawnMirrorImage: (_heroChar) => {
+      // Multiplicity.java: new MirrorImage() + WandOfBlink.appear. The
+      // port has no MirrorImage mob class yet (Stage-2 seam); the glyph
+      // then skips its self-damage too (both are inside the same branch).
+      return false;
+    },
+    spendGold: (amount) => {
+      // AutoRepair.java: Dungeon.gold >= armor.tier.
+      if (hero.gold < amount) return false;
+      hero.gold -= amount;
+      return true;
+    },
+    polishHeroArmor: () => {
+      // Folded into armorDefenseProc's direct polish (same object).
+    },
+    addHunger: (amount) => {
+      // Hunger.satisfy(-amount): the level rises by amount, clamped to
+      // [0, STARVING] (hunger.ts satisfy).
+      hero.hungerLevel = satisfy(hero.hungerLevel, -amount);
+    },
+    isStarving: () => isStarving(hero.hungerLevel),
+  };
+}
+
 export function strikeHeroVsMob(
   ctx: ActionContext,
   hero: ContentHero,
@@ -1505,6 +1927,23 @@ export function strikeHeroVsMob(
     evasion: mob.mobDefenseSkill(),
     defenderDr: mob.def.dr,
     damageRoll,
+    // Hero.attackProc (Hero.java:845-853): the enchantment proc runs at
+    // Char.attack step 5 (inside the sequence, before damage application).
+    onAttackProc: (_r, dmg) => {
+      const wep = hero.rangedWeapon ?? hero.weapon;
+      if (wep) {
+        if (wep === hero.weapon && hero.weaponId === 'pickaxe') {
+          // Pickaxe.proc (Pickaxe.java:29-36) overrides Weapon.proc: a
+          // pickaxe strike skips ordinary enchantment, identification,
+          // and durability procs. The blood-stain check runs after
+          // damage application (below).
+        } else {
+          const fx = combatProcFx(ctx);
+          weaponAttackProc(fx, hero, mob, dmg, wep);
+        }
+      }
+      return dmg;
+    },
     onDefenseProc: (_r, dmg) => mobDefenseProc(ctx, mob, dmg),
   });
   if (!seq.hit) {
@@ -1542,6 +1981,11 @@ export function strikeHeroVsMob(
   );
   if (applied.died) {
     killMob(ctx, mob, {});
+    // Pickaxe.proc (Pickaxe.java:29-36): a lethal strike against a bat
+    // blood-stains the pickaxe (the blacksmith's blood quest).
+    if (mob.def.id === 'bat' && hero.weaponId === 'pickaxe' && hero.weapon) {
+      hero.weapon.bloodStained = true;
+    }
   } else {
     // Mob.damage subclass hooks (Brute.damage enrage, Brute.java:173-184).
     mob.onDamaged(ctx);
@@ -1567,6 +2011,20 @@ export function strikeMobVsHero(
     defenderDr: heroDR(hero), // Hero.java:307-315
     damageRoll,
     onAttackProc,
+    // Hero.defenseProc (Hero.java:855-865): Earthroot absorption, then the
+    // armor glyph proc, then Armor.use() — at Char.attack step 6.
+    onDefenseProc: (_r, dmg) => {
+      if (!hero.armor) return dmg;
+      return armorDefenseProc(
+        combatProcFx(ctx),
+        hero.armor,
+        mob,
+        hero,
+        dmg,
+        ctx.level.w,
+        ctx.level.h,
+      );
+    },
   });
   if (!seq.hit) {
     ctx.log(`The ${mob.name} misses you.`);
@@ -1588,4 +2046,68 @@ export function strikeMobVsHero(
       : `The ${mob.name} hits you, but does no damage.`,
   );
   if (applied.died) ctx.log(`You were killed by the ${mob.name}...`);
+  // A glyph proc (Potential) can kill the attacker mid-sequence; vanilla
+  // runs Mob.die() inside that lightning damage (Potential.java:42-50).
+  if (!mob.isAlive()) {
+    killMob(ctx, mob, {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2: MirrorImage — moved from scrolls.ts to break the
+// items -> scrolls -> mobs -> items import cycle (the class extends
+// ContentMob, which must be initialized at class-definition time).
+// ---------------------------------------------------------------------------
+
+export interface MirrorImageStats {
+  attackSkill: number;
+  damage: number;
+}
+
+/**
+ * MirrorImage mob (actors/mobs/npcs/MirrorImage.java): a friendly NPC
+ * copy of the hero. attackSkill = hero.attackSkill(hero); damageRoll =
+ * hero.damageRoll() (fixed at spawn). state = HUNTING; seeks hostile
+ * mobs in the hero's field of view; destroys itself after its attack
+ * lands (attackProc -> destroy).
+ */
+export class MirrorImageMob extends ContentMob {
+  constructor(id: number, pos: number, w: number, stats: MirrorImageStats) {
+    super(
+      id,
+      {
+        id: 'mirrorimage',
+        name: 'mirror image',
+        sprite: 'mirror_image', // TODO(worker6): extract MirrorSprite frames
+        hp: 1,
+        atk: stats.attackSkill,
+        def: 0,
+        dmgMin: stats.damage,
+        dmgMax: stats.damage,
+        triangular: false,
+        dr: 0,
+        exp: 0,
+        maxLvl: 0,
+        speed: 1, // Mob default (Mob.java)
+        flying: false,
+        ability: null,
+        attackDelay: 1,
+        immunities: [],
+        resistances: [],
+      },
+      pos,
+      w,
+    );
+    this.hostile = false;
+    this.state = 'hunting';
+  }
+
+  /**
+   * MirrorImage.attackProc (MirrorImage.java:85-92): the image shatters
+   * after its attack lands. Called by the mob combat pipeline (Worker 2);
+   * until then the images persist.
+   */
+  shatterAfterAttack(): void {
+    this.hp = 0;
+  }
 }
