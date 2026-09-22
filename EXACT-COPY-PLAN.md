@@ -267,3 +267,18 @@ Boomerang durability value (read Boomerang.java when porting).
   (pixel-perfect vs assets/); cache-busting build (hashed bundle); exact-copy
   fix #1 (transition hunger, Hero.actDescend/actAscend) committed e3a2ff2,
   270/270 tests + typecheck green; gap-analysis team completed (5 reports).
+- 2026-09-22: **STAGE 0 COMPLETE** (depths 1–5 mechanics exactness).
+  Commits on main: 47ab662 (hero mechanics — awareness formula corrected to
+  1−0.90^((1+min(lvl,9))×0.5), full search, armor encumbrance 1.3^-aEnc,
+  Slow/Speed time-scale, Vertigo, Cripple), 7eeadc4 (verbatim buff/death
+  messages, burning inventory effects, 32 buff icons + trap/terrain sprites
+  pixel-verified, HUD icon strip), c0ac04f (Goo jumped lifecycle, Swarm clone
+  hostility, exact Generator loot port), 22350de (8 trap trigger systems +
+  Fire/ToxicGas/ParalyticGas blobs, chasm/door/grass/sign/locked-chest
+  mechanics, camera centering fix — vanilla never clamps).
+  397/397 tests pass, typecheck clean. Fresh dist built (main.63081cb9ac.js).
+  Known gaps (documented, not guessed): sad-ghost quest scoped to Stage 1
+  (needs NPC dialogs, 2–4 sessions); chasm falls don't change depth yet (no
+  interlevel seam); keys not depth-matched; OPEN_DOOR renders as floor;
+  camera smoothing (vanilla _scroll easing) not yet ported; Dew Vial absent
+  (dewdrops heal directly, as vanilla does without a vial).
