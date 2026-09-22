@@ -232,7 +232,8 @@ function newRunState() {
     ghostSpawned: false,
     dewVialNeeded: true,
     scrollsOfUpgrade: 0,
-    wandmakerSpawned: false
+    wandmakerSpawned: false,
+    blacksmithSpawned: false
   };
 }
 
@@ -1979,6 +1980,9 @@ function paintRooms(ctx, rooms) {
       case 21 /* RAT_KING */:
         paintRatKing(ctx, room);
         break;
+      case 8 /* BLACKSMITH */:
+        paintBlacksmith(ctx, room);
+        break;
       default:
         ctx.fillRoomMargin(room, 1, 1 /* FLOOR */);
         break;
@@ -2262,6 +2266,223 @@ function decoratePrisonBoss(ctx, entranceRoom, entranceCell, exitRoom) {
   decoratePrisonCore(ctx, entranceRoom, entranceCell, 0.15, 4, 2);
   ctx.fillRect(exitRoom.l + 2, exitRoom.t + 2, roomW(exitRoom) - 3, roomH(exitRoom) - 3, 36 /* TRAP_INACTIVE */);
 }
+function paintBlacksmith(ctx, room) {
+  ctx.fillRoom(room, 0 /* WALL */);
+  ctx.fillRoomMargin(room, 1, 22 /* TRAP_FIRE */);
+  ctx.fillRoomMargin(room, 2, 11 /* WALKWAY */);
+  for (let i = 0;i < 2; i++) {
+    let pos2 = randomCell(ctx, room);
+    let guard2 = 4096;
+    while (ctx.tiles[pos2] !== 11 /* WALKWAY */ && guard2-- > 0) {
+      pos2 = randomCell(ctx, room);
+    }
+    ctx.drop(pos2, prize(ctx.rng.pick(["prize-armor", "prize-weapon"])));
+  }
+  for (let i = room.l + 1;i < room.r; i++) {
+    for (const y of [room.t + 1, room.b - 1]) {
+      ctx.out.traps.push({ x: i, y, trap: TRAP_ORDER.indexOf("fire"), hidden: false });
+    }
+  }
+  for (let j = room.t + 2;j < room.b - 1; j++) {
+    for (const x of [room.l + 1, room.r - 1]) {
+      ctx.out.traps.push({ x, y: j, trap: TRAP_ORDER.indexOf("fire"), hidden: false });
+    }
+  }
+  for (const door of room.doors) {
+    upgradeDoor(door, 3 /* UNLOCKED */);
+    drawInside(ctx, room, door, 1, 1 /* FLOOR */);
+  }
+  let pos = randomCell(ctx, room, 1);
+  let guard = 4096;
+  while (ctx.heaps.has(pos) && guard-- > 0) {
+    pos = randomCell(ctx, room, 1);
+  }
+  ctx.out.mobs.push({ pos, kind: "blacksmith" });
+}
+function decorateCaves(ctx, rooms, entranceRoom, entranceCell) {
+  const W = ctx.width;
+  const H = ctx.height;
+  const rng = ctx.rng;
+  for (const room of rooms) {
+    if (room.type !== 1 /* STANDARD */)
+      continue;
+    if (roomW(room) <= 3 || roomH(room) <= 3)
+      continue;
+    const s = roomW(room) * roomH(room);
+    const cornerWall = (cx, cy, nx1, ny1, nx2, ny2) => {
+      if (ctx.get(nx1, ny1) === 0 /* WALL */ && ctx.get(nx2, ny2) === 0 /* WALL */) {
+        ctx.set(cx, cy, 0 /* WALL */);
+      }
+    };
+    if (rng.int(0, s) > 8) {
+      cornerWall(room.l + 1, room.t + 1, room.l, room.t + 1, room.l + 1, room.t);
+    }
+    if (rng.int(0, s) > 8) {
+      cornerWall(room.r - 1, room.t + 1, room.r, room.t + 1, room.r - 1, room.t);
+    }
+    if (rng.int(0, s) > 8) {
+      cornerWall(room.l + 1, room.b - 1, room.l, room.b - 1, room.l + 1, room.b);
+    }
+    if (rng.int(0, s) > 8) {
+      cornerWall(room.r - 1, room.b - 1, room.r, room.b - 1, room.r - 1, room.b);
+    }
+    for (const n of room.carvedTo) {
+      if ((n.type === 1 /* STANDARD */ || n.type === 5 /* TUNNEL */) && rng.int(0, 3) === 0) {
+        const door = sharedDoor(room, n);
+        if (door)
+          ctx.out.markers.emptyDeco.push(ctx.idx(door.x, door.y));
+      }
+    }
+  }
+  for (let i = W + 1;i < W * H - W; i++) {
+    if (ctx.tiles[i] === 1 /* FLOOR */) {
+      let n = 0;
+      if (ctx.tiles[i + 1] === 0 /* WALL */)
+        n++;
+      if (ctx.tiles[i - 1] === 0 /* WALL */)
+        n++;
+      if (ctx.tiles[i + W] === 0 /* WALL */)
+        n++;
+      if (ctx.tiles[i - W] === 0 /* WALL */)
+        n++;
+      if (rng.int(0, 6) <= n) {
+        ctx.out.markers.emptyDeco.push(i);
+      }
+    }
+  }
+  for (let i = 0;i < W * H; i++) {
+    if (ctx.tiles[i] === 0 /* WALL */ && rng.int(0, 12) === 0) {
+      ctx.out.markers.wallDeco.push(i);
+    }
+  }
+  placeSign(ctx, entranceRoom, entranceCell);
+  if (!ctx.bossNext) {
+    for (const r of rooms) {
+      if (r.type !== 1 /* STANDARD */)
+        continue;
+      for (const n of r.neighbours) {
+        if (n.type !== 1 /* STANDARD */ || r.carvedTo.includes(n))
+          continue;
+        const w = intersectRooms(r, n);
+        if (!w)
+          continue;
+        if (w.l === w.r && w.b - w.t >= 5) {
+          for (let y = w.t + 2;y < w.b - 1; y++)
+            ctx.set(w.l, y, 8 /* CHASM */);
+        } else if (w.t === w.b && w.r - w.l >= 5) {
+          for (let x = w.l + 2;x < w.r - 1; x++)
+            ctx.set(x, w.t, 8 /* CHASM */);
+        }
+      }
+    }
+  }
+}
+function paintCavesBoss(ctx) {
+  const W = ctx.width;
+  const H = ctx.height;
+  const rng = ctx.rng;
+  const ROOM_LEFT = W / 2 - 2;
+  const ROOM_RIGHT = W / 2 + 2;
+  const ROOM_TOP = H / 2 - 2;
+  const ROOM_BOTTOM = H / 2 + 2;
+  let topMost = Number.MAX_SAFE_INTEGER;
+  let exit = -1;
+  for (let i = 0;i < 8; i++) {
+    let left;
+    let right;
+    let top;
+    let bottom;
+    if (rng.int(0, 2) === 0) {
+      left = rng.intRange(1, ROOM_LEFT - 3);
+      right = ROOM_RIGHT + 3;
+    } else {
+      left = ROOM_LEFT - 3;
+      right = rng.intRange(ROOM_RIGHT + 3, W - 1);
+    }
+    if (rng.int(0, 2) === 0) {
+      top = rng.intRange(2, ROOM_TOP - 3);
+      bottom = ROOM_BOTTOM + 3;
+    } else {
+      top = ROOM_LEFT - 3;
+      bottom = rng.intRange(ROOM_TOP + 3, H - 1);
+    }
+    ctx.fillRect(left, top, right - left + 1, bottom - top + 1, 1 /* FLOOR */);
+    if (top < topMost) {
+      topMost = top;
+      exit = rng.intRange(left, right) + (top - 1) * W;
+    }
+  }
+  ctx.tiles[exit] = 5 /* EXIT_LOCKED */;
+  for (let i = 0;i < W * H; i++) {
+    if (ctx.tiles[i] === 1 /* FLOOR */ && rng.int(0, 6) === 0) {
+      ctx.tiles[i] = 36 /* TRAP_INACTIVE */;
+    }
+  }
+  ctx.fillRect(ROOM_LEFT - 1, ROOM_TOP - 1, ROOM_RIGHT - ROOM_LEFT + 3, ROOM_BOTTOM - ROOM_TOP + 3, 0 /* WALL */);
+  ctx.fillRect(ROOM_LEFT, ROOM_TOP + 1, ROOM_RIGHT - ROOM_LEFT + 1, ROOM_BOTTOM - ROOM_TOP, 1 /* FLOOR */);
+  ctx.fillRect(ROOM_LEFT, ROOM_TOP, ROOM_RIGHT - ROOM_LEFT + 1, 1, 20 /* TRAP_TOXIC */);
+  for (let x = ROOM_LEFT;x <= ROOM_RIGHT; x++) {
+    ctx.out.traps.push({ x, y: ROOM_TOP, trap: TRAP_ORDER.indexOf("toxic"), hidden: false });
+  }
+  const arenaDoor = rng.intRange(ROOM_LEFT, ROOM_RIGHT) + (ROOM_BOTTOM + 1) * W;
+  ctx.tiles[arenaDoor] = 2 /* DOOR */;
+  ctx.out.doors.push({
+    x: arenaDoor % W,
+    y: Math.floor(arenaDoor / W),
+    type: 2 /* REGULAR */,
+    tile: 2 /* DOOR */
+  });
+  const entrance = rng.intRange(ROOM_LEFT + 1, ROOM_RIGHT - 1) + rng.intRange(ROOM_TOP + 1, ROOM_BOTTOM - 1) * W;
+  ctx.tiles[entrance] = 6 /* ENTRANCE */;
+  const patch = generatePatch(rng, 0.45, 6, W, H);
+  for (let i = 0;i < W * H; i++) {
+    if (ctx.tiles[i] === 1 /* FLOOR */ && patch[i])
+      ctx.tiles[i] = 9 /* WATER */;
+  }
+  decorateCavesBoss(ctx, entrance);
+  return {
+    entrance,
+    exit,
+    arenaDoor,
+    arena: { l: ROOM_LEFT, t: ROOM_TOP, r: ROOM_RIGHT, b: ROOM_BOTTOM }
+  };
+}
+function decorateCavesBoss(ctx, entrance) {
+  const W = ctx.width;
+  const H = ctx.height;
+  const rng = ctx.rng;
+  for (let i = W + 1;i < W * H - W; i++) {
+    if (ctx.tiles[i] === 1 /* FLOOR */) {
+      let n = 0;
+      if (ctx.tiles[i + 1] === 0 /* WALL */)
+        n++;
+      if (ctx.tiles[i - 1] === 0 /* WALL */)
+        n++;
+      if (ctx.tiles[i + W] === 0 /* WALL */)
+        n++;
+      if (ctx.tiles[i - W] === 0 /* WALL */)
+        n++;
+      if (rng.int(0, 8) <= n) {
+        ctx.out.markers.emptyDeco.push(i);
+      }
+    }
+  }
+  for (let i = 0;i < W * H; i++) {
+    if (ctx.tiles[i] === 0 /* WALL */ && rng.int(0, 8) === 0) {
+      ctx.out.markers.wallDeco.push(i);
+    }
+  }
+  const ROOM_LEFT = W / 2 - 2;
+  const ROOM_RIGHT = W / 2 + 2;
+  const ROOM_TOP = H / 2 - 2;
+  const ROOM_BOTTOM = H / 2 + 2;
+  let sign = -1;
+  let guard = 4096;
+  do {
+    sign = rng.intRange(ROOM_LEFT, ROOM_RIGHT) + rng.intRange(ROOM_TOP, ROOM_BOTTOM) * W;
+  } while (sign === entrance && guard-- > 0);
+  ctx.out.markers.signs.push(sign);
+}
 
 // src/dungeon/generator.ts
 function isBossDepth(depth) {
@@ -2272,6 +2493,9 @@ function shopOnLevel(depth) {
 }
 function isPrisonDepth(depth) {
   return depth >= 6 && depth <= 10;
+}
+function isCavesDepth(depth) {
+  return depth >= 11 && depth <= 14;
 }
 function findShopRoom(entrance) {
   for (const r of entrance.carvedTo) {
@@ -2327,6 +2551,7 @@ function souNeeded(rng, depth, scrolls) {
 function generateLevel(rng, depth, run) {
   const boss = isBossDepth(depth);
   const tengu = depth === 10;
+  const dm300 = depth === 15;
   const queue = [];
   if (!boss) {
     queue.push(questItem("food"));
@@ -2358,104 +2583,131 @@ function generateLevel(rng, depth, run) {
   let ctx = null;
   let entranceCell = -1;
   let exitCell = -1;
+  let cavesArenaDoor = -1;
+  let cavesArena = null;
   let secretDoors = 0;
   let trapAttempts = 0;
   let trapsPlaced = 0;
   const pitNeeded = depth > 1 && run.weakFloor;
-  for (let attempt = 0;attempt < 200; attempt++) {
-    const built = buildRooms(rng);
-    if (!built)
-      continue;
-    const c = new PainterCtx(rng, W, H, depth, feelingName(feeling), boss, !boss && isBossDepth(depth + 1));
-    c.out.spawnQueue.push(...queue);
-    if (boss) {
-      if (tengu) {
-        const plan = planPrisonBossConnections(rng, built);
-        if (!plan)
-          continue;
-        entranceRoom = plan.entrance;
-        exitRoom = plan.exit;
-        anteroom = plan.anteroom;
-        const painted = paintRooms(c, built);
-        entranceCell = painted.entrance;
-        exitCell = painted.exit;
-        if (entranceCell < 0 || exitCell < 0)
-          continue;
-        const arenaDoor = entranceDoor(exitRoom);
-        if (arenaDoor && arenaDoor.y === exitRoom.t)
-          continue;
-        secretDoors = paintPrisonBossDoors(c, built, exitRoom, arenaDoor ?? null);
-        paintWaterGrass(c, built, 0.45, 0.3);
-        const traps = placePoisonTraps(c, built);
-        trapAttempts = traps.attempts;
-        trapsPlaced = traps.placed;
-        decoratePrisonBoss(c, entranceRoom, entranceCell, exitRoom);
+  if (dm300) {
+    const c = new PainterCtx(rng, W, H, depth, "none", true, false);
+    const built = paintCavesBoss(c);
+    entranceCell = built.entrance;
+    exitCell = built.exit;
+    cavesArenaDoor = built.arenaDoor;
+    cavesArena = built.arena;
+    rooms = [];
+    ctx = c;
+  } else
+    for (let attempt = 0;attempt < 200; attempt++) {
+      const built = buildRooms(rng);
+      if (!built)
+        continue;
+      const c = new PainterCtx(rng, W, H, depth, feelingName(feeling), boss, !boss && isBossDepth(depth + 1));
+      c.out.spawnQueue.push(...queue);
+      if (boss) {
+        if (tengu) {
+          const plan = planPrisonBossConnections(rng, built);
+          if (!plan)
+            continue;
+          entranceRoom = plan.entrance;
+          exitRoom = plan.exit;
+          anteroom = plan.anteroom;
+          const painted = paintRooms(c, built);
+          entranceCell = painted.entrance;
+          exitCell = painted.exit;
+          if (entranceCell < 0 || exitCell < 0)
+            continue;
+          const arenaDoor = entranceDoor(exitRoom);
+          if (arenaDoor && arenaDoor.y === exitRoom.t)
+            continue;
+          secretDoors = paintPrisonBossDoors(c, built, exitRoom, arenaDoor ?? null);
+          paintWaterGrass(c, built, 0.45, 0.3);
+          const traps = placePoisonTraps(c, built);
+          trapAttempts = traps.attempts;
+          trapsPlaced = traps.placed;
+          decoratePrisonBoss(c, entranceRoom, entranceCell, exitRoom);
+        } else {
+          const plan = planBossConnections(rng, built);
+          if (!plan)
+            continue;
+          entranceRoom = plan.entrance;
+          exitRoom = plan.exit;
+          const painted = paintRooms(c, built);
+          entranceCell = painted.entrance;
+          exitCell = painted.exit;
+          if (entranceCell < 0 || exitCell < 0)
+            continue;
+          secretDoors = paintDoorTiles(c, built);
+          paintWaterGrass(c, built, 0.5, 0.4);
+          const traps = placeTraps(c, built);
+          trapAttempts = traps.attempts;
+          trapsPlaced = traps.placed;
+          decorateBoss(c, exitRoom, exitCell);
+          placeSign(c, entranceRoom, entranceCell);
+        }
       } else {
-        const plan = planBossConnections(rng, built);
+        const plan = planConnections(rng, built, {
+          exitMinSize: 4,
+          exitType: 3 /* EXIT */,
+          connectFirstPath: true,
+          fillRandom: true
+        });
         if (!plan)
           continue;
+        if (shopOnLevel(depth)) {
+          const shop = findShopRoom(plan.entrance);
+          if (!shop)
+            continue;
+          shop.type = 7 /* SHOP */;
+        }
+        const assign = assignRoomTypes(rng, built, depth, {
+          prevWeakFloor: pitNeeded,
+          nextIsBoss: isBossDepth(depth + 1),
+          tunnelsToPassages: isPrisonDepth(depth)
+        });
+        run.weakFloor = assign.weakFloor;
+        if (isCavesDepth(depth) && depth > 11 && !run.blacksmithSpawned && rng.int(0, 15 - depth) === 0) {
+          for (const r of built) {
+            if (r.type === 1 /* STANDARD */ && roomW(r) > 4 && roomH(r) > 4) {
+              r.type = 8 /* BLACKSMITH */;
+              run.blacksmithSpawned = true;
+              break;
+            }
+          }
+        }
         entranceRoom = plan.entrance;
         exitRoom = plan.exit;
+        if (feeling === "chasm" /* CHASM */)
+          c.tiles.fill(8 /* CHASM */);
         const painted = paintRooms(c, built);
         entranceCell = painted.entrance;
         exitCell = painted.exit;
         if (entranceCell < 0 || exitCell < 0)
           continue;
         secretDoors = paintDoorTiles(c, built);
-        paintWaterGrass(c, built, 0.5, 0.4);
         const traps = placeTraps(c, built);
         trapAttempts = traps.attempts;
         trapsPlaced = traps.placed;
-        decorateBoss(c, exitRoom, exitCell);
-        placeSign(c, entranceRoom, entranceCell);
+        if (isPrisonDepth(depth)) {
+          paintWaterGrass(c, built, feeling === "water" /* WATER */ ? 0.65 : 0.45, feeling === "grass" /* GRASS */ ? 0.6 : 0.4, 4, 3);
+          decoratePrison(c, entranceRoom, entranceCell);
+        } else if (isCavesDepth(depth)) {
+          paintWaterGrass(c, built, feeling === "water" /* WATER */ ? 0.6 : 0.45, feeling === "grass" /* GRASS */ ? 0.55 : 0.35, 6, 3);
+          decorateCaves(c, built, entranceRoom, entranceCell);
+        } else {
+          paintWaterGrass(c, built);
+          decorateSewers(c, entranceRoom, entranceCell);
+        }
       }
-    } else {
-      const plan = planConnections(rng, built, {
-        exitMinSize: 4,
-        exitType: 3 /* EXIT */,
-        connectFirstPath: true,
-        fillRandom: true
-      });
-      if (!plan)
-        continue;
-      if (shopOnLevel(depth)) {
-        const shop = findShopRoom(plan.entrance);
-        if (!shop)
-          continue;
-        shop.type = 7 /* SHOP */;
-      }
-      const assign = assignRoomTypes(rng, built, depth, {
-        prevWeakFloor: pitNeeded,
-        nextIsBoss: isBossDepth(depth + 1),
-        tunnelsToPassages: isPrisonDepth(depth)
-      });
-      run.weakFloor = assign.weakFloor;
-      entranceRoom = plan.entrance;
-      exitRoom = plan.exit;
-      if (feeling === "chasm" /* CHASM */)
-        c.tiles.fill(8 /* CHASM */);
-      const painted = paintRooms(c, built);
-      entranceCell = painted.entrance;
-      exitCell = painted.exit;
-      if (entranceCell < 0 || exitCell < 0)
-        continue;
-      secretDoors = paintDoorTiles(c, built);
-      const traps = placeTraps(c, built);
-      trapAttempts = traps.attempts;
-      trapsPlaced = traps.placed;
-      if (isPrisonDepth(depth)) {
-        paintWaterGrass(c, built, feeling === "water" /* WATER */ ? 0.65 : 0.45, feeling === "grass" /* GRASS */ ? 0.6 : 0.4, 4, 3);
-        decoratePrison(c, entranceRoom, entranceCell);
-      } else {
-        paintWaterGrass(c, built);
-        decorateSewers(c, entranceRoom, entranceCell);
-      }
+      rooms = built;
+      ctx = c;
+      break;
     }
-    rooms = built;
-    ctx = c;
-    break;
+  if (!ctx || entranceCell < 0 || exitCell < 0) {
+    throw new Error(`dungeon generation failed for depth ${depth}`);
   }
-  if (!ctx || !entranceRoom || !exitRoom || entranceCell < 0 || exitCell < 0) {
+  if (!dm300 && (!entranceRoom || !exitRoom)) {
     throw new Error(`dungeon generation failed for depth ${depth}`);
   }
   const tiles = ctx.tiles;
@@ -2487,7 +2739,7 @@ function generateLevel(rng, depth, run) {
     return -1;
   };
   if (boss) {
-    if (!tengu)
+    if (!tengu && !dm300 && exitRoom)
       mobs.push({ pos: randomCell(ctx, exitRoom), kind: "boss" });
   } else {
     const nMobs = 2 + depth % 5 + rng.int(0, 3);
@@ -2619,6 +2871,10 @@ function generateLevel(rng, depth, run) {
     level.bossArena = { l: exitRoom.l, t: exitRoom.t, r: exitRoom.r, b: exitRoom.b };
     const arenaDoor = entranceDoor(exitRoom);
     level.arenaDoorCell = arenaDoor ? ctx.idx(arenaDoor.x, arenaDoor.y) : -1;
+  }
+  if (dm300 && cavesArena) {
+    level.bossArena = { ...cavesArena };
+    level.arenaDoorCell = cavesArenaDoor;
   }
   return { level, rooms, markers: ctx.out.markers, items, mobs, trapAttempts, trapsPlaced };
 }
@@ -3468,6 +3724,71 @@ var ORIGINAL_SPRITES = {
   trap_summoning_secret: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/zs6Nv9GRUH/U1JO/1NSTv9MS0f/NTQx/0xLR/9TUk7/TEtH/0ZFQf81NDH/U1JO/1NSTv9MS0f/U1JO/09OSv81NDH/T05K/1NSTv9PTkr/U1JO/zU0Mf9PTkr/U1JO/0xLR/9PTkr/NTQx/1NSTv9PTkr/U1JO/0xLR/9MS0f/NTQx/1NSTv9PTkr/U1JO/09OSv81NDH/TEtH/0xLR/9TUk7/TEtH/zU0Mf9GRUH/U1JO/1NSTv87Ojb/Ozo2/zU0Mf9TUk7/T05K/1NSTv9PTkr/Ozo2/zs6Nv81NDH/Ozo2/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1NSTv9TUk7/U1JO/zU0Mf9GRUH/U1JO/1NSTv9TUk7/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9TUk7/U1JO/1NSTv87Ojb/T05K/1NSTv9PTkr/U1JO/0xLR/81NDH/U1JO/09OSv9TUk7/RkVB/zs6Nv9GRUH/U1JO/09OSv9GRUH/Ozo2/09OSv9PTkr/U1JO/1NSTv9TUk7/Ozo2/0ZFQf9PTkr/NTQx/zU0Mf87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9PTkr/U1JO/09OSv9TUk7/T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/T05K/0xLR/9TUk7/T05K/0ZFQf81NDH/U1JO/1NSTv9PTkr/T05K/1NSTv87Ojb/T05K/09OSv87Ojb/U1JO/1NSTv9PTkr/U1JO/1NSTv9PTkr/Ozo2/0xLR/9TUk7/T05K/0xLR/9GRUH/NTQx/09OSv9PTkr/Ozo2/0xLR/9PTkr/T05K/09OSv9PTkr/TEtH/zs6Nv81NDH/Ozo2/zs6Nv81NDH/NTQx/zU0Mf9TUk7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv87Ojb/NTQx/zU0Mf9MS0f/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/T05K/0ZFQf81NDH/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/1NSTv9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
   high_grass: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/WZlK/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf87Ojb/Ozo2/1mZSv87Ojb/NTQx/zs6Nv9PTkr/WZlK/1mZSv9TUk7/T05K/zs6Nv9ZmUr/U1JO/1NSTv9MS0f/NTQx/0xLR/9Idjz/TEtH/0ZFQf9ZmUr/U1JO/1mZSv9MS0f/U1JO/09OSv81NDH/WZlK/1NSTv9PTkr/U1JO/1mZSv9PTkr/MjEv/y4tK/9PTkr/WZlK/1NSTv9Idjz/U1JO/y4tK/9Idjz/NTQx/1mZSv9ZmUr/U1JO/09OSv9ZmUr/TEtH/0xLR/9TUk7/WZlK/zU0Mf8qKSf/SHY8/zIxL/87Ojb/IyMg/zU0Mf9TUk7/WZlK/1NSTv9PTkr/WZlK/zs6Nv81NDH/Ozo2/1mZSv87Ojb/Ozo2/zs6Nv87Ojb/U1JO/0xLR/87Ojb/TEtH/1mZSv9TUk7/U1JO/1mZSv9GRUH/U1JO/1NSTv9Idjz/RkVB/zs6Nv9PTkr/T05K/1NSTv9PTkr/Ozo2/1NSTv9ZmUr/SHY8/1NSTv9Idjz/WZlK/1NSTv9PTkr/SHY8/0xLR/81NDH/SHY8/y8vLP9TUk7/RkVB/zs6Nv9GRUH/WZlK/0h2PP9GRUH/SHY8/0h2PP9PTkr/MjEv/0h2PP8yMS//IyMg/0ZFQf9PTkr/NTQx/zU0Mf9ZmUr/Ozo2/1mZSv9Idjz/IB8d/yAfHf9Idjz/U1JO/y8vLP8yMS//T05K/zU0Mf87Ojb/NTQx/zs6Nv9GRUH/WZlK/0xLR/9TUk7/SHY8/0ZFQf8gHx3/MjEv/1NSTv9PTkr/WZlK/1NSTv9ZmUr/T05K/09OSv87Ojb/U1JO/1mZSv9PTkr/U1JO/0h2PP9Idjz/Ozo2/0xLR/9TUk7/WZlK/1mZSv9GRUH/WZlK/09OSv9PTkr/Ozo2/0xLR/9ZmUr/T05K/09OSv9Idjz/SHY8/zs6Nv9Idjz/Ozo2/0h2PP81NDH/IB8d/0h2PP8yMS//U1JO/zU0Mf81NDH/SHY8/zs6Nv87Ojb/SHY8/0h2PP8jIyD/IB8d/zU0Mf9Idjz/TEtH/zs6Nv8gHx3/IyMg/zU0Mf8yMS//Kikn/yMjIP9Idjz/Ly8s/0h2PP9Idjz/Ly8s/yopJ/8gHx3/T05K/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv8jIyD/MjEv/y8vLP8uLSv/MjEv/zIxL/9PTkr/Ozo2/09OSv9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
   sign: { w: 16, h: 16, rgba: "U1JO/1NSTv81NDH/RkVB/0xLR/9PTkr/T05K/1NSTv9MS0f/Ozo2/09OSv9PTkr/Ozo2/09OSv9TUk7/T05K/1NSTv9TUk7/Ozo2/zs6Nv81NDH/NTQx/zU0Mf8vLiv/Ly4r/y8uK/8vLiv/NTQx/zs6Nv9PTkr/T05K/0xLR/9TUk7/T05K/y8uK/84NzT/QkI+/0JCPv89PDn/Kion/5h1Rf98VTH/PTw5/zg3NP8qKif/QkI+/0JCPv9MS0f/U1JO/z8+O/8qKif/j29D/41uQ/+NbkP/kXFG/5BxRP+NbkP/kHFE/41uQ/+Pb0P/lXRJ/5NzSP8/Pjv/QkI+/0xLR/89PDn/jW5D/3RRMf9zUDD/eVU1/3dUMv95VTX/eFU0/3hVNP95VTX/dVMx/3pWNv9mSzD/Zksw/0JCPv87Ojb/Ly4r/5V0Sf93VDL/dVMx/2hOMv9oTjL/eVU1/2hNMf9mSzD/Zksw/2ZLMP93VDL/aE0x/2hNMf8vLiv/U1JO/z08Of+Sckf/ZUov/0o3JP9JNiL/RTMg/0k2I/9UOyT/UDgi/0k2Iv9JNiL/SDUi/2ZLMP9jSS7/Pz47/1NSTv8/Pjv/kXFG/2VKL/9mSzD/Zksw/2NJLv9mSzD/ak80/2dMMf9nTDH/Zksw/2VKL/9mSzD/aE4y/z8+O/9TUk7/ODc0/5FxRv9nTDH/ak80/0c0If9HNCL/RTMg/0c0If9HNCL/RzQi/3dUMv96Vjb/d1Qy/2NJLv8/Pjv/NTQx/yoqJ/+QcUT/Z0wx/2pPNP91UzH/dVMx/3VTMf93VDL/eFU0/3RRMf91UzH/dVMx/3NQMP9qTzT/Kion/zs6Nv84NzT/kXFG/3hVNP90UTH/d1Qy/3hVNP93VDL/eVU1/3VTMf95VTX/dFEx/3lVNf95VTX/Z0wx/z8+O/87Ojb/QkI+/0JCPv9oTTH/Zksw/2ZLMP9lSi//Y0ku/2NJLv9qTzT/ZUov/2ZLMP9oTjL/aE0x/z8+O/8/Pjv/Ozo2/0xLR/8/Pjv/Pz47/z8+O/8/Pjv/PTw5/y8uK/9wUzD/VT4l/y8uK/8qKif/Kion/yoqJ/9CQj7/U1JO/zU0Mf81NDH/NTQx/zs6Nv87Ojb/Ozo2/zs6Nv8vLiv/l3RE/2RHKf89PDn/TEtH/zs6Nv81NDH/Ozo2/zU0Mf9TUk7/RkVB/zs6Nv9GRUH/T05K/1NSTv9TUk7/Pz47/5t3R/9qTS7/Pz47/1NSTv81NDH/TEtH/1NSTv9PTkr/U1JO/09OSv87Ojb/U1JO/09OSv9MS0f/U1JO/0JCPv8/Pjv/Ly4r/z8+O/9TUk7/NTQx/1NSTv9TUk7/U1JO/w==" },
+  tile_caves_chasm: { w: 16, h: 16, rgba: "AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/w==" },
+  tile_caves_floor: { w: 16, h: 16, rgba: "LCkn/ywpJ/8sKSf/LCkn/zAsKv8sKSf/LCkn/ykkI/8sKSf/LCkn/zAsKv8sKSf/LCkn/ykkI/8pJCP/MCwq/zAsKv8sKSf/LCkn/ywpJ/8sKSf/MCwq/ywpJ/8pJCP/LCkn/ywpJ/8sKSf/KSQj/ywpJ/8sKSf/KSQj/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8pJCP/LCkn/ywpJ/8sKSf/KSQj/ywpJ/8sKSf/LCkn/ywpJ/8wLCr/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/KSQj/ykkI/8pJCP/LCkn/ywpJ/8wLCr/MCwq/zAsKv8wLCr/MCwq/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8wLCr/KSQj/ykkI/8wLCr/LCkn/ywpJ/8wLCr/LCkn/zAsKv8sKSf/MCwq/ywpJ/8wLCr/MCwq/zAsKv8wLCr/MCwq/ywpJ/8sKSf/MCwq/ykkI/8pJCP/LCkn/ywpJ/8sKSf/MCwq/zAsKv8sKSf/LCkn/ykkI/8pJCP/LCkn/ykkI/8sKSf/MCwq/zAsKv8sKSf/KSQj/ykkI/8pJCP/LCkn/ywpJ/8wLCr/LCkn/ywpJ/8pJCP/KSQj/ykkI/8pJCP/MCwq/zAsKv8sKSf/LCkn/ykkI/8pJCP/KSQj/zAsKv8sKSf/MCwq/zAsKv8sKSf/LCkn/ywpJ/8wLCr/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8pJCP/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8pJCP/MCwq/zAsKv8wLCr/MCwq/ykkI/8sKSf/LCkn/ykkI/8pJCP/LCkn/zAsKv8wLCr/LCkn/ywpJ/8sKSf/LCkn/ykkI/8sKSf/KSQj/ywpJ/8pJCP/KSQj/ywpJ/8sKSf/KSQj/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/LCkn/zAsKv8sKSf/KSQj/ykkI/8sKSf/KSQj/ywpJ/8sKSf/LCkn/ykkI/8pJCP/LCkn/ywpJ/8sKSf/LCkn/ykkI/8sKSf/MCwq/zAsKv8pJCP/LCkn/ywpJ/8sKSf/KSQj/ywpJ/8pJCP/KSQj/zAsKv8sKSf/LCkn/zAsKv8sKSf/MCwq/ywpJ/8sKSf/KSQj/ykkI/8pJCP/LCkn/ywpJ/8pJCP/KSQj/ykkI/8sKSf/KSQj/ywpJ/8sKSf/LCkn/zAsKv8sKSf/KSQj/ykkI/8pJCP/KSQj/ywpJ/8wLCr/LCkn/ywpJ/8pJCP/LCkn/ykkI/8sKSf/LCkn/ywpJ/8wLCr/KSQj/ykkI/8pJCP/KSQj/ykkI/8sKSf/LCkn/ywpJ/8sKSf/LCkn/ykkI/8pJCP/LCkn/w==" },
+  tile_caves_grass: { w: 16, h: 16, rgba: "LCkn/ywpJ/8sKSf/LCkn/zAsKv8sKSf/LCkn/ykkI/8sKSf/LCkn/zAsKv8sKSf/LCkn/ykkI/8pJCP/MCwq/zAsKv8sKSf/LCkn/ywpJ/8sKSf/MCwq/ywpJ/8pJCP/LCkn/ywpJ/8sKSf/KSQj/ywpJ/9PTif/KSQj/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8pJCP/LCkn/ywpJ/8sKSf/KSQj/ywpJ/8sKSf/LCkn/ywpJ/8wLCr/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/T04n/32MQ/8pJCP/LCkn/ywpJ/8wLCr/MCwq/zAsKv8wLCr/MCwq/ywpJ/8sKSf/LCkn/32MQ/8hHx7/LCkn/ywpJ/9PTif/fYxD/09OJ/8wLCr/LCkn/ywpJ/8wLCr/LCkn/zAsKv8sKSf/MCwq/ywpJ/8wLCr/MCwq/zAsKv8lISD/T04n/09OJ/8hHx7/MCwq/ykkI/99jEP/LCkn/ywpJ/8sKSf/MCwq/zAsKv8sKSf/LCkn/ykkI/8pJCP/LCkn/ykkI/8sKSf/MCwq/zAsKv8sKSf/KSQj/32MQ/9PTif/LCkn/ywpJ/8wLCr/LCkn/ywpJ/8pJCP/KSQj/ykkI/8pJCP/MCwq/zAsKv8sKSf/LCkn/x8bG/9PTif/Hxsb/zAsKv8sKSf/MCwq/zAsKv8sKSf/LCkn/ywpJ/8wLCr/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8pJCP/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8pJCP/MCwq/zAsKv8wLCr/MCwq/ykkI/8sKSf/LCkn/ykkI/8pJCP/LCkn/zAsKv8wLCr/LCkn/ywpJ/99jEP/fYxD/ykkI/9PTif/KSQj/ywpJ/8pJCP/T04n/ywpJ/8sKSf/KSQj/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/IR8e/09OJ/9PTif/Hxsb/ykkI/8sKSf/KSQj/ywpJ/8sKSf/LCkn/ykkI/8pJCP/LCkn/ywpJ/8sKSf/LCkn/ykkI/8sKSf/MCwq/zAsKv8pJCP/LCkn/ywpJ/8sKSf/KSQj/ywpJ/8pJCP/KSQj/zAsKv8sKSf/LCkn/zAsKv8sKSf/MCwq/ywpJ/8sKSf/KSQj/ykkI/8pJCP/LCkn/ywpJ/8pJCP/fYxD/ykkI/8sKSf/KSQj/ywpJ/8sKSf/LCkn/zAsKv8sKSf/KSQj/ykkI/8pJCP/KSQj/ywpJ/99jEP/LCkn/09OJ/8pJCP/LCkn/ykkI/8sKSf/LCkn/ywpJ/8wLCr/KSQj/ykkI/8pJCP/KSQj/ykkI/8sKSf/IR8e/09OJ/8hHx7/IR8e/ykkI/8pJCP/LCkn/w==" },
+  tile_caves_wall: { w: 16, h: 16, rgba: "t7Cl/5WNif9qZmL/amZi/4aBfv+GgX7/lY2J/5WNif+GgX7/hoF+/4aBfv+GgX7/amZi/4aBfv+GgX7/hoF+/7ewpf9qZmL/lY2J/4aBfv+VjYn/hoF+/5WNif9qZmL/hoF+/5WNif+GgX7/amZi/4aBfv+GgX7/hoF+/5WNif+VjYn/lY2J/5WNif+VjYn/hoF+/4aBfv9qZmL/amZi/5WNif+GgX7/amZi/4aBfv+GgX7/lY2J/7ewpf+3sKX/lY2J/5WNif+GgX7/hoF+/5WNif9qZmL/amZi/4aBfv+VjYn/amZi/4aBfv+3sKX/hoF+/7ewpf+3sKX/lY2J/5WNif+GgX7/hoF+/5WNif+VjYn/hoF+/5WNif+3sKX/amZi/2pmYv+3sKX/lY2J/5WNif+3sKX/hoF+/5WNif+GgX7/lY2J/7ewpf+3sKX/hoF+/5WNif+VjYn/hoF+/2pmYv+3sKX/t7Cl/5WNif+VjYn/lY2J/4aBfv+GgX7/t7Cl/7ewpf+3sKX/lY2J/4aBfv+VjYn/amZi/2pmYv+VjYn/t7Cl/5WNif+VjYn/hoF+/2pmYv+GgX7/hoF+/7ewpf+VjYn/t7Cl/5WNif+VjYn/hoF+/2pmYv+VjYn/t7Cl/5WNif+GgX7/hoF+/2pmYv9qZmL/hoF+/5WNif+VjYn/hoF+/4aBfv9qZmL/hoF+/4aBfv+VjYn/t7Cl/4aBfv+VjYn/hoF+/2pmYv9qZmL/hoF+/5WNif+3sKX/hoF+/4aBfv9qZmL/amZi/4aBfv+GgX7/lY2J/4aBfv+GgX7/hoF+/2pmYv9qZmL/amZi/5WNif+VjYn/lY2J/4aBfv+GgX7/lY2J/5WNif+VjYn/hoF+/2pmYv+GgX7/hoF+/4aBfv9qZmL/hoF+/2pmYv+VjYn/lY2J/4aBfv+GgX7/hoF+/5WNif+VjYn/lY2J/2pmYv9qZmL/hoF+/4aBfv9qZmL/amZi/4aBfv+GgX7/hoF+/4aBfv+GgX7/hoF+/4aBfv+GgX7/hoF+/4aBfv9qZmL/amZi/4aBfv9qZmL/amZi/2pmYv9qZmL/hoF+/2pmYv+GgX7/hoF+/5WNif+GgX7/hoF+/5WNif9qZmL/amZi/2pmYv9qZmL/amZi/4aBfv9qZmL/amZi/2pmYv+GgX7/hoF+/4aBfv+VjYn/lY2J/7ewpf+GgX7/amZi/2pmYv9qZmL/amZi/4aBfv+GgX7/amZi/4aBfv+GgX7/hoF+/4aBfv+GgX7/lY2J/7ewpf+GgX7/amZi/2pmYv9qZmL/amZi/4aBfv+GgX7/hoF+/4aBfv+GgX7/hoF+/4aBfv+GgX7/hoF+/w==" },
+  tile_caves_door: { w: 16, h: 16, rgba: "t7Cl/5WNif9qZmL/amZi/4aBfv+GgX7/lY2J/5WNif+GgX7/hoF+/4aBfv+GgX7/amZi/4aBfv+GgX7/hoF+/7ewpf9FOjP/RToz/z8zLv8/My7/PzMu/z8zLv8/My7/RToz/0U6M/9FOjP/RToz/0U6M/9FOjP/PzMu/5WNif+VjYn/PzMu/0tAOv9LQDr/S0A6/0U6M/9FOjP/RToz/0tAOv9LQDr/S0A6/0tAOv9FOjP/S0A6/z8zLv+3sKX/lY2J/0U6M/9FOjP/a002/2FHMv9SPCr/a002/11DLv9hRzL/VT4t/2tNNv9hRzL/Ujwq/0U6M/8/My7/lY2J/5WNif9FOjP/RToz/2tNNv9hRzL/Ujwq/2tNNv9dQy7/XUMu/1I8Kv9rTTb/YUcy/1I8Kv9FOjP/PzMu/5WNif+GgX7/PzMu/0tAOv9rTTb/YUcy/1U+Lf9rTTb/YUcy/2FHMv9SPCr/a002/zc4O/83ODv/RToz/z8zLv+GgX7/t7Cl/0U6M/9LQDr/a002/11DLv9SPCr/a002/11DLv9dQy7/Ujwq/2tNNv8sLS//LC0v/0tAOv8/My7/hoF+/7ewpf9FOjP/S0A6/2tNNv9dQy7/VT4t/2tNNv9hRzL/XUMu/1U+Lf9rTTb/YUcy/1I8Kv9FOjP/PzMu/5WNif+VjYn/RToz/0U6M/83ODv/Nzg7/1U+Lf9rTTb/YUcy/11DLv9SPCr/a002/2FHMv9SPCr/RToz/z8zLv+3sKX/hoF+/0U6M/9FOjP/LC0v/ywtL/9SPCr/a002/2FHMv9dQy7/VT4t/2tNNv9hRzL/Ujwq/0tAOv8/My7/lY2J/4aBfv8/My7/RToz/2tNNv9dQy7/VT4t/2tNNv9dQy7/XUMu/1U+Lf9rTTb/YUcy/1U+Lf9FOjP/PzMu/4aBfv+GgX7/RToz/0U6M/9rTTb/YUcy/1I8Kv9rTTb/XUMu/11DLv9SPCr/a002/2FHMv9SPCr/S0A6/z8zLv+GgX7/hoF+/0tAOv9LQDr/a002/11DLv9SPCr/a002/11DLv9hRzL/Ujwq/2tNNv83ODv/Nzg7/0U6M/8/My7/hoF+/5WNif9FOjP/S0A6/2tNNv9dQy7/Ujwq/2tNNv9hRzL/YUcy/1I8Kv9rTTb/LC0v/ywtL/9FOjP/PzMu/4aBfv+VjYn/PzMu/0U6M/9rTTb/XUMu/1U+Lf9rTTb/YUcy/11DLv9SPCr/a002/11DLv9VPi3/S0A6/z8zLv+GgX7/lY2J/zgvKf84Lyn/a002/11DLv9SPCr/a002/2FHMv9hRzL/Ujwq/2tNNv9dQy7/VT4t/zgvKf8zKST/hoF+/w==" },
+  tile_caves_entrance: { w: 16, h: 16, rgba: "LCkn/ywpJ/8sKSf/fWpZ/3ZkVP8oJSP/LCkn/ykkI/8sKSf/LCkn/zAsKv98aVj/cV9P/yUgH/8pJCP/MCwq/zAsKv8sKSf/LCkn/3toV/9xX0//sp+S/7CdkP+vnY//jnNg/4twXf+McV7/fGlY/3JgUP8oJSP/KSQj/ywpJ/8sKSf/LCkn/ywpJ/9+a1r/c2FR/1xOQf9dT0L/W01A/1tNQP9eUEP/Wkw//3toV/9xX0//KCUj/ywpJ/8wLCr/LCkn/ywpJ/8sKSf/f2xb/3ZkVP8oJSP/KSQj/ykkI/8pJCP/LCkn/ywpJ/9/bFv/cF5O/ysoJv8wLCr/MCwq/ywpJ/8sKSf/LCkn/3toV/9wXk7/KCUj/ywpJ/8wLCr/KSQj/ykkI/8wLCr/fmta/3RiUv8rKCb/LCkn/zAsKv8sKSf/MCwq/ywpJ/96Z1b/dGJS/7Gekf+LcF3/jnNg/490Yf+Oc2D/jHFe/35rWv9yYFD/KCUj/ywpJ/8sKSf/MCwq/zAsKv8sKSf/emdW/3JgUP9dT0L/XlBD/1tNQP9ZSz7/W01A/1tNQP+AbVz/dGJS/yUgH/8pJCP/LCkn/ywpJ/8wLCr/LCkn/39sW/9zYVH/JSAf/ykkI/8pJCP/MCwq/zAsKv8sKSf/e2hX/3RiUv8lIB//KSQj/zAsKv8sKSf/MCwq/zAsKv99aln/dWNT/yglI/8wLCr/LCkn/ywpJ/8sKSf/LCkn/35rWv92ZFT/KCUj/ywpJ/8sKSf/LCkn/ywpJ/8pJCP/e2hX/3NhUf+um47/sZ6R/4twXf+QdWL/kXZj/490Yf98aVj/dGJS/ysoJv8wLCr/LCkn/ywpJ/8sKSf/LCkn/35rWv92ZFT/XU9C/15QQ/9eUEP/WUs+/1lLPv9eUEP/f2xb/3ZkVP8oJSP/LCkn/ywpJ/8sKSf/LCkn/zAsKv98aVj/dGJS/yUgH/8sKSf/KSQj/ywpJ/8sKSf/LCkn/39sW/9wXk7/KCUj/ywpJ/8sKSf/LCkn/ykkI/8sKSf/f2xb/3BeTv8lIB//LCkn/ywpJ/8sKSf/KSQj/ywpJ/9/bFv/cV9P/ysoJv8sKSf/LCkn/zAsKv8sKSf/MCwq/39sW/9xX0//kXZj/4twXf+RdmP/jHFe/4xxXv+PdGH/gG1c/3JgUP8oJSP/KSQj/ywpJ/8sKSf/LCkn/zAsKv96Z1b/cV9P/1pMP/9dT0L/WEo9/1xOQf9cTkH/XE5B/31qWf91Y1P/KCUj/yUgH/8jIR//LCkn/ywpJ/8wLCr/fmta/3FfT/8ZFhX/IR0c/yUgH/8sKSf/LCkn/ywpJ/9/bFv/dWNT/xkWFf8hHRz/KCUj/w==" },
+  tile_caves_exit: { w: 16, h: 16, rgba: "LCkn/ywpJ/8sKSf/LCkn/zAsKv8sKSf/LCkn/ykkI/8sKSf/LCkn/zAsKv8sKSf/LCkn/ykkI/8pJCP/MCwq/zAsKv8sKSf/LCkn/4VtW/+FbVv/JiMi/ywpJ/8pJCP/LCkn/ywpJ/8sKSf/hW1b/4VtW/8jIR//KSQj/ywpJ/8sKSf/LCkn/ywpJ/+FbVv/W05A/yMhH/8pJCP/LCkn/ywpJ/8sKSf/KSQj/4VtW/9bTkD/IyEf/ywpJ/8wLCr/LCkn/ywpJ/8sKSf/aVlK/1tOQP+qmY3/qpmN/4VtW/+FbVv/hW1b/4VtW/9pWUr/W05A/zAsKv8wLCr/MCwq/ywpJ/8sKSf/IR8e/2lZSv9bTkD/VUc7/1VHO/9VRzv/VUc7/1VHO/9FOzH/aVlK/1tOQP8lISD/LCkn/zAsKv8sKSf/JSEg/yAeHP9pWUr/Sz80/yEeHP8hHhz/IR4c/x4cGv8eHBr/IR4c/2lZSv9LPzT/IB4c/yEfHv8sKSf/MCwq/yMgHv8eHBr/VUc7/0s/NP8aFxb/HBoZ/xoXFv8cGhn/Hxwb/x8cG/9VRzv/Sz80/xwYGP8eGhn/LCkn/ywpJ/8hHhz/HBoZ/1VHO/8/Niz/iH92/1VHO/9VRzv/VUc7/1VHO/9VRzv/VUc7/z82LP8aFxb/HBgY/zAsKv8sKSf/Hxwb/x0aGf9FOzH/PzYs/zMrJP8zKyT/Mysk/zMrJP8zKyT/Mysk/0U7Mf8/Niz/GhkX/xwaGf8sKSf/LCkn/xoZF/8ZFhX/RTsx/zApIv8dGhn/HRoZ/xkWFf8aGRf/GhkX/xkWFf8zKyT/MCki/x0aGf8dGhn/LCkn/ywpJ/8aGRf/GhkX/zMrJP8wKSL/GRYV/xoZF/8ZFhX/GRYV/xoZF/8aGRf/Mysk/zApIv8aGRf/GhkX/ywpJ/8sKSf/GhkX/x0aGf8lIBr/JSAa/zMrJP8zKyT/Mysk/zMrJP8zKyT/Mysk/yUgGv8lIBr/GhkX/xoZF/8sKSf/LCkn/ykkI/8aGRf/JSAa/yUgGv8ZFhX/GhkX/xoZF/8aGRf/GRYV/xoZF/8lIBr/JSAa/x0aGf8sKSf/LCkn/zAsKv8sKSf/MCwq/ywpJ/8lIBr/GRYV/xkWFf8ZFhX/GhkX/xoZF/8ZFhX/JSAa/ykkI/8sKSf/KSQj/ywpJ/8sKSf/LCkn/zAsKv8sKSf/KSQj/ykkI/8pJCP/KSQj/ywpJ/8wLCr/LCkn/ywpJ/8pJCP/LCkn/ykkI/8sKSf/LCkn/ywpJ/8wLCr/KSQj/ykkI/8pJCP/KSQj/ykkI/8sKSf/LCkn/ywpJ/8sKSf/LCkn/ykkI/8pJCP/LCkn/w==" },
+  tile_caves_trap: { w: 16, h: 16, rgba: "LCkn/ywpJ/8sKSf/LCkn/zAsKv8sKSf/LCkn/ykkI/8sKSf/LCkn/zAsKv8sKSf/LCkn/ykkI/8pJCP/MCwq/zAsKv8sKSf/LCkn/ywpJ/8sKSf/HBoY/xoYFv8pJCP/LCkn/ywpJ/8aGBb/GBQU/ywpJ/8sKSf/KSQj/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/GhgW/z3JUv9I1F3/S0hF/ywpJ/8aGBb/O8dQ/0PPWP9LSEX/LCkn/ywpJ/8wLCr/LCkn/ywpJ/8sKSf/GhgW/0XRWv9G0lv/SEFA/ykkI/8YFBT/QMxV/zbCS/9QS0n/MCwq/xwaGP8wLCr/MCwq/ywpJ/8sKSf/GhgW/zbCS/9F0Vr/S0hF/ywpJ/8cGhj/OcVO/0PPWP9QS0n/LCkn/xoYFv9I1F3/S0hF/zAsKv8sKSf/HBoY/zjETf9Czlf/UEtJ/zAsKv8cGhj/O8dQ/zzIUf9LSEX/MCwq/xgUFP83w0z/PspT/0tIRf8sKSf/MCwq/xwaGP9Czlf/S0hF/ykkI/8YFBT/OsZP/zrGT/9LSEX/MCwq/xwaGP9Dz1j/PclS/0hBQP8pJCP/LCkn/ywpJ/8wLCr/S0hF/ywpJ/8YFBT/R9Nc/0LOV/9IQUD/MCwq/xwaGP9F0Vr/R9Nc/0hBQP8pJCP/KSQj/zAsKv8sKSf/MCwq/zAsKv8aGBb/OsZP/zjETf9QS0n/LCkn/xoYFv8+ylP/Qc1W/0tIRf8pJCP/GhgW/ywpJ/8sKSf/LCkn/ywpJ/8YFBT/QMxV/zfDTP9QS0n/MCwq/xgUFP9K1l//PMhR/0hBQP8pJCP/GhgW/zjETf9QS0n/LCkn/ywpJ/8aGBb/NsJL/zjETf9LSEX/KSQj/xoYFv9G0lv/PspT/0tIRf8sKSf/GBQU/zrGT/9J1V7/S0hF/ywpJ/8sKSf/GhgW/zzIUf9LSEX/KSQj/xgUFP9BzVb/RtJb/0tIRf8sKSf/GhgW/z/LVP9Czlf/S0hF/ywpJ/8sKSf/LCkn/ykkI/9LSEX/MCwq/xwaGP83w0z/O8dQ/0tIRf8sKSf/GBQU/0HNVv9I1F3/SEFA/zAsKv8sKSf/LCkn/zAsKv8sKSf/MCwq/xoYFv88yFH/RtJb/0hBQP8pJCP/GhgW/z7KU/9E0Fn/SEFA/ykkI/8sKSf/KSQj/ywpJ/8sKSf/LCkn/zAsKv8sKSf/SEFA/0hBQP8pJCP/KSQj/ywpJ/9QS0n/S0hF/ywpJ/8pJCP/LCkn/ykkI/8sKSf/LCkn/ywpJ/8wLCr/KSQj/ykkI/8pJCP/KSQj/ykkI/8sKSf/LCkn/ywpJ/8sKSf/LCkn/ykkI/8pJCP/LCkn/w==" },
+  tile_caves_statue: { w: 16, h: 16, rgba: "LCkn/ywpJ/8sKSf/LCkn/zAsKv9ybWb/zMnC/ykkI//MycL/zMnC/6CbkP+gm5D/LCkn/ykkI/8pJCP/MCwq/zAsKv8sKSf/LCkn/ywpJ/8sKSf/oJuQ/1NXR/+gm5D/oJuQ/6CbkP+gm5D/oJuQ/6CbkP8sKSf/KSQj/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/LCkn/ywpJ/+gm5D/fHtt/3x7bf9TV0f/oJuQ/1NXR/+gm5D/LCkn/ywpJ/8wLCr/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/oJuQ/3x7bf98e23/fHtt/3x7bf+gm5D/oJuQ/6CbkP8wLCr/MCwq/ywpJ/8sKSf/LCkn/ywpJ/8sKSf/zMnC/6CbkP98e23/fHtt/3x7bf98e23/fHtt/3x7bf+gm5D/LCkn/zAsKv8sKSf/MCwq/ywpJ/8wLCr/MCwq/8zJwv+gm5D/oJuQ/3x7bf9TV0f/U1dH/1NXR/9TV0f/U1dH/ywpJ/8sKSf/MCwq/zAsKv8sKSf/LCkn/6CbkP+gm5D/fHtt/3x7bf98e23/fHtt/1NXR/9TV0f/KSQj/ykkI/8pJCP/LCkn/ywpJ/8wLCr/LCkn/ywpJ/+gm5D/fHtt/3x7bf98e23/fHtt/1NXR/98e23/U1dH/ykkI/8pJCP/KSQj/zAsKv8sKSf/MCwq/zAsKv8sKSf/fHtt/3x7bf98e23/oJuQ/8zJwv/MycL/fHtt/6CbkP+gm5D/LCkn/ywpJ/8sKSf/LCkn/ywpJ/8pJCP/MCwq/1NXR/9TV0f/fHtt/3x7bf98e23/oJuQ/3x7bf98e23/oJuQ/zAsKv8wLCr/LCkn/ywpJ/+QiX//kIl//5CJf/9TV0f/U1dH/1NXR/98e23/fHtt/3x7bf98e23/U1dH/3x7bf+QiX//kIl//ywpJ/8sKSf/kIl//3x7bf9TV0f/U1dH/1NXR/9TV0f/U1dH/1NXR/+gm5D/U1dH/1NXR/+gm5D/fXVu/5CJf/8sKSf/IyEf/5CJf/+QiX//fXVu/311bv99dW7/fXVu/311bv99dW7/fXVu/311bv99dW7/fXVu/5CJf/+QiX//IyEf/yYjIv93cmn/d3Jp/3dyaf93cmn/d3Jp/3dyaf93cmn/d3Jp/3dyaf93cmn/d3Jp/3dyaf93cmn/d3Jp/yMhH/8jIR//U1dH/1NXR/9TV0f/U1dH/1NXR/9TV0f/U1dH/1NXR/9TV0f/U1dH/1NXR/9TV0f/U1dH/1NXR/8jIR//LCkn/yMhH/8mIyL/IR0c/yEdHP8hHRz/IR0c/yEdHP8jIR//IyEf/yMhH/8jIR//IyEf/yEdHP8hHRz/LCkn/w==" },
+  tile_caves_water: { w: 16, h: 16, rgba: "GjQy/xo0Mv8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/GjQy/yE7N/8aNDL/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/FzAw/zhVUf8sSET/ITs3/yE7N/8hOzf/GjQy/xcwMP8XMDD/FzAw/xcwMP8XMDD/GjQy/xo0Mv8aNDL/GjQy/yE7N/8aNDL/FzAw/xo0Mv8hOzf/ITs3/yE7N/8hOzf/FzAw/xcwMP8XMDD/FzAw/xcwMP8aNDL/ITs3/yE7N/8aNDL/FzAw/xcwMP8XMDD/FzAw/xcwMP8hOzf/ITs3/xo0Mv8XMDD/FzAw/xcwMP8XMDD/ITs3/yE7N/8aNDL/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/GjQy/yE7N/8hOzf/ITs3/xo0Mv8XMDD/FzAw/yE7N/8hOzf/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8aNDL/GjQy/yE7N/8hOzf/GjQy/xo0Mv8aNDL/GjQy/xcwMP8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8aNDL/GjQy/xo0Mv8XMDD/GjQy/xo0Mv8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/GjQy/xo0Mv8aNDL/ITs3/yE7N/8aNDL/GjQy/xo0Mv8XMDD/FzAw/xo0Mv8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8aNDL/GjQy/yE7N/8hOzf/GjQy/xo0Mv8XMDD/FzAw/xo0Mv8hOzf/ITs3/xo0Mv8XMDD/FzAw/xcwMP8XMDD/FzAw/yE7N/8hOzf/GjQy/xo0Mv8XMDD/FzAw/xcwMP8aNDL/OFVR/yxIRP8hOzf/ITs3/yE7N/8aNDL/FzAw/xcwMP8hOzf/ITs3/xcwMP8aNDL/GjQy/xo0Mv8aNDL/LEhE/yE7N/8aNDL/ITs3/yE7N/8hOzf/ITs3/xo0Mv8hOzf/ITs3/xcwMP8XMDD/GjQy/xo0Mv8hOzf/ITs3/yE7N/8XMDD/FzAw/xcwMP8XMDD/GjQy/yE7N/8hOzf/ITs3/xo0Mv8XMDD/FzAw/xcwMP8hOzf/ITs3/yE7N/8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8aNDL/ITs3/yE7N/8aNDL/FzAw/xcwMP8XMDD/ITs3/yE7N/8XMDD/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/GjQy/xo0Mv8hOzf/GjQy/xcwMP8XMDD/GjQy/xo0Mv8hOzf/FzAw/xcwMP8XMDD/FzAw/xcwMP8XMDD/FzAw/xo0Mv8aNDL/GjQy/xo0Mv8aNDL/FzAw/w==" },
+  mob_spinner: { w: 16, h: 16, rgba: "////AP///wD///8A////AICAgACAgIAAgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAP///wD///8A////AP///wCAgIAAjduc/4CAgACAgIAAgICAAI3bnP9+tI3/gICAAICAgACAgIAAgICAAICAgAD///8A////AP///wD///8AgICAAI3bnP9+tI3/gICAAI3bnP9+tI3/gICAAICAgACN25z/frSN/4CAgACAgIAA////AP///wCN25z/jducAICAgACN25z/frSN/4CAgACN25z/frSN/4CAgACN25z/frSN/4CAgACAgIAAgICAAP///wD///8Ajduc/43bnP////8Ajduc/1GPUv9Rj1L/UY9S/1GPUv+N25z/jduc/360jf+AgIAAgICAAICAgAD///8A////AH60jf+N25z/jduc/1GPUv9qpmv/aqZr/1mLYf9Zi2H/UY9S/360jf+AgIAAgICAAICAgACAgIAA////AP///wB+tI0AfrSN/1GPUv9qpmv/WYth/1mLYf9qpmv/WYth/wAAAP9Cckn/4fjX/4CAgACAgIAAgICAAP///wD///8AfrSNAH60jQBCckn/WYth/0dvVP9Zi2H/WYth/1mLYf9Zi2H/QnJJ/wAAAACAgIAAgICAAICAgAD///8A////AP///wB+tI0AM1Y+/1mLYf9Zi2H/WYth/1mLYf9Hb1T/WYth/zNWPv8AAAAAgICAAICAgACAgIAA////AP///wD///8Ajduc/zNWPv9Hb1T/WYth/0dvVP9Zi2H/WYth/wAAAP8zVj7/4fjX/4CAgACAgIAAgICAAP///wD///8Ajduc/43bnP9+tI3/M1Y+/0dvVP9Hb1T/R29U/0dvVP8zVj7/jduc/wAAAACAgIAAgICAAICAgAD///8A////AI3bnP9+tI3/AAAAAI3bnP8zVj7/M1Y+/zNWPv8zVj7/frSN/43bnP+N25z/gICAAICAgACAgIAA////AP///wB+tI3/frSNAICAgACN25z/frSN/4CAgAB+tI3/jduc/4CAgAB+tI3/jduc/4CAgACAgIAAgICAAP///wD///8AfrSNAH60jQCAgIAAjduc/360jf+AgIAAfrSN/43bnP+AgIAAgICAAH60jf9+tI3/gICAAICAgAD///8A////AH60jQB+tI0AgICAAH60jf+AgIAAgICAAICAgAB+tI3/jduc/4CAgACAgIAAgICAAICAgACAgIAA////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  mob_elemental: { w: 16, h: 16, rgba: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wD/VQCZ/1UAAP///wD///8A/1UAmf9VAAD///8A////AP///wAAAAAAAAAAAAAAAAAAAAAA////AP///wD///8A/1UAmf9VAJn/uzP//1UAmf9VAJn/VQCZ/1UAAP///wD///8AAAAAAAAAAAAAAAAAAAAAAP///wD///8A/1UAmf9VAJn//2b//7sz//+7M///uzP//1UAmf9VAJn/VQAA////AAAAAAAAAAAAAAAAAAAAAAD///8A/1UAmf9VAJn/uzP///9m////Zv///2b///9m//+7M///VQCZ/1UAmf///wAAAAAAAAAAAAAAAAAAAAAA////AP9VAJn/uzP///9m////Zv///2b///9m////Zv///2b//7sz//9VAJn///8AAAAAAAAAAAAAAAAAAAAAAP///wD/VQCZ/7sz////Zv+eCw//ngsP////Zv///2b/ngsP/54LD///VQCZ////AAAAAAAAAAAAAAAAAAAAAAD///8A/1UAmf+7M////2b///9m////Zv///2b///9m////Zv//uzP//1UAmf///wAAAAAAAAAAAAAAAAAAAAAA////AP9VAJn/uzP///9m////Zv/YnUP/ngsP/54LD//YnUP//7sz//9VAJn///8AAAAAAAAAAAAAAAAAAAAAAP///wD/VQCZ/1UAmf+7M////2b///9m////Zv///2b//7sz//9VAJn/VQCZ////AAAAAAAAAAAAAAAAAAAAAAD///8A/1UAAP9VAJn/VQCZ/7sz//+7M///uzP//7sz//9VAJn/VQCZ/1UAAP///wAAAAAAAAAAAAAAAAAAAAAA////AP9VAAD/VQAA/1UAmf9VAJn/VQCZ/1UAmf9VAJn/VQCZ/1UAAP9VAAD///8AAAAAAAAAAAAAAAAAAAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAAAAAAAAAAAAAAAAAAAA////AP///wD///8A////M////zP///8z////M////zP///8z////AP///wD///8AAAAAAAAAAAAAAAAAAAAAAA==" },
+  mob_monk: { w: 16, h: 16, rgba: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAAAA////AP///wD///8A////AAoKCv8KCgr/CgoK/woKCv8AAAAA////AP///wD///8A////AP///wD///8AAAAAAP///wD///8A////AAoKCv8AAAD/7fLx/+3y8f/t8vH/3Obk/wAAAAD///8A////AP///wD///8A////AAAAAAD///8A////APX19f8AAAD/2+Tj/9vk4/8AAAD/2+Tj/wAAAP8AAAAA////AP///wD///8A////AP///wAAAAAA////APX19f/b5OP/AAAA/+ZBFf/mQRX/2+Tj/9vk4/+8zMr/oyMH/6MjB/8AAAAA////AP///wD///8AAAAAAP///wDc5uT/2+Tj//X19f/may7/5msu/6MjB/8zMzP/AAAA/8xfKf+jIwf/AAAAAP///wD///8A////AAAAAAD///8AaXuD/9vk4//b5OP/5msu/8xfKf+jIwf/MzMz/wAAAP/MXyn/oyMH/wAAAAD///8A////AP///wAAAAAA////AGl7g/+/ys3/2+Tj/7/Kzf9pe4P/AAAA/wAAAP8KCgr/aXuD/wAAAAAAAAAA////AP///wD///8AAAAAAP///wAAAAAAaXuD/2l7g/9pe4P/2+Tj/7/Kzf+ksbf/aXuD/wAAAAAAAAAAAAAAAP///wD///8A////AAAAAAD///8AAAAAAKMjB//MXyn/zF8p/+ZrLv/may7/5msu/+ZrLv/mQRX/AAAAAP///wD///8A////AP///wAAAAAA////AP///wDmQRX/5msu/+ZrLv/may7/5msu/+ZrLv/may7/5msu/+ZBFf8AAAAA////AP///wD///8AAAAAAP///wD///8A5kEV/+ZrLv/may7/oyMH/6MjB/+jIwf/zF8p/+ZrLv/mQRX/AAAAAP///wD///8A////AAAAAAD///8A////AOZBFf/may7/oyMH/wAAAAAAAAAAAAAAAKMjB//MXyn/zy0I/wAAAAD///8A////AP///wAAAAAA////AP///wCPoKX/aXuD/2l7g/8AAAAAAAAAAAAAAABpe4P/aXuD/2l7g/+PoKX/AAAAAP///wD///8AAAAAAA==" },
+  mob_dm300: { w: 22, h: 20, rgba: "gICAAICAgACAgIAAgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAP///wD///8A////AP///wD///8AwMCz/8DAs//AwLP/wMCz/8DAs/9iUkH/YlJB/2JSQf9XV1r/OztB/wAAAAD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AwMCz/9XVzP/V1cz/1dXM/9XVzP/V1cz/1dXM/4h4Zv99fYD/fX2A/319gP87O0H/AAAAAP///wCAgIAAOztB/4CAgAAAAAAA////AP///wD///8AmZmT/7i4s/+4uLP/uLiz/7i4s/+4uLP/uLiz/7i4s/99fYD/fX2A/319gP99fYD/fX2A/zs7Qf8AAAAAAAAAADs7Qf8AAAAAAAAAAP///wD///8A////ALaigP/Ov6P/zr+j/86/o//V1cz/1dXM/9XVzP/Ov6P/fX2A/319gP99fYD/fX2A/319gP87O0H/AAAAAAAAAAA7O0H/AAAAAAAAAAD///8A////AMDAs//V1cz/uLiz/86/o//V1cz/uLiz/9XVzP/V1cz/uLiz/319gP///2b///9m/319gP///2b///9m/zs7Qf8AAAAAOztB/wAAAAD///8A////AP///wDAwLP/1dXM/9XVzP/Ov6P/1dXM/9XVzP/V1cz/1dXM/9XVzP99fYD/fX2A/319gP99fYD/fX2A/319gP87O0H/OztB/zs7Qf8AAAAA////AP///wD///8AwMCz/5mUk/+ZlJP/1dXM/9XVzP/V1cz/mZST/5mUk//V1cz/1dXM/319gP8AAAD/AAAA/wAAAP8AAAD/OztB/wAAAAAAAAAAAAAAAP///wD///8AmIFp/5iBaf+YgWn/mZST/5mUk/+ZlJP/mZST/5mUk/+ZlJP/mZST/0o7MP8vLjb/fX2A/319gP99fYD/fX2A/zs7Qf8AAAAAAAAAAAAAAAD///8Ae2dU/5qXmf+al5n/mpeZ/5qXmf+al5n/mpeZ/5qXmf+al5n/mpeZ/3VydP9fXWb/cF9S/y8uNv87OkH/fX2A/319gP99fYD/OztB/wAAAAD///8A////AGJQQf99eoD/fXqA/316gP99eoD/fXqA/316gP99eoD/fXqA/316gP9XVFr/UE5Z/19dZv9wX1L/UE5Z/zs6Qf9fX2b/X19m/zs7Qf8AAAAA////AP///wA7OkH/X11m/316gP99eoD/fXqA/4h2Zv99eoD/fXqA/316gP99eoD/V1Ra/3BfUv9QTln/OzpB/0o7MP99fYD/iHhm/4h4Zv87O0H/AAAAAP///wD///8AAAAAADs6Qf87OkH/Sjsw/0o7MP9KOzD/Sjsw/0o7MP87OkH/OzpB/zs6Qf87OkH/Sjsw/19fZv99fYD/X19m/319gP9fX2b/OztB/wAAAAD///8A////AAAAAAAAAAAAgnRc/6WZgv+qqqP/qqqj/6qqo/+qqqP/qqqj/6qqo/+lmYL/zr+j/319gP99fYD/fX2A/319gP99fYD/fX2A/zs7Qf8AAAAA////AP///wD///8AOztB/zs7Qf87O0H/OztB/zs7Qf87O0H/OztB/zs7Qf87O0H/OztB/zs7Qf87O0H/OztB/zs7Qf8lJS3/JSUt/yUlLf8lJS3/JSUt/yUlLf8AAAAAOztB/319gP99fYD/fX2A/319gP99fYD/JCQz/319gP99fYD/fX2A/319gP8kJDP/fX2A/319gP99fYD/fX2A/zs7Qf9fX2b/X19m/19fZv9fX2b/OztB/zs7Qf99fYD/JCQz/yQkM/+ampn/mpqZ/5qamf+ampn/mpqZ/5qamf+ampn/mpqZ/5qamf8kJDP/JCQz/319gP8lJS3/QkJN/0JCTf9CQk3/QkJN/yUlLf87O0H/mpqZ/yQkM/8kJDP/mpqZ/319gP+ampn/fX2A/5qamf99fYD/mpqZ/319gP+ampn/JCQz/yQkM/+fj3r/OztB/19fZv9fX2b/X19m/19fZv87O0H/OztB/5+Pev+fj3r/n496/5qamf+ampn/mpqZ/5qamf+ampn/mpqZ/5qamf+ampn/n496/5+Pev+fj3r/n496/yUlLf9CQk3/QkJN/0JCTf9CQk3/JSUt/wAAAAA7O0H/OztB/zs7Qf87O0H/OztB/zs7Qf87O0H/OztB/zs7Qf87O0H/OztB/zs7Qf87O0H/OztB/zs7Qf87O0H/OztB/zs7Qf87O0H/OztB/wAAAAA=" },
+  mob_bee: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///8A////AP///wAAAAAA3Ny9OtHRqEPj48lD7e3cOgAAAAAAAAAAAAAAAN/fwjre3sFD1dWvOgAAAAD///8A////AP///wD///8A19ezOufn0k3W1rJN5+fSTeDgxU3b27tQAAAAANnZuDrY2LVjzs6hY+vr2U3n59E6////AP///wD///8A////AOzs2kPq6tZN29u7TePjyU25uXl6TUdD/01HQ//T06yQTUdD/01HQ//Vyqp60tKrQ////wD///8A////AP///wDv7+JD4eHGTd3dv026unx6AAAA/zEsKv+6pY//TUdD/zEsKv+6pY//TUdD/9PTrFr///8A////AP///wD///8A5eXOOurq1k3IyJd6//94/wAAAP8xLCr/MSwq/01HQ/8xLCr/MSwq/01HQ//V1a9Q////AP///wD///8A////AAAAAADHx5VQwZBA///vAP+3lkP/AAAA/wAAAP9wRSL/AAAA/wAAAP+4uHdmTUdDAP///wD///8A////AP///wAAAAAAAAAAAMGQQP//7wD/t5ZD///vAP//7wD/cEUi/01HQwAxLCoATUdDAE1HQwD///8A////AP///wD///8A////AP///wDBkEAAimYr/4pmK/+KZiv/imYr/3BFIgBwRSIAAAAAAAAAAAD///8A////AP///wD///8A////AP///wD///8AwZBAAMGQQAD//3gA//94AP///wBwRSIAcEUiAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAAAzAAAAMwAAADMAAAAzAAAAMwAAADMAAAAz////AP///wD///8A////AA==" },
+  npc_blacksmith: { w: 16, h: 16, rgba: "////AP///wD///8A////AE1eGv+GtCX/hrQl/4a0Jf9NXhr/AAAAAAAAAACAgIAAgICAAAAAAAAAAAAAAAAAAP///wD///8A////ACMiC/+XlKH/sK23/7Ctt/+51mH/jJtS/1lWZv+AgIAAgICAAICAgAAAAAAAAAAAAAAAAAD///8A////AP///wAjIgv/l5Sh/7Ctt/+wrbf/sK23/7Ctt/9ZVmb/gICAAICAgACAgIAAAAAAAAAAAAAAAAAA////AP///wAvKzv/IyIL/21pe/+Mm1L/udZh/7nWYf+51mH/TV4a/4CAgACAgIAAgICAAAAAAAAAAAAAAAAAAP///wD///8AgICAACMiC/9taXv/bWl7/wAAAP9taXv/AAAA/y8rO/+AgIAAgICAAICAgAAAAAAAAAAAAAAAAAD///8A////AAAAAAAjIgv/bWl7/5eUof9taXv/l5Sh/21pe/9ZVmb/gICAAICAgACAgIAAAAAAAAAAAAAAAAAA////AP///wAAAAAAIyIL/15dNv9taXv/l5Sh/5eUof9ZVmb/AAAAAAAAAACAgIAAgICAAAAAAAAAAAAAAAAAAP///wD///8AeXWD/5eUof+wrbf/sK23/7Ctt/+wrbf/l5Sh/1lWZv////8A////AP///wAAAAAAAAAAAAAAAAD///8AeXWD/5eUof+XlKH/bWl7/5eUof+wrbf/sK23/7Ctt/95dYP/////AP///wD///8AAAAAAAAAAAAAAAAA////AFlWZv+XlKH/WVZm/21pe/+XlKH/MzMz/zMzM/+XlKH/eXWD/y8rO/////8A////AAAAAAAAAAAAAAAAAFk6G/9ZVmb/l5Sh/1lWZv9ZOhv/WTob/wAAAP8AAAD/l5Sh/y8rO/8vKzv/////AP///wAAAAAAAAAAAAAAAABZOhsAWTobAC8rO/8jIgv/jJtS/7nWYf8AAAD/AAAA/7nWYf8vKzv/Lys7/////wD///8AAAAAAAAAAAAAAAAAWTobAFk6GwD///8ATV4a/4ybUv+LHxD/4HEV//irEf/dTh3/dggL/wAAAP8AAAD/gICAAAAAAAAAAAAAAAAAAP///wD///8ATV4a/15dNv9eXTb/IyIL/08GCP9PBgj/TwYI/wAAAP8AAAD/AAAAAICAgAAAAAAAAAAAAAAAAAD///8A////AFlWZv9taXv/Lys7/08GCABPBggAMzMz/wAAAP8AAAD/TwYIAAAAAACAgIAAAAAAAAAAAAAAAAAA////AP///wAvKzv/Lys7/y8rO/////8AMzMz/wAAAP8AAAD/AAAA/wAAAP8AAAAAgICAAAAAAAAAAAAAAAAAAA==" },
+  item_wand_magicmissile: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZqZ5MP+meTD/pnkw/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AM/JjQD///8AAAAAZqZ5MP///////wAA/2tKEP8AAABm////AP///wD///8A////AP///wD///8A////AP///wC2sGcAAAAAZgAAAGameTD//wAA/44AAP9rShD/AAAAZv///wD///8A////AOfinwD///8A////AP///wD///8AAAAAZgAAAGb/////sc3N/4GBgf+BgYH/AAAAZgAAAGb///8A////AP///wDPyY0Az8mNAM/JjQD///8AAAAAZgAAAGameTD/k2ok/2tKEP8AAABmAAAAZgAAAGZrShAA////AP///wD///8A////ALawZwCCflYAAAAAZgAAAGameTD/k2ok/2tKEP8AAABmAAAAZoGBgQCBgYEA////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/////sc3N/4GBgf8AAABmAAAAZmtKEAD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGameTD/k2ok/2tKEP8AAABmAAAAZmtKEADn4p8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGameTD/k2ok/2tKEP8AAABmAAAAZoGBgQD///8A5+KfAP///wD///8A////AP///wD///8AAAAAZgAAAGb/////sc3N/4GBgf8AAABmAAAAZmtKEAD///8A////AOfinwD///8A////AP///wD///8A////AAAAAGameTD/k2ok/2tKEP8AAABmAAAAZmtKEAD///8Az8mNAM/JjQDn4p8A////AP///wD///8A////AP///wAAAABmk2ok/2tKEP8AAABmAAAAZoGBgQD///8A////AIJ+VgCCflYAgn5WAP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmAAAAZmtKEAC2sGcAtrBnALawZwC2sGcAtrBnALawZwD///8A////AP///wD///8A////AP///wCTaiQAa0oQAGtKEAC2sGcAtrBnALawZwC2sGcAtrBnALawZwC2sGcA////AP///wD///8A////AA==" },
+  item_wand_teleportation: { w: 16, h: 16, rgba: "AAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAAD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wAAAAAA////AIGBgQCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQAAAABmAAAAZvnazv/52s7/+drO/wAAAGb///8AAAAAAP///wCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZvnazv///////wAA/5R1aP8AAABm////AAAAAAD///8AgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb52s7//wAA/44AAP+UdWj/AAAAZv///wAAAAAA////AIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8AAAAAAP///wCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb52s7/9MGt/5R1aP8AAABmAAAAZgAAAGb///8A////AAAAAAD///8AgYGBAIGBgQCBgYEAAAAAZgAAAGb52s7/9MGt/5R1aP8AAABmAAAAZoR6AACEegAA////AP///wAAAAAA////AIGBgQCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEA////AP///wD///8AAAAAAP///wCBgYEAAAAAZgAAAGb52s7/9MGt/5R1aP8AAABmAAAAZoGBgQCBgYEAgYGBAP///wD///8A////AAAAAAD///8AAAAAZgAAAGb52s7/9MGt/5R1aP8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQD///8A////AP///wAAAAAAAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8AAAAAAAAAAGb52s7/9MGt/5R1aP8AAABmAAAAZkxMTACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQD///8A////AAAAAAAAAABm9MGt/5R1aP8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wAAAAAAAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_slowness: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQAAAABmAAAAZu+Vff/vlX3/75V9/wAAAGb///8A////AP///wD///8AgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZu+Vff///////wAA/4UrDv8AAABm////AP///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGbvlX3//wAA/44AAP+FKw7/AAAAZv///wD///8A////AP///wCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8AgYGBAIGBgQCBgYEAAAAAZgAAAGbvlX3/3Ewe/4UrDv8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AIGBgQCBgYEAAAAAZgAAAGbvlX3/3Ewe/4UrDv8AAABmAAAAZoR6AACEegAA////AP///wD///8A////AP///wCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEA////AP///wD///8A////AP///wD///8AAAAAZgAAAGbvlX3/3Ewe/4UrDv8AAABmAAAAZoGBgQCBgYEAgYGBAP///wD///8A////AP///wD///8AAAAAZgAAAGbvlX3/3Ewe/4UrDv8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8A////AAAAAGbvlX3/3Ewe/4UrDv8AAABmAAAAZkxMTACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQD///8A////AP///wAAAABm3Ewe/4UrDv8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_firebolt: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQAAAABmAAAAZpCFbf+QhW3/kIVt/wAAAGb///8A////AP///wD///8AgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZpCFbf///////wAA/yUYAv8AAABm////AP///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGaQhW3//wAA/44AAP8lGAL/AAAAZv///wD///8A////AP///wCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8AgYGBAIGBgQCBgYEAAAAAZgAAAGaQhW3/Qy4C/yUYAv8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AIGBgQCBgYEAAAAAZgAAAGaQhW3/Qy4C/yUYAv8AAABmAAAAZoR6AACEegAA////AP///wD///8A////AP///wCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEA////AP///wD///8A////AP///wD///8AAAAAZgAAAGaQhW3/Qy4C/yUYAv8AAABmAAAAZoGBgQCBgYEAgYGBAP///wD///8A////AP///wD///8AAAAAZgAAAGaQhW3/Qy4C/yUYAv8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8A////AAAAAGaQhW3/Qy4C/yUYAv8AAABmAAAAZkxMTACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQD///8A////AP///wAAAABmQy4C/yUYAv8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_poison: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQAAAABmAAAAZvSkhf/0pIX/9KSF/wAAAGb///8A////AP///wD///8AgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZvSkhf///////wAA/4w8Fv8AAABm////AP///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb0pIX//wAA/44AAP+MPBb/AAAAZv///wD///8A////AP///wCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8AgYGBAIGBgQCBgYEAAAAAZgAAAGb0pIX/52Yt/4w8Fv8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AIGBgQCBgYEAAAAAZgAAAGb0pIX/52Yt/4w8Fv8AAABmAAAAZoR6AACEegAA////AP///wD///8A////AP///wCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEA////AP///wD///8A////AP///wD///8AAAAAZgAAAGb0pIX/52Yt/4w8Fv8AAABmAAAAZoGBgQCBgYEAgYGBAP///wD///8A////AP///wD///8AAAAAZgAAAGb0pIX/52Yt/4w8Fv8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8A////AAAAAGb0pIX/52Yt/4w8Fv8AAABmAAAAZkxMTACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQD///8A////AP///wAAAABm52Yt/4w8Fv8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_regrowth: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQAAAABmAAAAZtaujv/Wro7/1q6O/wAAAGb///8A////AP///wD///8AgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZtaujv///////wAA/25EIf8AAABm////AP///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGbWro7//wAA/44AAP9uRCH/AAAAZv///wD///8A////AP///wCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8AgYGBAIGBgQCBgYEAAAAAZgAAAGbWro7/t3U8/25EIf8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AIGBgQCBgYEAAAAAZgAAAGbWro7/t3U8/25EIf8AAABmAAAAZoR6AACEegAA////AP///wD///8A////AP///wCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEA////AP///wD///8A////AP///wD///8AAAAAZgAAAGbWro7/t3U8/25EIf8AAABmAAAAZoGBgQCBgYEAgYGBAP///wD///8A////AP///wD///8AAAAAZgAAAGbWro7/t3U8/25EIf8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZoGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8A////AAAAAGbWro7/t3U8/25EIf8AAABmAAAAZkxMTACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQD///8A////AP///wAAAABmt3U8/25EIf8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_blink: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZr6Zhf++mYX/vpmF/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZr6Zhf///////wAA/1QuGP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGa+mYX//wAA/44AAP9ULhj/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGa+mYX/j1Iv/1QuGP8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGa+mYX/j1Iv/1QuGP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGa+mYX/j1Iv/1QuGP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGa+mYX/j1Iv/1QuGP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGa+mYX/j1Iv/1QuGP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmj1Iv/1QuGP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_lightning: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZufRr//n0a//59Gv/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZufRr////////wAA/4JrR/8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbn0a///wAA/44AAP+Ca0f/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbn0a//17N4/4JrR/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbn0a//17N4/4JrR/8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbn0a//17N4/4JrR/8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbn0a//17N4/4JrR/8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGbn0a//17N4/4JrR/8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABm17N4/4JrR/8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_amok: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZvR7cf/0e3H/9Htx/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZvR7cf///////wAA/4cMBP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb0e3H//wAA/44AAP+HDAT/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb0e3H/3xsK/4cMBP8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb0e3H/3xsK/4cMBP8AAABmAAAAZoR6AACEegAA////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wCBgYEAgYGBAP///wD///8A////AP///wD///8AAAAAZgAAAGb0e3H/3xsK/4cMBP8AAABmAAAAZv///wD///8AgYGBAIGBgQD///8A////AP///wD///8AAAAAZgAAAGb0e3H/3xsK/4cMBP8AAABmAAAAZv///wD///8A////AIGBgQCBgYEA////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wCBgYEAgYGBAP///wD///8A////AAAAAGb0e3H/3xsK/4cMBP8AAABmAAAAZv///wD///8A////AP///wD///8AgYGBAIGBgQD///8A////AP///wAAAABm3xsK/4cMBP8AAABmAAAAZv///wD///8A////AP///wD///8A////AIGBgQCBgYEA////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_reach: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQAAAABmAAAAZqPmn/+j5p//o+af/wAAAGb///8A////AP///wCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZqPmn////////wAA/0CBVv8AAABm////AP///wD///8AgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGaj5p///wAA/44AAP9AgVb/AAAAZv///wD///8A////AIGBgQCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wCBgYEAgYGBAIGBgQCBgYEAAAAAZgAAAGaj5p//RsZy/0CBVv8AAABmAAAAZgAAAGZAgVYA////AP///wD///8AgYGBAIGBgQCBgYEAAAAAZgAAAGaj5p//RsZy/0CBVv8AAABmAAAAZoR6AACEegAA////AP///wD///8A////AIGBgQCBgYEAAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZkCBVgCBgYEA////AP///wD///8A////AP///wCBgYEAAAAAZgAAAGaj5p//RsZy/0CBVv8AAABmAAAAZkCBVgCBgYEAgYGBAP///wD///8A////AP///wD///8AAAAAZgAAAGaj5p//RsZy/0CBVv8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZkCBVgCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8A////AAAAAGaj5p//RsZy/0CBVv8AAABmAAAAZkCBVgCBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQD///8A////AP///wAAAABmRsZy/0CBVv8AAABmAAAAZoR6AACBgYEAgYGBAIGBgQCBgYEAgYGBAIGBgQCBgYEA////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_flock: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZuw6b//sOm//7Dpv/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZuw6b////////wAA/3YZSP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbsOm///wAA/44AAP92GUj/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbsOm//uQBf/3YZSP8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbsOm//uQBf/3YZSP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbsOm//uQBf/3YZSP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbsOm//uQBf/3YZSP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGbsOm//uQBf/3YZSP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmuQBf/3YZSP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_disintegration: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZo5UAP+OVAD/jlQA/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZo5UAP///////wAA/zQgAv8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGaOVAD//wAA/44AAP80IAL/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGaOVAD/UzMA/zQgAv8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGaOVAD/UzMA/zQgAv8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGaOVAD/UzMA/zQgAv8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGaOVAD/UzMA/zQgAv8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGaOVAD/UzMA/zQgAv8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmUzMA/zQgAv8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_wand_avalanche: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZubm5v9mZmb/ZmZm/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZubm5v///////wAA/wAAAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbm5ub//wAA/44AAP9mZmb/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP+EegD/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGZmZmb/MDAw/2ZmZv8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbm5ub/MDAw/2ZmZv8AAABmAAAAZoR6AACEegAA////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wCBgYEA////AP///wD///8A////AP///wD///8AAAAAZgAAAGbm5ub/mpqa/2ZmZv8AAABmAAAAZv///wD///8AgYGBAP///wD///8A////AP///wD///8AAAAAZgAAAGbm5ub/MDAw/wAAAP8AAABmAAAAZv///wD///8A////AIGBgQD///8A////AP///wD///8AAAAAZgAAAGb/9Vv/saEA/4R6AP8AAABmAAAAZv///wD///8A////AP///wCBgYEA////AP///wD///8A////AAAAAGbm5ub/mpqa/wAAAP8AAABmAAAAZv///wD///8A////AP///wD///8AgYGBAIGBgQD///8A////AP///wAAAABmmpqa/2ZmZv8AAABmAAAAZv///wD///8A////AP///wD///8A////AIGBgQCBgYEA////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_mending: { w: 16, h: 16, rgba: "AAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAAD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAAAA////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8AAAAAAP///wD///8A////AP///wAAAABmAAAAZv/////m5ub/AAAAZgAAAGb///8A////AP///wD///8A////AAAAAAD///8A////AP///wD///8AAAAAZubm5v/m5ub/5ubm/7S0tP8AAABm////AP///wD///8A////AP///wAAAAAA////AP///wD///8AAAAAZgAAAGb/1zz/tLS0/7S0tP//1zz/AAAAZgAAAGb///8A////AP///wD///8AAAAAAP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AAAAAAD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wAAAAAA////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8AAAAAAP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AAAAAAD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wAAAAAA////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8AAAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAAD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAAAA////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_detection: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv////+88f//AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZrzx//+88f//vPH//3m8zv8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/ebzO/3m8zv//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_shadows: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv////+0Bgz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZrQGDP+0Bgz/tAYM/3cEBf8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/dwQF/3cEBf//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_power: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv//////ACb/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv8AJv//ACb//wAm/9IAGf8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/0gAZ/9IAGf//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_herbalism: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv////+SYKz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZpJgrP+SYKz/kmCs/1g3aP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/WDdo/1g3aP//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_accuracy: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv//////+JH/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv/4kf//+JH///iR/7evUv8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/t69S/7evUv//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_evasion: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv////8APhL/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgA+Ev8APhL/AD4S/wAAAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/AAAA/wAAAP//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_satiety: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv////8AW4H/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgBbgf8AW4H/AFuB/wA0Tf8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/ADRN/wA0Tf//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_haste: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv////8AmiL/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgCaIv8AmiL/AJoi/wBmK/8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/AGYr/wBmK///1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_haggler: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv////8tAP//AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZi0A//8tAP//LQD//xgAnf8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/GACd/xgAnf//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_ring_elements: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv/////bopr/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZtuimv/bopr/26Ka/4tkYP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/i2Rg/4tkYP//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AOzs7ADs7OwA7OzsAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wDs7OwA7OzsAOzs7AD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A7OzsAOzs7ADs7OwA////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AOzs7ADs7OwA7OzsAA==" },
+  item_ring_thorns: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv////+otLT/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZqi0tP+otLT/qLS0/4pmZv8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGb/1zz/imZm/4pmZv//1zz/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/1zz//8cA//+dAP//nQD//50A///XPP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABm/8cA//+dAP8AAABmAAAAZv+dAP//xwD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+dAP//xwD/AAAAZgAAAGb/xwD//50A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGb/nQD//50A///XPP//1zz//50A//+dAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv+dAP//nQD//50A//+dAP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAOzs7ADs7OwA7OzsAA==" },
+  item_potion_experience: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNHSABn/0gAZ//8AJv//ACb///////8AJv/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDR0gAZ/9IAGf//ACb//wAm////////ACb/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0dIAGf/SABn//wAm//8AJv//ACb//wAm/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDR0gAZ/9IAGf//ACb//wAm/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_toxicgas: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNEAKbj/ACm4/wA+//8APv///////wA+///b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRACm4/wApuP8APv//AD7///////8APv//29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QApuP8AKbj/AD7//wA+//8APv//AD7//9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRACm4/wApuP8APv//AD7//9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_liquidflame: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNEAdCb/AHQm/wC0Pv8AtD7//////wC0Pv/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRAHQm/wB0Jv8AtD7/ALQ+//////8AtD7/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QB0Jv8AdCb/ALQ+/wC0Pv8AtD7/ALQ+/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRAHQm/wB0Jv8AtD7/ALQ+/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_paralyticgas: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNGlAGv/pQBr/+4AnP/uAJz//////+4AnP/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRpQBr/6UAa//uAJz/7gCc///////uAJz/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0aUAa/+lAGv/7gCc/+4AnP/uAJz/7gCc/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRpQBr/6UAa//uAJz/7gCc/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_levitation: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNETExP/ExMT/z4+Pv8+Pj7//////z4+Pv/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRExMT/xMTE/8+Pj7/Pj4+//////8+Pj7/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0RMTE/8TExP/Pj4+/z4+Pv8+Pj7/Pj4+/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRExMT/xMTE/8+Pj7/Pj4+/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_mindvision: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNG3r6L/t6+i//bs2v/27Nr///////bs2v/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRt6+i/7evov/27Nr/9uza///////27Nr/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0bevov+3r6L/9uza//bs2v/27Nr/9uza/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRt6+i/7evov/27Nr/9uza/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_purity: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNHKZwX/ymcF//+MCf//jAn///////+MCf/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRymcF/8pnBf//jAn//4wJ////////jAn/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0cpnBf/KZwX//4wJ//+MCf//jAn//4wJ/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRymcF/8pnBf//jAn//4wJ/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_invisibility: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNE2GAP/NhgD/2s2Bv9rNgb//////2s2Bv/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRNhgD/zYYA/9rNgb/azYG//////9rNgb/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0TYYA/82GAP/azYG/2s2Bv9rNgb/azYG/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRNhgD/zYYA/9rNgb/azYG/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_might: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmojZG/71RYP8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dSzuP/cur//29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGiNkb/vVFg/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNFNAHb/TQB2/3oAuP96ALj//////3oAuP/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRTQB2/00Adv96ALj/egC4//////96ALj/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0U0Adv9NAHb/egC4/3oAuP96ALj/egC4/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRTQB2/00Adv96ALj/egC4/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_potion_frost: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmmmIz/7V9T/8AAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRsLCw0dC/s//Yx7r/29vb0dvb29EAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNGaYjP/tX1P/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGawsLDRAAAAZgAAAGbb29vRAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABm29vb0QAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmsLCw0QAAAGYAAABmAAAAZgAAAGbb29vRAAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0QAAAGYAAABmAAAAZgAAAGYAAABmAAAAZtvb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZrCwsNFGTEz/RkxM/4+amv+Pmpr//////4+amv/b29vRAAAAZv///wD///8A////AP///wD///8A////AAAAAGawsLDRRkxM/0ZMTP+Pmpr/j5qa//////+Pmpr/29vb0QAAAGb///8A////AP///wD///8A////AP///wAAAABmsLCw0UZMTP9GTEz/j5qa/4+amv+Pmpr/j5qa/9vb29EAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAGawsLDRRkxM/0ZMTP+Pmpr/j5qa/9vb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZrCwsNHFxcXRxcXF0dvb29EAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_identify: { w: 16, h: 16, rgba: "AAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAAD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wAAAAAA////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8AAAAAAP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AAAAAAD///8AAAAAZqOXf//KvZ//yr2f/3hoRv/KvZ//yr2f/3hoRv/KvZ//yr2f/6OXf/8AAABm////AP///wAAAAAA////AAAAAGajl3//yr2f/8q9n/94aEb/yr2f/8q9n/94aEb/yr2f/8q9n/+jl3//AAAAZv///wD///8AAAAAAP///wAAAABmo5d//8q9n//KvZ//eGhG/7qrg/94aEb/oIxj/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAAD///8AAAAAZqOXf//KvZ//yr2f/3hoRv94aEb/oIxj/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAAAA////AAAAAGajl3//yr2f/8q9n/94aEb/yr2f/8q9n//KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8AAAAAAP///wAAAABmo5d//8q9n//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wAAAAAAAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8AAAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_magicmapping: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n/+gjGP/yr2f/8q9n/94aEb/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//eGhG/3hoRv+6q4P/eGhG/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/3hoRv+6q4P/eGhG/3hoRv/KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n/94aEb/yr2f/8q9n/+gjGP/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_recharging: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/oIxj/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/3hoRv+gjGP/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv+6q4P/eGhG/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/yr2f/7qrg//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_removecurse: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n/94aEb/eGhG/3hoRv94aEb/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//eGhG/8q9n//KvZ//eGhG/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/3hoRv/KvZ//yr2f/3hoRv/KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n/94aEb/eGhG/3hoRv94aEb/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_teleportation: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//eGhG/7qrg//KvZ//uquD/3hoRv/KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n/94aEb/yr2f/3hoRv/KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//uquD/3hoRv+6q4P/yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/7qrg/94aEb/uquD/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n/94aEb/yr2f/3hoRv/KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n/94aEb/uquD/8q9n/+6q4P/eGhG/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_challenge: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//yr2f/3hoRv94aEb/uquD/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n/94aEb/uquD/3hoRv+6q4P/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//eGhG/8q9n//KvZ//eGhG/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/3hoRv+gjGP/eGhG/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n/94aEb/yr2f/7qrg/94aEb/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//eGhG/8q9n//KvZ//eGhG/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_terror: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_lullaby: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//eGhG/8q9n/94aEb/yr2f/3hoRv/KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/3hoRv/KvZ//eGhG/8q9n/94aEb/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n/+6q4P/eGhG/3hoRv94aEb/uquD/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/7qrg/94aEb/uquD/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_psionicblast: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/6CMY//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n/+6q4P/eGhG/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/eGhG/7qrg//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/8q9n/+gjGP/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wDs7OwAAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A7OzsAOzs7ACCdloAgnZaAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_mirrorimage: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/3hoRv94aEb/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/eGhG/3hoRv/KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_scroll_enchantment: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AAAAAGYAAABmzc29////6////+v////r////6////+v////r////6////+v/zc29/wAAAGb///8A////AP///wAAAABmr6KF/9vKpv/byqb/28qm/9vKpv/byqb/28qm/9vKpv/byqb/r6KF/wAAAGYAAABm////AP///wD///8AAAAAZqOXf//KvZ//yr2f/7qrg/94aEb/uquD/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/7qrg/94aEb/eGhG/3hoRv+6q4P/yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n/94aEb/yr2f/3hoRv/KvZ//eGhG/8q9n//KvZ//o5d//wAAAGb///8A////AP///wD///8AAAAAZqOXf//KvZ//yr2f/8q9n/94aEb/yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wD///8A////AAAAAGajl3//yr2f/8q9n//KvZ//eGhG/8q9n//KvZ//yr2f/8q9n/+jl3//AAAAZv///wD///8A////AP///wAAAABmo5d//8q9n//KvZ//yr2f/3hoRv/KvZ//yr2f/8q9n//KvZ//o5d//wAAAGb///8A////AAAAAGYAAABmAAAAZqOXf//KvZ//yr2f/8q9n//KvZ//yr2f/8q9n//KvZ//yr2f/6OXf/8AAABm////AP///wAAAABmkodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/5KHa/+Sh2v/kodr/8q9n/+jl3//AAAAZv///wD///8AAAAAZpKHa/+2qYf/tqmH/7aph/+2qYf/tqmH/7aph/+2qYf/tqmH/5KHa//byqb/r6KF/wAAAGb///8A////AAAAAGYAAABmgnZa/6OTcv+jk3L/o5Ny/6OTcv+jk3L/o5Ny/6OTcv+jk3L/gnZa/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_darkgold: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGYAAABm////////////1QD//9UA///VAP/hiQD/AAAAZgAAAGb///8A////AP///wD///8A////AAAAAGYAAABm///////VAP//1QD//9UA///VAP//1QD/4YkA/7A+AP8AAABm////AP///wD///8A////AP///wAAAABm/9UA///VAP//1QD//9UA/+GJAP/hiQD/4YkA/+GJAP+wPgD/AAAAZgAAAGb///8A////AP///wD///8AAAAAZuGJAP//1QD//9UA/+GJAP/hiQD/4YkA////////1QD//9UA/+GJAP8AAABmAAAAZv///wD///8A////AAAAAGYAAABm4YkA/+GJAP/hiQD/sD4A/////////////9UA///VAP/hiQD/sD4A/wAAAGb///8A////AP///wD///8AAAAAZgAAAGb/1QD//////////////////9UA///VAP//1QD/4YkA/7A+AP8AAABm////AP///wD///8AAAAAZgAAAGb/1QD//9UA///VAP//1QD//9UA///VAP//1QD/4YkA/+GJAP+wPgD/AAAAZv///wD///8A////AAAAAGbhiQD//9UA///VAP//1QD//9UA///VAP//1QD/4YkA/+GJAP/hiQD/sD4A/wAAAGb///8A////AP///wAAAABm4YkA/+GJAP//1QD//9UA///VAP/hiQD/4YkA/+GJAP/hiQD/sD4A/wAAAGYAAABmAAAAZgAAAGb///8AAAAAZuGJAP/hiQD/4YkA/+GJAP/hiQD/4YkA/+GJAP+wPgD/sD4A/wAAAGYAAABm/9UA/+GJAP8AAABm////AAAAAGYAAABmsD4A/7A+AP+wPgD/sD4A/7A+AP+wPgD/AAAAZgAAAGYAAABm///////VAP+wPgD/AAAAZv///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm/9UA///VAP/hiQD/sD4A/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGbhiQD/sD4A/wAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AA==" },
+  item_pickaxe: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv///////////////wAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAABmAAAAZv//////////AAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGbBhVX/2Zdk///////Nzc3/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmjl01/83Nzf/Nzc3/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZs3Nzf/Nzc3/wYVV/9mXZP8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZs3Nzf+BgYH/AAAAZo5dNf/BhVX/2Zdk/wAAAGYAAABm////AP///wD///8A////AP///wD///8AAAAAZs3Nzf+BgYH/AAAAZgAAAGYAAABmjl01/8GFVf/Zl2T/AAAAZgAAAGb///8A////AP///wD///8A////AAAAAGaBgYH/AAAAZgAAAGb///8AAAAAZgAAAGaOXTX/wYVV/9mXZP8AAABmAAAAZv///wD///8A////AP///wAAAABmgYGB/wAAAGb///8A////AP///wAAAABmAAAAZo5dNf/BhVX/2Zdk/wAAAGYAAABm////AP///wD///8AAAAAZgAAAGYAAABm////AP///wD///8A////AAAAAGYAAABmjl01/8GFVf/Zl2T/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGaOXTX/wYVV/9mXZP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZo5dNf/BhVX/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_honeypot: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wAAAABm//8A////AP///wD//9YA///WAP//1gD//9YA/8GQQP/BkED/wZBA/wAAAGb///8A////AP///wAAAABmAAAAZppiMv/BkED//9YA///WAP//1gD/wZBA/8GQQP+aYjL/mmIy/5piMv8AAABmAAAAZv///wD///8AAAAAZsGQQP/UuUj/1LlI/8GQQP//1gD/wZBA/8GQQP/BkED/wZBA/8GQQP+aYjL/mmIy/wAAAGb///8A////AAAAAGbBkED/1LlI/8GQQP/BkED/wZBA/8GQQP/BkED/9sAA/8GQQP/BkED/mmIy/5piMv8AAABm////AP///wAAAABmwZBA/8GQQP/BkED/wZBA/8GQQP/BkED/7d7H/zcnC//t3sf/wZBA/5piMv+aYjL/AAAAZv///wD///8AAAAAZppiMv/BkED/wZBA/8GQQP/BkED/wZBA/8GQQP/2wAD/wZBA/5piMv+aYjL/mmIy/wAAAGb///8A////AAAAAGYAAABmmmIy/8GQQP/BkED/wZBA/8GQQP/BkED/wZBA/8GQQP+aYjL/mmIy/wAAAGYAAABm////AP///wD///8AAAAAZppiMv+aYjL/mmIy/8GQQP/BkED/wZBA/8GQQP+aYjL/mmIy/5piMv8AAABm////AP///wD///8A////AAAAAGYAAABmmmIy/5piMv+aYjL/mmIy/5piMv+aYjL/mmIy/5piMv8AAABmAAAAZv///wD///8A////AP///wD///8AAAAAZgAAAGaaYjL/mmIy/5piMv+aYjL/mmIy/5piMv8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
   bufficon_mind_vision: { w: 7, h: 7, rgba: "uGK4/7hiuP+4Yrj/uGK4/7hiuP+4Yrj/uGK4/7hiuP/vk87//8Tl///E5f//xOX/75PO/7hiuP/vk87//8Tl/7hiuP/vk87/uGK4///E5f/vk87//8Tl/7hiuP+4Yrj//8Tl/7hiuP+4Yrj//8Tl/++Tzv//xOX/uGK4/++Tzv+4Yrj//8Tl/++Tzv+4Yrj/75PO///E5f//xOX//8Tl/++Tzv+4Yrj/uGK4/7hiuP+4Yrj/uGK4/7hiuP+4Yrj/uGK4/w==" },
   bufficon_levitation: { w: 7, h: 7, rgba: "ZtT//2bU//9m1P//ZtT//2bU//9m1P//ZtT//2bU//9m1P//ZtT//7Lp/////////////2bU//9m1P//ZtT//////////////////2bU//9m1P//ZtT///////////////////////9m1P//ZtT//2bU//////////////////+y6f//ZtT//2bU//9m1P//s+r/////////////ZtT//2bU//9m1P//ZtT//2bU//9m1P//ZtT//2bU//9m1P//ZtT//w==" },
   bufficon_fire: { w: 7, h: 7, rgba: "/yoA//8qAP//KgD//6oz//8qAP//KgD//yoA//8qAP//KgD///9m//8qAP//KgD//yoA//8qAP//KgD//yoA//8qAP///2b//6oz//8qAP//KgD//yoA//+qM////2b///9m////Zv//qjP//yoA//8qAP//qjP///9m////Zv///2b//9VN//8qAP//KgD//6oz////Zv///2b///9m//+qM///KgD//yoA//8qAP//qjP//6oz//+qM///KgD//yoA/w==" },
@@ -3501,864 +3822,6 @@ var ORIGINAL_SPRITES = {
   bufficon_rage: { w: 7, h: 7, rgba: "AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP+AVQD//6oA//+qAP//qgD/gFUA/wAAAP+AVQD//6oA//8aGv//Yg3//xoa//+qAP+AVQD//6oA//8aGv//Ghr//6oA//8aGv//Ghr//6oA/4BVAP//qgD//xoa//9iDf//Ghr//6oA/4BVAP8AAAD/gFUA//+qAP//qgD//6oA/4BVAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/w==" },
   bufficon_sacrifice: { w: 7, h: 7, rgba: "IkRm/yJEZv8iRGb/RIju/yJEZv8iRGb/IkRm/yJEZv8iRGb/u8z//yJEZv8iRGb/IkRm/yJEZv8iRGb/IkRm/yJEZv+7zP//RIju/yJEZv8iRGb/IkRm/0SI7v+7zP//u8z//7vM//9EiO7/IkRm/yJEZv9EiO7/u8z//7vM//+7zP//u8z//yJEZv8iRGb/RIju/7vM//+7zP//u8z//0SI7v8iRGb/IkRm/yJEZv9EiO7/RIju/0SI7v8iRGb/IkRm/w==" }
 };
-
-// src/content/items.ts
-var SHORT_SWORD = {
-  id: "shortsword",
-  name: "short sword",
-  sprite: "shortsword",
-  type: "weapon",
-  stackable: false,
-  desc: "It is indeed quite short, just a few inches longer than a dagger.",
-  weapon: { name: "short sword", tier: 1, level: 0, min: 1, max: 12, str: 11, acu: 1, dly: 1, missile: false },
-  price: 20
-};
-var DART = {
-  id: "dart",
-  name: "dart",
-  sprite: "dart",
-  type: "missile",
-  stackable: true,
-  desc: "These simple metal spikes are weighted to fly true and sting their prey with a flick of the wrist.",
-  weapon: { name: "dart", tier: 1, level: 0, min: 1, max: 4, str: 10, acu: 1, dly: 1, missile: true },
-  price: 2
-};
-var CLOTH_ARMOR = {
-  id: "cloth_armor",
-  name: "cloth armor",
-  sprite: "armor_cloth",
-  type: "armor",
-  stackable: false,
-  desc: "This lightweight armor offers basic protection.",
-  armor: { name: "cloth armor", level: 0, str: 9, dr: 2 },
-  price: 10
-};
-var POTION_HEALING = {
-  id: "potion_healing",
-  name: "potion of healing",
-  sprite: "potion_red",
-  type: "potion",
-  stackable: true,
-  desc: "An elixir that will instantly return you to full health and cure poison.",
-  price: 20
-};
-var POTION_STRENGTH = {
-  id: "potion_strength",
-  name: "potion of strength",
-  sprite: "potion_strength",
-  type: "potion",
-  stackable: true,
-  desc: "This powerful liquid will course through your muscles, permanently increasing your strength by one point.",
-  price: 20
-};
-var RATION = {
-  id: "ration",
-  name: "ration of food",
-  sprite: "ration",
-  type: "food",
-  stackable: true,
-  desc: "Nothing fancy here: dried meat, some biscuits - things like that.",
-  energy: 260,
-  price: 10
-};
-var SCROLL = {
-  id: "scroll",
-  name: "scroll",
-  sprite: "scroll",
-  type: "scroll",
-  stackable: true,
-  desc: "A scroll covered in indecipherable runes.",
-  price: 15
-};
-var SCROLL_UPGRADE = {
-  id: "scroll_upgrade",
-  name: "Scroll of Upgrade",
-  sprite: "scroll_upgrade",
-  type: "scroll",
-  stackable: true,
-  desc: "This scroll will upgrade a single item, improving its quality. A weapon will inflict more damage; a suit of armor will deflect additional blows. Weapons and armor will also require less strength to use.",
-  price: 15
-};
-var GOLD = {
-  id: "gold",
-  name: "gold",
-  sprite: "gold",
-  type: "gold",
-  stackable: true,
-  desc: "Collect gold coins to spend them later in a shop.",
-  price: 0
-};
-var IRON_KEY = {
-  id: "iron_key",
-  name: "iron key",
-  sprite: "key_iron",
-  type: "key",
-  stackable: true,
-  desc: "The notches on this ancient iron key are well worn.",
-  price: 0
-};
-var SKELETON_KEY = {
-  id: "skeleton_key",
-  name: "skeleton key",
-  sprite: "key_skeleton",
-  type: "key",
-  stackable: true,
-  desc: "A key carved from bone. It must open the way down.",
-  price: 0
-};
-var GOLDEN_KEY = {
-  id: "golden_key",
-  name: "golden key",
-  sprite: "key_gold",
-  type: "key",
-  stackable: true,
-  desc: "The notches on this golden key are tiny and intricate. Maybe it can open some chest lock?",
-  price: 0
-};
-var DEWDROP = {
-  id: "dewdrop",
-  name: "dewdrop",
-  sprite: "dewdrop",
-  type: "dewdrop",
-  stackable: true,
-  desc: "A crystal clear dewdrop.",
-  price: 0
-};
-var SEED = {
-  id: "seed",
-  name: "seed",
-  sprite: "seed",
-  type: "seed",
-  stackable: true,
-  desc: "A strange seed. Perhaps it can be planted.",
-  price: 0
-};
-var DRIED_ROSE = {
-  id: "dried_rose",
-  name: "dried rose",
-  sprite: "rose",
-  type: "quest",
-  stackable: false,
-  desc: "The rose has dried long ago, but it has kept all its petals somehow."
-};
-var RAT_SKULL = {
-  id: "rat_skull",
-  name: "giant rat skull",
-  sprite: "skull",
-  type: "quest",
-  stackable: false,
-  desc: "It could be a nice hunting trophy, but it smells too bad to place it on a wall.",
-  price: 100
-};
-var CORPSE_DUST = {
-  id: "corpse_dust",
-  name: "corpse dust",
-  sprite: "dust",
-  type: "quest",
-  stackable: false,
-  desc: "The ball of corpse dust doesn't differ outwardly from a regular dust ball. " + "However, you know somehow that it's better to get rid of it as soon as possible."
-};
-var PHANTOM_FISH = {
-  id: "phantom_fish",
-  name: "phantom fish",
-  sprite: "phantom",
-  type: "quest",
-  stackable: false,
-  desc: "You can barely see this tiny translucent fish in the air. " + "In the water it becomes effectively invisible."
-};
-var ROTBERRY_SEED = {
-  id: "rotberry_seed",
-  name: "seed of Rotberry",
-  sprite: "seed_rotberry",
-  type: "quest",
-  stackable: false,
-  desc: "A strange seed. Perhaps it can be planted."
-};
-var QUARTERSTAFF = {
-  id: "quarterstaff",
-  name: "quarterstaff",
-  sprite: "weapon_quarterstaff",
-  type: "weapon",
-  stackable: false,
-  desc: "A staff of hardwood, its ends are shod with iron.",
-  weapon: { name: "quarterstaff", tier: 2, level: 0, min: 2, max: 12, str: 12, acu: 1, dly: 1, missile: false },
-  price: 40
-};
-var SPEAR = {
-  id: "spear",
-  name: "spear",
-  sprite: "weapon_spear",
-  type: "weapon",
-  stackable: false,
-  desc: "A slender wooden rod tipped with sharpened iron.",
-  weapon: { name: "spear", tier: 2, level: 0, min: 2, max: 18, str: 12, acu: 1, dly: 1.5, missile: false },
-  price: 40
-};
-var SWORD = {
-  id: "sword",
-  name: "sword",
-  sprite: "weapon_sword",
-  type: "weapon",
-  stackable: false,
-  desc: "The razor-sharp length of steel blade shines reassuringly.",
-  weapon: { name: "sword", tier: 3, level: 0, min: 3, max: 16, str: 14, acu: 1, dly: 1, missile: false },
-  price: 80
-};
-var MACE = {
-  id: "mace",
-  name: "mace",
-  sprite: "weapon_mace",
-  type: "weapon",
-  stackable: false,
-  desc: "The iron head of this weapon inflicts substantial damage.",
-  weapon: { name: "mace", tier: 3, level: 0, min: 3, max: 12, str: 14, acu: 1, dly: 0.8, missile: false },
-  price: 80
-};
-var LONGSWORD = {
-  id: "longsword",
-  name: "longsword",
-  sprite: "weapon_longsword",
-  type: "weapon",
-  stackable: false,
-  desc: "This towering blade inflicts heavy damage by investing its heft into every cut.",
-  weapon: { name: "longsword", tier: 4, level: 0, min: 4, max: 22, str: 16, acu: 1, dly: 1, missile: false },
-  price: 160
-};
-var BATTLE_AXE = {
-  id: "battle_axe",
-  name: "battle axe",
-  sprite: "weapon_battle_axe",
-  type: "weapon",
-  stackable: false,
-  desc: "The enormous steel head of this battle axe puts considerable heft behind each stroke.",
-  weapon: { name: "battle axe", tier: 4, level: 0, min: 4, max: 18, str: 16, acu: 1.2, dly: 1, missile: false },
-  price: 160
-};
-var GLAIVE = {
-  id: "glaive",
-  name: "glaive",
-  sprite: "weapon_glaive",
-  type: "weapon",
-  stackable: false,
-  desc: "A polearm consisting of a sword blade on the end of a pole.",
-  weapon: { name: "glaive", tier: 5, level: 0, min: 5, max: 30, str: 18, acu: 1, dly: 1, missile: false },
-  price: 320
-};
-var WAR_HAMMER = {
-  id: "war_hammer",
-  name: "war hammer",
-  sprite: "weapon_war_hammer",
-  type: "weapon",
-  stackable: false,
-  desc: "Few creatures can withstand the crushing blow of this towering mass of lead and steel, but only the strongest of adventurers can use it effectively.",
-  weapon: { name: "war hammer", tier: 5, level: 0, min: 5, max: 25, str: 18, acu: 1.2, dly: 1, missile: false },
-  price: 320
-};
-var LEATHER_ARMOR = {
-  id: "leather_armor",
-  name: "leather armor",
-  sprite: "armor_leather",
-  type: "armor",
-  stackable: false,
-  desc: "Armor made from tanned monster hide. Not as light as cloth armor but provides better protection.",
-  armor: { name: "leather armor", level: 0, str: 11, dr: 4 },
-  price: 20
-};
-var MAIL_ARMOR = {
-  id: "mail_armor",
-  name: "mail armor",
-  sprite: "armor_mail",
-  type: "armor",
-  stackable: false,
-  desc: "Interlocking metal links make for a tough but flexible suit of armor.",
-  armor: { name: "mail armor", level: 0, str: 13, dr: 6 },
-  price: 40
-};
-var SCALE_ARMOR = {
-  id: "scale_armor",
-  name: "scale armor",
-  sprite: "armor_scale",
-  type: "armor",
-  stackable: false,
-  desc: "The metal scales sewn onto a leather vest create a flexible, yet protective armor.",
-  armor: { name: "scale armor", level: 0, str: 15, dr: 8 },
-  price: 80
-};
-var PLATE_ARMOR = {
-  id: "plate_armor",
-  name: "plate armor",
-  sprite: "armor_plate",
-  type: "armor",
-  stackable: false,
-  desc: "Enormous plates of metal are joined together into a suit that provides unmatched protection to any adventurer strong enough to bear its staggering weight.",
-  armor: { name: "plate armor", level: 0, str: 17, dr: 10 },
-  price: 160
-};
-var SEED_POUCH = {
-  id: "seed_pouch",
-  name: "seed pouch",
-  sprite: "seed_pouch",
-  type: "bag",
-  stackable: false,
-  desc: "This small velvet pouch allows you to store any number of seeds in it. Very convenient.",
-  price: 50
-};
-var SCROLL_HOLDER = {
-  id: "scroll_holder",
-  name: "scroll holder",
-  sprite: "scroll_holder",
-  type: "bag",
-  stackable: false,
-  desc: "You can place any number of scrolls into this tubular container. It saves room in your backpack and protects scrolls from fire.",
-  price: 50
-};
-var WAND_HOLSTER = {
-  id: "wand_holster",
-  name: "wand holster",
-  sprite: "wand_holster",
-  type: "bag",
-  stackable: false,
-  desc: "This slim holder is made of leather of some exotic animal. It allows to compactly carry up to 12 wands.",
-  price: 50
-};
-var WEIGHTSTONE = {
-  id: "weightstone",
-  name: "weightstone",
-  sprite: "weightstone",
-  type: "misc",
-  stackable: true,
-  desc: "Using a weightstone, you can balance your melee weapon to increase its speed or accuracy.",
-  price: 40
-};
-var TORCH = {
-  id: "torch",
-  name: "torch",
-  sprite: "torch",
-  type: "misc",
-  stackable: true,
-  desc: "It's an indispensable item in The Demon Halls, which are notorious for their poor ambient lighting.",
-  price: 10
-};
-var ANKH = {
-  id: "ankh",
-  name: "Ankh",
-  sprite: "ankh",
-  type: "misc",
-  stackable: true,
-  desc: "The ancient symbol of immortality grants an ability to return to life after death. Upon resurrection all non-equipped items are lost.",
-  price: 50
-};
-var SCROLL_IDENTIFY = {
-  id: "scroll_identify",
-  name: "Scroll of Identify",
-  sprite: "scroll",
-  type: "scroll",
-  stackable: true,
-  desc: "Permanently reveals all of the secrets of a single item.",
-  price: 15
-};
-var SCROLL_REMOVE_CURSE = {
-  id: "scroll_remove_curse",
-  name: "Scroll of Remove Curse",
-  sprite: "scroll",
-  type: "scroll",
-  stackable: true,
-  desc: "The incantation on this scroll will instantly strip from the reader's weapon, armor, rings and carried items any evil enchantments that might prevent the wearer from removing them.",
-  price: 15
-};
-var SCROLL_MAGIC_MAPPING = {
-  id: "scroll_magic_mapping",
-  name: "Scroll of Magic Mapping",
-  sprite: "scroll",
-  type: "scroll",
-  stackable: true,
-  desc: "When this scroll is read, an image of crystal clarity will be etched into your memory, alerting you to the precise layout of the level and revealing all hidden secrets. The locations of items and creatures will remain unknown.",
-  price: 15
-};
-var OVERPRICED_RATION = {
-  id: "overpriced_ration",
-  name: "overpriced food ration",
-  sprite: "overpriced_ration",
-  type: "food",
-  stackable: true,
-  desc: "It looks exactly like a standard ration of food but smaller.",
-  energy: 100,
-  price: 20
-};
-var ITEMS = {
-  shortsword: SHORT_SWORD,
-  dart: DART,
-  cloth_armor: CLOTH_ARMOR,
-  potion_healing: POTION_HEALING,
-  potion_strength: POTION_STRENGTH,
-  ration: RATION,
-  scroll: SCROLL,
-  scroll_upgrade: SCROLL_UPGRADE,
-  gold: GOLD,
-  iron_key: IRON_KEY,
-  skeleton_key: SKELETON_KEY,
-  golden_key: GOLDEN_KEY,
-  dewdrop: DEWDROP,
-  seed: SEED,
-  dried_rose: DRIED_ROSE,
-  rat_skull: RAT_SKULL,
-  corpse_dust: CORPSE_DUST,
-  phantom_fish: PHANTOM_FISH,
-  rotberry_seed: ROTBERRY_SEED,
-  quarterstaff: QUARTERSTAFF,
-  spear: SPEAR,
-  sword: SWORD,
-  mace: MACE,
-  longsword: LONGSWORD,
-  battle_axe: BATTLE_AXE,
-  glaive: GLAIVE,
-  war_hammer: WAR_HAMMER,
-  leather_armor: LEATHER_ARMOR,
-  mail_armor: MAIL_ARMOR,
-  scale_armor: SCALE_ARMOR,
-  plate_armor: PLATE_ARMOR,
-  seed_pouch: SEED_POUCH,
-  scroll_holder: SCROLL_HOLDER,
-  wand_holster: WAND_HOLSTER,
-  weightstone: WEIGHTSTONE,
-  torch: TORCH,
-  ankh: ANKH,
-  scroll_identify: SCROLL_IDENTIFY,
-  scroll_remove_curse: SCROLL_REMOVE_CURSE,
-  scroll_magic_mapping: SCROLL_MAGIC_MAPPING,
-  overpriced_ration: OVERPRICED_RATION
-};
-function getItem(id) {
-  const { defId } = parseItemId(id);
-  const def = ITEMS[defId];
-  if (!def)
-    throw new Error(`unknown item id: ${id}`);
-  return def;
-}
-function parseItemId(id) {
-  const colon = id.indexOf(":");
-  if (colon === -1)
-    return { defId: id, qty: 1 };
-  const n = parseInt(id.slice(colon + 1), 10);
-  return {
-    defId: id.slice(0, colon),
-    qty: Number.isFinite(n) && n > 0 ? n : 1
-  };
-}
-
-// src/content/itemgen.ts
-var GEN_CATEGORY_WEIGHTS = [
-  { cat: "weapon", weight: 15 },
-  { cat: "armor", weight: 10 },
-  { cat: "potion", weight: 50 },
-  { cat: "scroll", weight: 40 },
-  { cat: "wand", weight: 4 },
-  { cat: "ring", weight: 2 },
-  { cat: "seed", weight: 5 },
-  { cat: "food", weight: 0 },
-  { cat: "gold", weight: 50 },
-  { cat: "misc", weight: 5 }
-];
-var dart = (min, max) => (rng) => `dart:${rng.int(min, max)}`;
-var shortsword = () => "shortsword";
-var GEN_CLASSES = {
-  weapon: [
-    { cls: "Dagger", prob: 1, m1: shortsword },
-    { cls: "Knuckles", prob: 1, m1: shortsword },
-    { cls: "Quarterstaff", prob: 1, m1: shortsword },
-    { cls: "Spear", prob: 1, m1: shortsword },
-    { cls: "Mace", prob: 1, m1: shortsword },
-    { cls: "Sword", prob: 1, m1: shortsword },
-    { cls: "Longsword", prob: 1, m1: shortsword },
-    { cls: "BattleAxe", prob: 1, m1: shortsword },
-    { cls: "WarHammer", prob: 1, m1: shortsword },
-    { cls: "Glaive", prob: 1, m1: shortsword },
-    { cls: "ShortSword", prob: 0, m1: shortsword },
-    { cls: "Dart", prob: 0, m1: dart(5, 15) },
-    { cls: "Javelin", prob: 1, m1: dart(5, 15) },
-    { cls: "IncendiaryDart", prob: 1, m1: dart(3, 6) },
-    { cls: "CurareDart", prob: 1, m1: dart(2, 5) },
-    { cls: "Shuriken", prob: 1, m1: dart(5, 15) },
-    { cls: "Boomerang", prob: 0, m1: dart(5, 15) },
-    { cls: "Tamahawk", prob: 1, m1: dart(5, 12) }
-  ],
-  armor: [
-    { cls: "ClothArmor", prob: 1, m1: () => "cloth_armor" },
-    { cls: "LeatherArmor", prob: 1, m1: () => "cloth_armor" },
-    { cls: "MailArmor", prob: 1, m1: () => "cloth_armor" },
-    { cls: "ScaleArmor", prob: 1, m1: () => "cloth_armor" },
-    { cls: "PlateArmor", prob: 1, m1: () => "cloth_armor" }
-  ],
-  potion: [
-    { cls: "PotionOfHealing", prob: 45, m1: () => "potion_healing" },
-    { cls: "PotionOfExperience", prob: 4, m1: () => "potion_healing" },
-    { cls: "PotionOfToxicGas", prob: 15, m1: () => "potion_healing" },
-    { cls: "PotionOfParalyticGas", prob: 10, m1: () => "potion_healing" },
-    { cls: "PotionOfLiquidFlame", prob: 15, m1: () => "potion_healing" },
-    { cls: "PotionOfLevitation", prob: 10, m1: () => "potion_healing" },
-    { cls: "PotionOfStrength", prob: 0, m1: () => "potion_strength" },
-    { cls: "PotionOfMindVision", prob: 20, m1: () => "potion_healing" },
-    { cls: "PotionOfPurity", prob: 12, m1: () => "potion_healing" },
-    { cls: "PotionOfInvisibility", prob: 10, m1: () => "potion_healing" },
-    { cls: "PotionOfMight", prob: 0, m1: () => "potion_healing" },
-    { cls: "PotionOfFrost", prob: 10, m1: () => "potion_healing" }
-  ],
-  scroll: [
-    { cls: "ScrollOfIdentify", prob: 30, m1: () => "scroll" },
-    { cls: "ScrollOfTeleportation", prob: 10, m1: () => "scroll" },
-    { cls: "ScrollOfRemoveCurse", prob: 15, m1: () => "scroll" },
-    { cls: "ScrollOfRecharging", prob: 10, m1: () => "scroll" },
-    { cls: "ScrollOfMagicMapping", prob: 15, m1: () => "scroll" },
-    { cls: "ScrollOfChallenge", prob: 12, m1: () => "scroll" },
-    { cls: "ScrollOfTerror", prob: 8, m1: () => "scroll" },
-    { cls: "ScrollOfLullaby", prob: 8, m1: () => "scroll" },
-    { cls: "ScrollOfPsionicBlast", prob: 4, m1: () => "scroll" },
-    { cls: "ScrollOfMirrorImage", prob: 6, m1: () => "scroll" },
-    { cls: "ScrollOfUpgrade", prob: 0, m1: () => "scroll_upgrade" },
-    { cls: "ScrollOfEnchantment", prob: 1, m1: () => "scroll" }
-  ],
-  wand: [
-    { cls: "WandOfTeleportation", prob: 10, m1: () => "scroll" },
-    { cls: "WandOfSlowness", prob: 10, m1: () => "scroll" },
-    { cls: "WandOfFirebolt", prob: 15, m1: () => "scroll" },
-    { cls: "WandOfRegrowth", prob: 6, m1: () => "scroll" },
-    { cls: "WandOfPoison", prob: 10, m1: () => "scroll" },
-    { cls: "WandOfBlink", prob: 11, m1: () => "scroll" },
-    { cls: "WandOfLightning", prob: 15, m1: () => "scroll" },
-    { cls: "WandOfAmok", prob: 10, m1: () => "scroll" },
-    { cls: "WandOfReach", prob: 6, m1: () => "scroll" },
-    { cls: "WandOfFlock", prob: 10, m1: () => "scroll" },
-    { cls: "WandOfMagicMissile", prob: 0, m1: () => "scroll" },
-    { cls: "WandOfDisintegration", prob: 5, m1: () => "scroll" },
-    { cls: "WandOfAvalanche", prob: 5, m1: () => "scroll" }
-  ],
-  ring: [
-    { cls: "RingOfMending", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfDetection", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfShadows", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfPower", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfHerbalism", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfAccuracy", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfEvasion", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfSatiety", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfHaste", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfElements", prob: 1, m1: () => "scroll" },
-    { cls: "RingOfHaggler", prob: 0, m1: () => "scroll" },
-    { cls: "RingOfThorns", prob: 0, m1: () => "scroll" }
-  ],
-  seed: [
-    { cls: "Firebloom.Seed", prob: 1, m1: () => "ration" },
-    { cls: "Icecap.Seed", prob: 1, m1: () => "ration" },
-    { cls: "Sorrowmoss.Seed", prob: 1, m1: () => "ration" },
-    { cls: "Dreamweed.Seed", prob: 1, m1: () => "ration" },
-    { cls: "Sungrass.Seed", prob: 1, m1: () => "ration" },
-    { cls: "Earthroot.Seed", prob: 1, m1: () => "ration" },
-    { cls: "Fadeleaf.Seed", prob: 1, m1: () => "ration" },
-    { cls: "Rotberry.Seed", prob: 0, m1: () => "ration" }
-  ],
-  food: [
-    { cls: "Food", prob: 4, m1: () => "ration" },
-    { cls: "Pasty", prob: 1, m1: () => "ration" },
-    { cls: "MysteryMeat", prob: 0, m1: () => "ration" }
-  ],
-  gold: [
-    {
-      cls: "Gold",
-      prob: 1,
-      m1: (rng, depth) => `gold:${rng.int(20 + depth * 10, 40 + depth * 20)}`
-    }
-  ],
-  misc: [
-    { cls: "Bomb", prob: 2, m1: dart(5, 15) },
-    { cls: "Honeypot", prob: 1, m1: () => "potion_healing" }
-  ]
-};
-function chances(rng, entries, weight) {
-  let total = 0;
-  for (const e of entries)
-    total += weight(e);
-  const roll = rng.float(0, total);
-  let acc = 0;
-  for (const e of entries) {
-    acc += weight(e);
-    if (roll < acc)
-      return e;
-  }
-  return entries[entries.length - 1];
-}
-
-class GeneratorBag {
-  weights = new Map;
-  constructor() {
-    this.reset();
-  }
-  reset() {
-    for (const { cat, weight } of GEN_CATEGORY_WEIGHTS) {
-      this.weights.set(cat, weight);
-    }
-  }
-  weightOf(cat) {
-    return this.weights.get(cat);
-  }
-  random(rng, depth) {
-    const cat = chances(rng, GEN_CATEGORY_WEIGHTS, (e) => this.weights.get(e.cat)).cat;
-    return this.randomFrom(rng, cat, depth);
-  }
-  randomFrom(rng, cat, depth) {
-    this.weights.set(cat, this.weights.get(cat) / 2);
-    const cls = chances(rng, GEN_CLASSES[cat], (e) => e.prob);
-    return cls.m1(rng, depth);
-  }
-}
-function skeletonWeaponDrop(rng, depth, bag) {
-  let best = "";
-  let bestLvl = Number.POSITIVE_INFINITY;
-  for (let i = 0;i < 3; i++) {
-    const id = bag.randomFrom(rng, "weapon", depth);
-    const lvl = 0;
-    if (lvl < bestLvl) {
-      best = id;
-      bestLvl = lvl;
-    }
-  }
-  return best;
-}
-var itemGenerator = new GeneratorBag;
-function resetItemGenerator() {
-  itemGenerator.reset();
-}
-
-// src/core/turn.ts
-var TICK = 1;
-
-class Actor {
-  static TICK = TICK;
-  time = 0;
-  getSpeed() {
-    return 1;
-  }
-  getTimeScale() {
-    return 1;
-  }
-}
-
-class Scheduler {
-  heap = [];
-  seq = 0;
-  order = new Map;
-  now = 0;
-  get count() {
-    return this.heap.length;
-  }
-  add(a) {
-    if (this.order.has(a))
-      return;
-    this.order.set(a, this.seq++);
-    this.push(a);
-  }
-  remove(a) {
-    if (!this.order.has(a))
-      return;
-    this.order.delete(a);
-    const i = this.heap.indexOf(a);
-    if (i >= 0) {
-      const last = this.heap.pop();
-      if (i < this.heap.length) {
-        this.heap[i] = last;
-        this.bubbleDown(i);
-        this.bubbleUp(i);
-      }
-    }
-  }
-  contains(a) {
-    return this.order.has(a);
-  }
-  clear() {
-    this.heap = [];
-    this.order.clear();
-    this.seq = 0;
-    this.now = 0;
-  }
-  peek() {
-    return this.heap[0];
-  }
-  next() {
-    const m = this.pop();
-    if (!m)
-      throw new Error("Scheduler: no actors");
-    this.order.delete(m);
-    this.now = m.time;
-    return m;
-  }
-  spend(taker, cost) {
-    const timeScale = taker.getTimeScale?.() ?? 1;
-    taker.time = this.now + cost / Math.max(0.01, taker.getSpeed()) / timeScale;
-    this.add(taker);
-  }
-  less(a, b) {
-    if (a.time !== b.time)
-      return a.time < b.time;
-    return (this.order.get(a) ?? 0) < (this.order.get(b) ?? 0);
-  }
-  push(a) {
-    this.heap.push(a);
-    this.bubbleUp(this.heap.length - 1);
-  }
-  pop() {
-    const top = this.heap[0];
-    const last = this.heap.pop();
-    if (top !== undefined && last !== undefined && this.heap.length > 0) {
-      this.heap[0] = last;
-      this.bubbleDown(0);
-    }
-    return top;
-  }
-  bubbleUp(i) {
-    while (i > 0) {
-      const p = i - 1 >> 1;
-      if (!this.less(this.heap[i], this.heap[p]))
-        break;
-      [this.heap[i], this.heap[p]] = [this.heap[p], this.heap[i]];
-      i = p;
-    }
-  }
-  bubbleDown(i) {
-    for (;; ) {
-      const l = i * 2 + 1;
-      const r = l + 1;
-      let m = i;
-      if (l < this.heap.length && this.less(this.heap[l], this.heap[m]))
-        m = l;
-      if (r < this.heap.length && this.less(this.heap[r], this.heap[m]))
-        m = r;
-      if (m === i)
-        break;
-      [this.heap[i], this.heap[m]] = [this.heap[m], this.heap[i]];
-      i = m;
-    }
-  }
-}
-
-// src/core/path.ts
-function findPath(grid, passable, sx, sy, tx, ty, maxExpand = 8192) {
-  if (!grid.inBounds(tx, ty) || !passable(tx, ty))
-    return null;
-  if (sx === tx && sy === ty)
-    return [];
-  const start = grid.idx(sx, sy);
-  const target = grid.idx(tx, ty);
-  const open = [start];
-  const came = new Map;
-  const g = new Map([[start, 0]]);
-  const closed = new Set;
-  const h = (i) => {
-    const p = grid.xy(i);
-    return Math.max(Math.abs(p.x - tx), Math.abs(p.y - ty));
-  };
-  const f = (i) => (g.get(i) ?? Infinity) + h(i);
-  let expanded = 0;
-  while (open.length > 0 && expanded++ < maxExpand) {
-    let bi = 0;
-    for (let i = 1;i < open.length; i++) {
-      if (f(open[i]) < f(open[bi]))
-        bi = i;
-    }
-    const cur = open.splice(bi, 1)[0];
-    if (cur === target) {
-      const path = [];
-      let c = cur;
-      while (c !== undefined && c !== start) {
-        path.push(grid.xy(c));
-        c = came.get(c);
-      }
-      path.reverse();
-      return path;
-    }
-    closed.add(cur);
-    const p = grid.xy(cur);
-    for (const n of grid.neighbors8(p.x, p.y)) {
-      if (!passable(n.x, n.y))
-        continue;
-      const ni = grid.idx(n.x, n.y);
-      if (closed.has(ni))
-        continue;
-      const ng = (g.get(cur) ?? Infinity) + 1;
-      if (ng < (g.get(ni) ?? Infinity)) {
-        g.set(ni, ng);
-        came.set(ni, cur);
-        if (!open.includes(ni))
-          open.push(ni);
-      }
-    }
-  }
-  return null;
-}
-
-// src/dungeon/prisonBoss.ts
-function pressArenaCell(level, rng, cell, hooks) {
-  if (level.enteredArena)
-    return;
-  const arena = level.bossArena;
-  if (!arena)
-    return;
-  const w = level.w;
-  const x = cell % w;
-  const y = Math.floor(cell / w);
-  if (x < arena.l || x > arena.r || y < arena.t || y > arena.b)
-    return;
-  level.enteredArena = true;
-  let pos = -1;
-  for (let tries = 0;tries < 64 && pos < 0; tries++) {
-    const px = arena.l + 1 + rng.int(0, arena.r - arena.l - 1);
-    const py = arena.t + 1 + rng.int(0, arena.b - arena.t - 1);
-    const p = py * w + px;
-    if (p !== cell && !hooks.occupied(p))
-      pos = p;
-  }
-  if (pos >= 0)
-    hooks.spawn(pos);
-  if (level.arenaDoorCell >= 0) {
-    level.set(level.arenaDoorCell % w, Math.floor(level.arenaDoorCell / w), 3 /* DOOR_LOCKED */);
-  }
-}
-function onItemDropped(level, itemId) {
-  if (level.keyDropped || !level.bossArena)
-    return;
-  if (itemId !== "skeleton_key")
-    return;
-  level.keyDropped = true;
-  if (level.arenaDoorCell >= 0) {
-    const w = level.w;
-    level.set(level.arenaDoorCell % w, Math.floor(level.arenaDoorCell / w), 2 /* DOOR */);
-  }
-}
-
-// src/mechanics/combat.ts
-function hitRoll(rng, accuracy, evasion, magic = false) {
-  const acuRoll = rng.float(0, accuracy);
-  const defRoll = rng.float(0, evasion);
-  return (magic ? acuRoll * 2 : acuRoll) >= defRoll;
-}
-function applyDamage(rng, target, dmg, sourceTag) {
-  if (target.hp <= 0)
-    return { hp: target.hp, died: true, paralysisBroken: false };
-  if (sourceTag && target.immunities.includes(sourceTag)) {
-    dmg = 0;
-  } else if (sourceTag && target.resistances.includes(sourceTag)) {
-    dmg = rng.intRange(0, dmg);
-  }
-  let paralysisBroken = false;
-  if (target.paralysed) {
-    if (rng.int(0, dmg) >= rng.int(0, target.hp)) {
-      paralysisBroken = true;
-    }
-  }
-  const hp = target.hp - dmg;
-  return { hp, died: hp <= 0, paralysisBroken };
-}
-function skeletonDeathBurst(rng, damageRoll, victimDr) {
-  return Math.max(0, damageRoll(rng) - rng.intRange(0, Math.floor(victimDr / 2)));
-}
 
 // src/mechanics/buffs.ts
 var BURNING_DURATION = 8;
@@ -4435,237 +3898,6 @@ function burningInventoryTick(rng, stacks, isScroll, isMysteryMeat) {
     }
   }
   return null;
-}
-
-// src/mechanics/goo.ts
-var GOO_HT = 80;
-var GOO_EXP = 10;
-var GOO_DEFENSE = 12;
-var GOO_DR = 2;
-var GOO_ATTACK = 15;
-var GOO_ATTACK_PUMPED = 30;
-var GOO_DMG_MIN = 2;
-var GOO_DMG_MAX = 12;
-var GOO_DMG_PUMPED_MIN = 5;
-var GOO_DMG_PUMPED_MAX = 30;
-var GOO_MAX_LVL = 30;
-var PUMP_UP_DELAY = 2;
-var GOO_PUMP_CHANCE = 1 / 3;
-var GOO_OOZE_CHANCE = 1 / 3;
-var GOO_RESISTANCES = ["toxic_gas", "death", "psionic_blast"];
-function gooDamageRoll(rng, pumpedUp) {
-  return pumpedUp ? rng.normalIntRange(GOO_DMG_PUMPED_MIN, GOO_DMG_PUMPED_MAX) : rng.normalIntRange(GOO_DMG_MIN, GOO_DMG_MAX);
-}
-function gooAttackSkill(pumpedUp, jumped) {
-  return pumpedUp && !jumped ? GOO_ATTACK_PUMPED : GOO_ATTACK;
-}
-function gooCanAttack(pumpedUp, dist) {
-  return pumpedUp ? dist <= 2 : dist <= 1;
-}
-function gooDecide(rng, state, ctx) {
-  if (state.pumpedUp) {
-    if (ctx.dist <= 1) {
-      return { kind: "pumpedAttack" };
-    }
-    if (ctx.jumpPathClear && ctx.dist <= 2) {
-      return { kind: "jumpAttack" };
-    }
-    return { kind: "pumpFizzle" };
-  }
-  return rng.int(0, 3) > 0 ? { kind: "attack" } : { kind: "pump" };
-}
-function gooAfterAttack(state, action) {
-  switch (action.kind) {
-    case "attack":
-      return { ...state, pumpedUp: false };
-    case "pumpedAttack":
-      return { ...state, pumpedUp: false, jumped: false };
-    case "pump":
-      return { ...state, pumpedUp: true };
-    case "jumpAttack":
-      return { ...state, pumpedUp: false, jumped: true };
-    case "pumpFizzle":
-      return { ...state, pumpedUp: false };
-  }
-}
-function gooAfterMove(state) {
-  return { ...state, pumpedUp: false };
-}
-function gooOozeRoll(rng) {
-  return rng.int(0, 3) === 0;
-}
-function gooWaterRegen(hp, inWater) {
-  return inWater && hp < GOO_HT ? hp + 1 : hp;
-}
-
-// src/mechanics/char.ts
-function strEff(hero) {
-  return hero.weakened ? hero.str - 2 : hero.str;
-}
-function hasBuff(ch, kind) {
-  return ch.buffs[kind] !== undefined;
-}
-function charTimeScale(ch) {
-  let timeScale = 1;
-  if (hasBuff(ch, "slow")) {
-    timeScale *= 0.5;
-  }
-  if (hasBuff(ch, "speed")) {
-    timeScale *= 2;
-  }
-  return timeScale;
-}
-function crippleFactor(ch) {
-  return hasBuff(ch, "cripple") ? 0.5 : 1;
-}
-function charSpeed(ch) {
-  return crippleFactor(ch);
-}
-
-// src/mechanics/hero.ts
-var DART2 = {
-  name: "dart",
-  tier: 1,
-  level: 0,
-  min: 1,
-  max: 4,
-  str: 10,
-  acu: 1,
-  dly: 1,
-  missile: true
-};
-function accuracyFactor(weapon, heroStr, heroClass = "warrior") {
-  let encumbrance = weapon.str - heroStr;
-  if (weapon.missile) {
-    if (heroClass === "warrior")
-      encumbrance += 3;
-  }
-  return encumbrance > 0 ? weapon.acu / Math.pow(1.5, encumbrance) : weapon.acu;
-}
-function heroAttackSkill(hero, opts) {
-  let accuracy = 1;
-  if (opts.ranged && opts.adjacent)
-    accuracy *= 0.5;
-  const wep = opts.ranged ? hero.rangedWeapon ?? DART2 : hero.weapon;
-  if (wep) {
-    return Math.floor(hero.attackSkill * accuracy * accuracyFactor(wep, strEff(hero)));
-  }
-  return Math.floor(hero.attackSkill * accuracy);
-}
-function heroDefenseSkill(hero) {
-  const evasion = hero.paralysed ? 1 / 2 : 1;
-  const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
-  if (aEnc > 0) {
-    return Math.floor(hero.defenseSkill * evasion / Math.pow(1.5, aEnc));
-  }
-  return Math.floor(hero.defenseSkill * evasion);
-}
-function heroDR(hero) {
-  return hero.armor ? Math.max(hero.armor.dr + hero.armor.level, 0) : 0;
-}
-function weaponDamageRoll(rng, weapon, opts) {
-  let damage = rng.normalIntRange(weapon.min + weapon.level, weapon.max + weapon.level * weapon.tier);
-  const isHuntress = opts.heroClass === "huntress";
-  if (opts.ranged === isHuntress) {
-    const exStr = opts.str - weapon.str;
-    if (exStr > 0)
-      damage += rng.intRange(0, exStr);
-  }
-  return damage;
-}
-function heroDamageRoll(rng, hero, opts) {
-  const wep = opts.ranged ? hero.rangedWeapon ?? DART2 : hero.weapon;
-  if (wep) {
-    return weaponDamageRoll(rng, wep, { str: strEff(hero), ranged: opts.ranged });
-  }
-  const s = strEff(hero);
-  return s > 10 ? rng.intRange(1, s - 9) : 1;
-}
-function upgradeWeapon(weapon) {
-  weapon.level += 1;
-}
-function upgradeArmor(armor) {
-  armor.str -= 1;
-  armor.level += 1;
-}
-function gearDisplayName(def) {
-  return def.level > 0 ? `${def.name} +${def.level}` : def.name;
-}
-function updateAwareness(lvl, rogue) {
-  return 1 - Math.pow(rogue ? 0.85 : 0.9, (1 + Math.min(lvl, 9)) * 0.5);
-}
-function heroSpeed(hero) {
-  const base = charSpeed(hero);
-  const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
-  return aEnc > 0 ? base * Math.pow(1.3, -aEnc) : base;
-}
-function intentionalSearchLevel(awareness) {
-  return 2 * awareness - awareness * awareness;
-}
-function passiveSearchLevel(awareness) {
-  return awareness;
-}
-function searchTimeCost(rng, found, level) {
-  if (!found) {
-    return 2;
-  }
-  return rng.float(0, 1) < level ? 2 : 4;
-}
-function vertigoRedirect(rng, pos, width, blocked) {
-  const dx = [1, -1, 0, 0, 1, 1, -1, -1];
-  const dy = [0, 0, 1, -1, 1, -1, 1, -1];
-  const i = rng.int(0, 8);
-  const step = pos + dx[i] + dy[i] * width;
-  if (step < 0 || blocked(step)) {
-    return null;
-  }
-  return step;
-}
-
-// src/mechanics/exp.ts
-function maxExp(lvl) {
-  return 5 + lvl * 5;
-}
-function earnExp(state, amount) {
-  state.exp += amount;
-  let gained = 0;
-  while (state.exp >= maxExp(state.lvl)) {
-    state.exp -= maxExp(state.lvl);
-    state.lvl++;
-    state.ht += 5;
-    state.hp += 5;
-    state.attackSkill++;
-    state.defenseSkill++;
-    if (state.lvl < 10) {
-      state.awareness = updateAwareness(state.lvl, false);
-    }
-    gained++;
-  }
-  return gained;
-}
-var MOB_EXP = {
-  rat: { exp: 1, maxLvl: 5 },
-  gnoll: { exp: 2, maxLvl: 8 },
-  crab: { exp: 3, maxLvl: 9 },
-  swarm: { exp: 1, maxLvl: 10 },
-  skeleton: { exp: 5, maxLvl: 10 },
-  thief: { exp: 5, maxLvl: 10 },
-  goo: { exp: GOO_EXP, maxLvl: GOO_MAX_LVL },
-  shaman: { exp: 6, maxLvl: 14 },
-  bat: { exp: 7, maxLvl: 15 },
-  brute: { exp: 8, maxLvl: 15 },
-  tengu: { exp: 20, maxLvl: 30 },
-  albino: { exp: 1, maxLvl: 5 },
-  fetidrat: { exp: 3, maxLvl: 5 },
-  curse: { exp: 3, maxLvl: 5 },
-  bandit: { exp: 5, maxLvl: 10 },
-  shielded: { exp: 8, maxLvl: 15 }
-};
-function expForKill(mobId, heroLvl) {
-  const m = MOB_EXP[mobId];
-  if (!m)
-    return 0;
-  return heroLvl <= m.maxLvl ? m.exp : 0;
 }
 
 // src/mechanics/blobs.ts
@@ -4841,6 +4073,32 @@ class ParalyticGasBlob extends Blob {
     }
   }
 }
+
+class WebBlob extends Blob {
+  constructor(length) {
+    super("web", length);
+  }
+  evolve(_rng, world) {
+    for (let i = 0;i < world.length; i++) {
+      const offv = this.cur[i] > 0 ? this.cur[i] - 1 : 0;
+      this.off[i] = offv;
+      if (offv > 0) {
+        this.volume += offv;
+        const ch = world.charAt(i);
+        if (ch !== null) {
+          world.prolongRoots(ch);
+        }
+      }
+    }
+  }
+  seed(cell, amount) {
+    const diff = amount - this.cur[cell];
+    if (diff > 0) {
+      this.cur[cell] = amount;
+      this.volume += diff;
+    }
+  }
+}
 function createBlob(kind, length) {
   switch (kind) {
     case "fire":
@@ -4849,6 +4107,8 @@ function createBlob(kind, length) {
       return new ToxicGasBlob(length);
     case "paralytic":
       return new ParalyticGasBlob(length);
+    case "web":
+      return new WebBlob(length);
   }
 }
 function blobOf(blobs, kind) {
@@ -4869,116 +4129,1908 @@ function tickBlobs(rng, world, blobs) {
   }
 }
 
-// src/content/hero.ts
-class ContentHero extends Actor {
-  kind = "hero";
-  id = 0;
-  pos;
-  w;
-  hp = 20;
-  ht = 20;
-  sprite = "hero_warrior";
-  name = "you";
-  sight = 8;
-  paralysed = false;
-  rooted = false;
-  flying = false;
-  buffs = {};
-  immunities = [];
-  resistances = [];
-  str = 11;
-  weakened = false;
-  lvl = 1;
-  exp = 0;
-  attackSkill = 10;
-  defenseSkill = 5;
-  awareness = 0.1;
-  weapon = null;
-  weaponId = null;
-  armor = null;
-  armorId = null;
-  rangedWeapon = null;
-  darts = 0;
-  inventory = [];
-  gold = 0;
-  hungerLevel = 0;
-  hungerClock = 0;
-  constructor(pos, w) {
-    super();
-    this.pos = pos;
-    this.w = w;
+// src/mechanics/goo.ts
+var GOO_HT = 80;
+var GOO_EXP = 10;
+var GOO_DEFENSE = 12;
+var GOO_DR = 2;
+var GOO_ATTACK = 15;
+var GOO_ATTACK_PUMPED = 30;
+var GOO_DMG_MIN = 2;
+var GOO_DMG_MAX = 12;
+var GOO_DMG_PUMPED_MIN = 5;
+var GOO_DMG_PUMPED_MAX = 30;
+var GOO_MAX_LVL = 30;
+var PUMP_UP_DELAY = 2;
+var GOO_PUMP_CHANCE = 1 / 3;
+var GOO_OOZE_CHANCE = 1 / 3;
+var GOO_RESISTANCES = ["toxic_gas", "death", "psionic_blast"];
+function gooDamageRoll(rng, pumpedUp) {
+  return pumpedUp ? rng.normalIntRange(GOO_DMG_PUMPED_MIN, GOO_DMG_PUMPED_MAX) : rng.normalIntRange(GOO_DMG_MIN, GOO_DMG_MAX);
+}
+function gooAttackSkill(pumpedUp, jumped) {
+  return pumpedUp && !jumped ? GOO_ATTACK_PUMPED : GOO_ATTACK;
+}
+function gooCanAttack(pumpedUp, dist) {
+  return pumpedUp ? dist <= 2 : dist <= 1;
+}
+function gooDecide(rng, state, ctx) {
+  if (state.pumpedUp) {
+    if (ctx.dist <= 1) {
+      return { kind: "pumpedAttack" };
+    }
+    if (ctx.jumpPathClear && ctx.dist <= 2) {
+      return { kind: "jumpAttack" };
+    }
+    return { kind: "pumpFizzle" };
   }
-  get x() {
-    return this.pos % this.w;
+  return rng.int(0, 3) > 0 ? { kind: "attack" } : { kind: "pump" };
+}
+function gooAfterAttack(state, action) {
+  switch (action.kind) {
+    case "attack":
+      return { ...state, pumpedUp: false };
+    case "pumpedAttack":
+      return { ...state, pumpedUp: false, jumped: false };
+    case "pump":
+      return { ...state, pumpedUp: true };
+    case "jumpAttack":
+      return { ...state, pumpedUp: false, jumped: true };
+    case "pumpFizzle":
+      return { ...state, pumpedUp: false };
   }
-  set x(v) {
-    this.pos = this.y * this.w + v;
+}
+function gooAfterMove(state) {
+  return { ...state, pumpedUp: false };
+}
+function gooOozeRoll(rng) {
+  return rng.int(0, 3) === 0;
+}
+function gooWaterRegen(hp, inWater) {
+  return inWater && hp < GOO_HT ? hp + 1 : hp;
+}
+
+// src/mechanics/char.ts
+function strEff(hero) {
+  return hero.weakened ? hero.str - 2 : hero.str;
+}
+function hasBuff(ch, kind) {
+  return ch.buffs[kind] !== undefined;
+}
+function charTimeScale(ch) {
+  let timeScale = 1;
+  if (hasBuff(ch, "slow")) {
+    timeScale *= 0.5;
   }
-  get y() {
-    return Math.floor(this.pos / this.w);
+  if (hasBuff(ch, "speed")) {
+    timeScale *= 2;
   }
-  set y(v) {
-    this.pos = v * this.w + this.x;
+  return timeScale;
+}
+function crippleFactor(ch) {
+  return hasBuff(ch, "cripple") ? 0.5 : 1;
+}
+function charSpeed(ch) {
+  return crippleFactor(ch);
+}
+
+// src/mechanics/durability.ts
+var DURABILITY_WARNING_LEVEL = 1 / 6;
+var TXT_GOING_TO_BREAK = "Because of frequent use, your %s is going to break soon.";
+var TXT_HAS_BROKEN = "Because of frequent use, your %s has broken.";
+var TXT_INCOMPATIBLE_WEAPON = "Interaction of different types of magic has negated the enchantment on this weapon!";
+var TXT_INCOMPATIBLE_ARMOR = "Interaction of different types of magic has erased the glyph on this armor!";
+var TXT_EQUIP_CURSED_WEAPON = "you wince as your grip involuntarily tightens around your %s";
+var TXT_EQUIP_CURSED_ARMOR = "your %s constricts around you painfully";
+var TXT_UNEQUIP_CURSED = "You can't remove cursed %s!";
+function maxDurability(kind, level) {
+  const lvl = level < 0 ? 0 : level;
+  return (kind === "weapon" ? 5 : 6) * (lvl < 16 ? 16 - lvl : 1);
+}
+function initDurability(item, kind) {
+  if (item.durability === undefined) {
+    item.durability = maxDurability(kind, item.level);
   }
+}
+function isBroken(item) {
+  return (item.durability ?? 1) <= 0;
+}
+function effectiveLevel(item) {
+  return isBroken(item) ? 0 : item.level;
+}
+function fixDurability(item, kind) {
+  item.durability = maxDurability(kind, item.level);
+}
+function polish(item, kind) {
+  initDurability(item, kind);
+  const max = maxDurability(kind, item.level);
+  if (item.durability < max) {
+    item.durability = item.durability + 1;
+  }
+}
+function useDurability(item, kind, levelKnown) {
+  initDurability(item, kind);
+  if (item.level <= 0 || isBroken(item)) {
+    return { warned: false, broke: false };
+  }
+  const threshold = Math.floor(maxDurability(kind, item.level) * DURABILITY_WARNING_LEVEL);
+  const before = item.durability;
+  item.durability = Math.max(0, before - 1);
+  return {
+    warned: levelKnown && before >= threshold && item.durability < threshold,
+    broke: isBroken(item)
+  };
+}
+function upgradeItem(item, kind) {
+  item.cursed = false;
+  item.cursedKnown = true;
+  item.level += 1;
+  fixDurability(item, kind);
+}
+function upgradeErasesMagic(rng, preUpgradeLevel, inscribe, hasMagic) {
+  if (!hasMagic || inscribe) {
+    return false;
+  }
+  return rng.int(0, preUpgradeLevel) > 0;
+}
+function eraseWeaponMagic(weapon, rng, preserve, log) {
+  if (weapon.enchantment && upgradeErasesMagic(rng, weapon.level, preserve, true)) {
+    weapon.enchantment = null;
+    log(TXT_INCOMPATIBLE_WEAPON);
+  }
+}
+function eraseArmorMagic(armor, rng, preserve, log) {
+  if (armor.glyph && upgradeErasesMagic(rng, armor.level, preserve, true)) {
+    armor.glyph = null;
+    log(TXT_INCOMPATIBLE_ARMOR);
+  }
+}
+
+// src/mechanics/hero.ts
+var DART = {
+  name: "dart",
+  tier: 1,
+  level: 0,
+  min: 1,
+  max: 4,
+  str: 10,
+  acu: 1,
+  dly: 1,
+  missile: true
+};
+function accuracyFactor(weapon, heroStr, heroClass = "warrior") {
+  let encumbrance = weapon.str - heroStr;
+  if (weapon.missile) {
+    if (heroClass === "warrior")
+      encumbrance += 3;
+  }
+  return encumbrance > 0 ? weapon.acu / Math.pow(1.5, encumbrance) : weapon.acu;
+}
+function heroAttackSkill(hero, opts) {
+  let accuracy = 1;
+  if (opts.ranged && opts.adjacent)
+    accuracy *= 0.5;
+  accuracy *= accuracyMultiplier(opts.accuracyBonus ?? 0);
+  const wep = opts.ranged ? hero.rangedWeapon ?? DART : hero.weapon;
+  if (wep) {
+    return Math.floor(hero.attackSkill * accuracy * accuracyFactor(wep, strEff(hero)));
+  }
+  return Math.floor(hero.attackSkill * accuracy);
+}
+function accuracyMultiplier(bonus) {
+  return bonus === 0 ? 1 : Math.pow(1.4, bonus);
+}
+function evasionMultiplier(bonus) {
+  return bonus === 0 ? 1 : Math.pow(1.2, bonus);
+}
+function heroDefenseSkill(hero, opts = {}) {
+  let evasion = evasionMultiplier(opts.evasionBonus ?? 0);
+  if (hero.paralysed)
+    evasion /= 2;
+  const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
+  if (aEnc > 0) {
+    return Math.floor(hero.defenseSkill * evasion / Math.pow(1.5, aEnc));
+  }
+  return Math.floor(hero.defenseSkill * evasion);
+}
+function heroDR(hero) {
+  return hero.armor ? Math.max(hero.armor.dr + hero.armor.level, 0) : 0;
+}
+function weaponDamageRoll(rng, weapon, opts) {
+  let damage = rng.normalIntRange(weapon.min + weapon.level, weapon.max + weapon.level * weapon.tier);
+  const isHuntress = opts.heroClass === "huntress";
+  if (opts.ranged === isHuntress) {
+    const exStr = opts.str - weapon.str;
+    if (exStr > 0)
+      damage += rng.intRange(0, exStr);
+  }
+  return damage;
+}
+function heroDamageRoll(rng, hero, opts) {
+  const wep = opts.ranged ? hero.rangedWeapon ?? DART : hero.weapon;
+  if (wep) {
+    return weaponDamageRoll(rng, wep, { str: strEff(hero), ranged: opts.ranged });
+  }
+  const s = strEff(hero);
+  return s > 10 ? rng.intRange(1, s - 9) : 1;
+}
+function upgradeWeapon(weapon, rng, opts = {}) {
+  eraseWeaponMagic(weapon, rng, opts.preserveEnchant ?? false, opts.log ?? (() => {
+    return;
+  }));
+  upgradeItem(weapon, "weapon");
+}
+function upgradeArmor(armor, rng, opts = {}) {
+  eraseArmorMagic(armor, rng, opts.preserveGlyph ?? false, opts.log ?? (() => {
+    return;
+  }));
+  armor.str -= 1;
+  upgradeItem(armor, "armor");
+}
+function gearDisplayName(def) {
+  return def.level > 0 ? `${def.name} +${def.level}` : def.name;
+}
+function updateAwareness(lvl, rogue) {
+  return 1 - Math.pow(rogue ? 0.85 : 0.9, (1 + Math.min(lvl, 9)) * 0.5);
+}
+function heroSpeed(hero) {
+  const base = charSpeed(hero);
+  const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
+  return aEnc > 0 ? base * Math.pow(1.3, -aEnc) : base;
+}
+function intentionalSearchLevel(awareness) {
+  return 2 * awareness - awareness * awareness;
+}
+function passiveSearchLevel(awareness) {
+  return awareness;
+}
+function searchTimeCost(rng, found, level) {
+  if (!found) {
+    return 2;
+  }
+  return rng.float(0, 1) < level ? 2 : 4;
+}
+function vertigoRedirect(rng, pos, width, blocked) {
+  const dx = [1, -1, 0, 0, 1, 1, -1, -1];
+  const dy = [0, 0, 1, -1, 1, -1, 1, -1];
+  const i = rng.int(0, 8);
+  const step = pos + dx[i] + dy[i] * width;
+  if (step < 0 || blocked(step)) {
+    return null;
+  }
+  return step;
+}
+
+// src/mechanics/exp.ts
+function maxExp(lvl) {
+  return 5 + lvl * 5;
+}
+function earnExp(state, amount) {
+  state.exp += amount;
+  let gained = 0;
+  while (state.exp >= maxExp(state.lvl)) {
+    state.exp -= maxExp(state.lvl);
+    state.lvl++;
+    state.ht += 5;
+    state.hp += 5;
+    state.attackSkill++;
+    state.defenseSkill++;
+    if (state.lvl < 10) {
+      state.awareness = updateAwareness(state.lvl, false);
+    }
+    gained++;
+  }
+  return gained;
+}
+var MOB_EXP = {
+  rat: { exp: 1, maxLvl: 5 },
+  gnoll: { exp: 2, maxLvl: 8 },
+  crab: { exp: 3, maxLvl: 9 },
+  swarm: { exp: 1, maxLvl: 10 },
+  skeleton: { exp: 5, maxLvl: 10 },
+  thief: { exp: 5, maxLvl: 10 },
+  goo: { exp: GOO_EXP, maxLvl: GOO_MAX_LVL },
+  shaman: { exp: 6, maxLvl: 14 },
+  bat: { exp: 7, maxLvl: 15 },
+  brute: { exp: 8, maxLvl: 15 },
+  tengu: { exp: 20, maxLvl: 30 },
+  albino: { exp: 1, maxLvl: 5 },
+  fetidrat: { exp: 3, maxLvl: 5 },
+  curse: { exp: 3, maxLvl: 5 },
+  bandit: { exp: 5, maxLvl: 10 },
+  shielded: { exp: 8, maxLvl: 15 },
+  spinner: { exp: 9, maxLvl: 16 },
+  elemental: { exp: 10, maxLvl: 20 },
+  monk: { exp: 11, maxLvl: 21 },
+  dm300: { exp: 30, maxLvl: 30 }
+};
+function expForKill(mobId, heroLvl) {
+  const m = MOB_EXP[mobId];
+  if (!m)
+    return 0;
+  return heroLvl <= m.maxLvl ? m.exp : 0;
+}
+
+// src/content/identification.ts
+class ItemStatusHandler {
+  classes;
+  images = new Map;
+  labels = new Map;
+  knownSet = new Set;
+  constructor(classes, labels, images, rng) {
+    this.classes = [...classes];
+    const labelPool = [...labels];
+    const imagePool = [...images];
+    for (const cls of classes) {
+      const index = rng.int(0, labelPool.length);
+      this.labels.set(cls, labelPool[index]);
+      this.images.set(cls, imagePool[index]);
+      labelPool.splice(index, 1);
+      imagePool.splice(index, 1);
+    }
+  }
+  image(cls) {
+    const img = this.images.get(cls);
+    if (img === undefined)
+      throw new Error(`unknown class ${cls}`);
+    return img;
+  }
+  label(cls) {
+    const lbl = this.labels.get(cls);
+    if (lbl === undefined)
+      throw new Error(`unknown class ${cls}`);
+    return lbl;
+  }
+  isKnown(cls) {
+    return this.knownSet.has(cls);
+  }
+  know(cls) {
+    if (!this.classes.includes(cls))
+      return;
+    this.knownSet.add(cls);
+    if (this.knownSet.size === this.classes.length - 1) {
+      for (const c of this.classes) {
+        if (!this.knownSet.has(c)) {
+          this.knownSet.add(c);
+          break;
+        }
+      }
+    }
+  }
+  known() {
+    return this.classes.filter((c) => this.knownSet.has(c));
+  }
+  unknown() {
+    return this.classes.filter((c) => !this.knownSet.has(c));
+  }
+  all() {
+    return [...this.classes];
+  }
+  save() {
+    const out = {};
+    for (const cls of this.classes) {
+      out[cls] = {
+        image: this.images.get(cls),
+        label: this.labels.get(cls),
+        known: this.knownSet.has(cls)
+      };
+    }
+    return out;
+  }
+  restore(data, labels, images, rng) {
+    this.images.clear();
+    this.labels.clear();
+    this.knownSet.clear();
+    const labelPool = [...labels];
+    const imagePool = [...images];
+    for (const cls of this.classes) {
+      const stored = data[cls];
+      if (stored) {
+        this.images.set(cls, stored.image);
+        this.labels.set(cls, stored.label);
+        const li = labelPool.indexOf(stored.label);
+        if (li >= 0)
+          labelPool.splice(li, 1);
+        const ii = imagePool.indexOf(stored.image);
+        if (ii >= 0)
+          imagePool.splice(ii, 1);
+        if (stored.known)
+          this.knownSet.add(cls);
+      }
+    }
+    for (const cls of this.classes) {
+      if (!this.images.has(cls) && labelPool.length > 0) {
+        const index = rng.int(0, labelPool.length);
+        this.labels.set(cls, labelPool[index]);
+        this.images.set(cls, imagePool[index]);
+        labelPool.splice(index, 1);
+        imagePool.splice(index, 1);
+      }
+    }
+  }
+}
+var potionHandler = null;
+var scrollHandler = null;
+var wandHandler = null;
+var wandDef = null;
+var ringDef = null;
+function registerWandClasses(def) {
+  wandDef = def;
+}
+function registerRingClasses(def) {
+  ringDef = def;
+}
+function identificationReady() {
+  return potionHandler !== null && scrollHandler !== null;
+}
+function need(h, what) {
+  if (!h)
+    throw new Error(`identification not initialized (${what})`);
+  return h;
+}
+function potionLabel(id) {
+  return need(potionHandler, "potions").label(id);
+}
+function potionImage(id) {
+  return need(potionHandler, "potions").image(id);
+}
+function isPotionKnown(id) {
+  return need(potionHandler, "potions").isKnown(id);
+}
+function knowPotion(id) {
+  need(potionHandler, "potions").know(id);
+}
+function scrollRune(id) {
+  return need(scrollHandler, "scrolls").label(id);
+}
+function scrollImage(id) {
+  return need(scrollHandler, "scrolls").image(id);
+}
+function isScrollKnown(id) {
+  return need(scrollHandler, "scrolls").isKnown(id);
+}
+function knowScroll(id) {
+  need(scrollHandler, "scrolls").know(id);
+}
+function wandLabel(id) {
+  return need(wandHandler, "wands").label(id);
+}
+function wandImage(id) {
+  return need(wandHandler, "wands").image(id);
+}
+function isWandKnown(id) {
+  return need(wandHandler, "wands").isKnown(id);
+}
+function isWandRegistered() {
+  return wandHandler !== null;
+}
+function knowWand(id) {
+  need(wandHandler, "wands").know(id);
+}
+
+// src/core/turn.ts
+var TICK = 1;
+
+class Actor {
+  static TICK = TICK;
+  time = 0;
   getSpeed() {
-    return heroSpeed(this);
+    return 1;
   }
   getTimeScale() {
-    return charTimeScale(this);
-  }
-  isAlive() {
-    return this.hp > 0;
-  }
-  act() {
-    throw new Error("ContentHero.act: route through MechanicsHooks.handleHeroIntent");
+    return 1;
   }
 }
-function createStarterHero(pos, w) {
-  const hero = new ContentHero(pos, w);
-  const sword = getItem("shortsword");
-  const armor = getItem("cloth_armor");
-  hero.weapon = sword.weapon ? { ...sword.weapon } : null;
-  hero.weaponId = "shortsword";
-  hero.armor = armor.armor ? { ...armor.armor } : null;
-  hero.armorId = "cloth_armor";
-  hero.inventory.push({ itemId: "ration", qty: 1 });
-  hero.inventory.push({ itemId: "dart", qty: 8 });
-  syncDarts(hero);
-  return hero;
+
+class Scheduler {
+  heap = [];
+  seq = 0;
+  order = new Map;
+  now = 0;
+  get count() {
+    return this.heap.length;
+  }
+  add(a) {
+    if (this.order.has(a))
+      return;
+    this.order.set(a, this.seq++);
+    this.push(a);
+  }
+  remove(a) {
+    if (!this.order.has(a))
+      return;
+    this.order.delete(a);
+    const i = this.heap.indexOf(a);
+    if (i >= 0) {
+      const last = this.heap.pop();
+      if (i < this.heap.length) {
+        this.heap[i] = last;
+        this.bubbleDown(i);
+        this.bubbleUp(i);
+      }
+    }
+  }
+  contains(a) {
+    return this.order.has(a);
+  }
+  clear() {
+    this.heap = [];
+    this.order.clear();
+    this.seq = 0;
+    this.now = 0;
+  }
+  peek() {
+    return this.heap[0];
+  }
+  next() {
+    const m = this.pop();
+    if (!m)
+      throw new Error("Scheduler: no actors");
+    this.order.delete(m);
+    this.now = m.time;
+    return m;
+  }
+  spend(taker, cost) {
+    const timeScale = taker.getTimeScale?.() ?? 1;
+    taker.time = this.now + cost / Math.max(0.01, taker.getSpeed()) / timeScale;
+    this.add(taker);
+  }
+  less(a, b) {
+    if (a.time !== b.time)
+      return a.time < b.time;
+    return (this.order.get(a) ?? 0) < (this.order.get(b) ?? 0);
+  }
+  push(a) {
+    this.heap.push(a);
+    this.bubbleUp(this.heap.length - 1);
+  }
+  pop() {
+    const top = this.heap[0];
+    const last = this.heap.pop();
+    if (top !== undefined && last !== undefined && this.heap.length > 0) {
+      this.heap[0] = last;
+      this.bubbleDown(0);
+    }
+    return top;
+  }
+  bubbleUp(i) {
+    while (i > 0) {
+      const p = i - 1 >> 1;
+      if (!this.less(this.heap[i], this.heap[p]))
+        break;
+      [this.heap[i], this.heap[p]] = [this.heap[p], this.heap[i]];
+      i = p;
+    }
+  }
+  bubbleDown(i) {
+    for (;; ) {
+      const l = i * 2 + 1;
+      const r = l + 1;
+      let m = i;
+      if (l < this.heap.length && this.less(this.heap[l], this.heap[m]))
+        m = l;
+      if (r < this.heap.length && this.less(this.heap[r], this.heap[m]))
+        m = r;
+      if (m === i)
+        break;
+      [this.heap[i], this.heap[m]] = [this.heap[m], this.heap[i]];
+      i = m;
+    }
+  }
 }
-function syncDarts(hero) {
-  hero.darts = hero.inventory.find((s) => s.itemId === "dart")?.qty ?? 0;
+
+// src/mechanics/wands.ts
+var WAND_SPECS = [
+  {
+    id: "teleportation",
+    className: "WandOfTeleportation",
+    name: "Wand of Teleportation",
+    desc: "A blast from this wand will teleport a creature against " + "its will to a random place on the current level.",
+    wood: "holly",
+    sprite: "item_wand_teleportation",
+    initialCharges: 2,
+    hitChars: true
+  },
+  {
+    id: "slowness",
+    className: "WandOfSlowness",
+    name: "Wand of Slowness",
+    desc: "This wand will cause a creature to move and attack " + "at half its ordinary speed until the effect ends",
+    wood: "yew",
+    sprite: "item_wand_slowness",
+    initialCharges: 2,
+    hitChars: true
+  },
+  {
+    id: "firebolt",
+    className: "WandOfFirebolt",
+    name: "Wand of Firebolt",
+    desc: "This wand unleashes bursts of magical fire. It will ignite " + "flammable terrain, and will damage and burn a creature it hits.",
+    wood: "ebony",
+    sprite: "item_wand_firebolt",
+    initialCharges: 2,
+    hitChars: true
+  },
+  {
+    id: "poison",
+    className: "WandOfPoison",
+    name: "Wand of Poison",
+    desc: "The vile blast of this twisted bit of wood will imbue its target " + "with a deadly venom. A creature that is poisoned will suffer periodic " + "damage until the effect ends. The duration of the effect increases " + "with the level of the staff.",
+    wood: "cherry",
+    sprite: "item_wand_poison",
+    initialCharges: 2,
+    hitChars: true
+  },
+  {
+    id: "regrowth",
+    className: "WandOfRegrowth",
+    name: "Wand of Regrowth",
+    desc: '"When life ceases new life always begins to grow... The eternal cycle always remains!"',
+    wood: "teak",
+    sprite: "item_wand_regrowth",
+    initialCharges: 2,
+    hitChars: false
+  },
+  {
+    id: "blink",
+    className: "WandOfBlink",
+    name: "Wand of Blink",
+    desc: "This wand will allow you to teleport in the chosen direction. " + "Creatures and inanimate obstructions will block the teleportation.",
+    wood: "rowan",
+    sprite: "item_wand_blink",
+    initialCharges: 2,
+    hitChars: true
+  },
+  {
+    id: "lightning",
+    className: "WandOfLightning",
+    name: "Wand of Lightning",
+    desc: "This wand conjures forth deadly arcs of electricity, which deal damage " + "to several creatures standing close to each other.",
+    wood: "willow",
+    sprite: "item_wand_lightning",
+    initialCharges: 2,
+    hitChars: true
+  },
+  {
+    id: "amok",
+    className: "WandOfAmok",
+    name: "Wand of Amok",
+    desc: "The purple light from this wand will make the target run amok " + "attacking random creatures in its vicinity.",
+    wood: "mahogany",
+    sprite: "item_wand_amok",
+    initialCharges: 2,
+    hitChars: true
+  },
+  {
+    id: "reach",
+    className: "WandOfReach",
+    name: "Wand of Reach",
+    desc: "This utility wand can be used to grab objects from a distance and to switch places with enemies. " + "Waves of magic force radiated from it will affect all cells on their way triggering traps, " + "trampling high vegetation, opening closed doors and closing open ones.",
+    wood: "bamboo",
+    sprite: "item_wand_reach",
+    initialCharges: 2,
+    hitChars: false
+  },
+  {
+    id: "flock",
+    className: "WandOfFlock",
+    name: "Wand of Flock",
+    desc: "A flick of this wand summons a flock of magic sheep, creating temporary impenetrable obstacle.",
+    wood: "purpleheart",
+    sprite: "item_wand_flock",
+    initialCharges: 2,
+    hitChars: false
+  },
+  {
+    id: "disintegration",
+    className: "WandOfDisintegration",
+    name: "Wand of Disintegration",
+    desc: "This wand emits a beam of destructive energy, which pierces all creatures in its way. " + "The more targets it hits, the more damage it inflicts to each of them.",
+    wood: "oak",
+    sprite: "item_wand_disintegration",
+    initialCharges: 2,
+    hitChars: false
+  },
+  {
+    id: "avalanche",
+    className: "WandOfAvalanche",
+    name: "Wand of Avalanche",
+    desc: "When a discharge of this wand hits a wall (or any other solid obstacle) it causes " + "an avalanche of stones, damaging and stunning all creatures in the affected area.",
+    wood: "birch",
+    sprite: "item_wand_avalanche",
+    initialCharges: 2,
+    hitChars: false
+  },
+  {
+    id: "magic_missile",
+    className: "WandOfMagicMissile",
+    name: "Wand of Magic Missile",
+    desc: "This wand launches missiles of pure magical energy, dealing moderate damage to a target creature.",
+    wood: null,
+    sprite: "item_wand_magicmissile",
+    initialCharges: 3,
+    hitChars: true
+  }
+];
+function wandSpec(id) {
+  const spec = WAND_SPECS.find((s) => s.id === id);
+  if (!spec)
+    throw new Error(`wands: unknown wand id ${id}`);
+  return spec;
 }
-function addToInventory(hero, itemId, qty) {
-  const def = getItem(itemId);
-  if (qty <= 0)
+function txtWandIdentified(wandName) {
+  return `You are now familiar enough with your ${wandName}.`;
+}
+var USAGES_TO_KNOW = 40;
+function wandMaxCharges(initialCharges, level) {
+  return Math.min(initialCharges + level, 9);
+}
+
+// src/mechanics/combat.ts
+function hitRoll(rng, accuracy, evasion, magic = false) {
+  const acuRoll = rng.float(0, accuracy);
+  const defRoll = rng.float(0, evasion);
+  return (magic ? acuRoll * 2 : acuRoll) >= defRoll;
+}
+function applyDamage(rng, target, dmg, sourceTag) {
+  if (target.hp <= 0)
+    return { hp: target.hp, died: true, paralysisBroken: false };
+  if (sourceTag && target.immunities.includes(sourceTag)) {
+    dmg = 0;
+  } else if (sourceTag && target.resistances.includes(sourceTag)) {
+    dmg = rng.intRange(0, dmg);
+  }
+  let paralysisBroken = false;
+  if (target.paralysed) {
+    if (rng.int(0, dmg) >= rng.int(0, target.hp)) {
+      paralysisBroken = true;
+    }
+  }
+  const hp = target.hp - dmg;
+  return { hp, died: hp <= 0, paralysisBroken };
+}
+function skeletonDeathBurst(rng, damageRoll, victimDr) {
+  return Math.max(0, damageRoll(rng) - rng.intRange(0, Math.floor(victimDr / 2)));
+}
+
+// src/mechanics/traps.ts
+var TXT_HIDDEN_PLATE_CLICKS = "A hidden pressure plate clicks!";
+var TXT_ALARM_SOUND = "The trap emits a piercing sound that echoes throughout the dungeon!";
+var TXT_LIGHTNING_DEATH = "You were killed by a discharge of a lightning trap...";
+function trapKindOf(t) {
+  switch (t) {
+    case 20 /* TRAP_TOXIC */:
+    case 21 /* TRAP_TOXIC_HIDDEN */:
+      return "toxic";
+    case 22 /* TRAP_FIRE */:
+    case 23 /* TRAP_FIRE_HIDDEN */:
+      return "fire";
+    case 24 /* TRAP_PARALYTIC */:
+    case 25 /* TRAP_PARALYTIC_HIDDEN */:
+      return "paralytic";
+    case 26 /* TRAP_POISON */:
+    case 27 /* TRAP_POISON_HIDDEN */:
+      return "poison";
+    case 28 /* TRAP_ALARM */:
+    case 29 /* TRAP_ALARM_HIDDEN */:
+      return "alarm";
+    case 30 /* TRAP_LIGHTNING */:
+    case 31 /* TRAP_LIGHTNING_HIDDEN */:
+      return "lightning";
+    case 32 /* TRAP_GRIPPING */:
+    case 33 /* TRAP_GRIPPING_HIDDEN */:
+      return "gripping";
+    case 34 /* TRAP_SUMMONING */:
+    case 35 /* TRAP_SUMMONING_HIDDEN */:
+      return "summoning";
+    default:
+      return null;
+  }
+}
+function trapCharDr(ch) {
+  if (ch.kind === "hero") {
+    return ch.armor ? Math.max(ch.armor.dr + ch.armor.level, 0) : 0;
+  }
+  return ch.def.dr;
+}
+function damageFromTrap(ctx, rng, ch, dmg, sourceTag, onHeroDeath) {
+  if (ch.kind === "mob" && ch.invulnerable)
     return;
-  if (def.stackable) {
-    const existing = hero.inventory.find((s) => s.itemId === itemId);
-    if (existing) {
-      existing.qty += qty;
+  const target = {
+    hp: ch.hp,
+    ht: ch.ht,
+    paralysed: ch.paralysed,
+    immunities: ch.immunities,
+    resistances: ch.resistances
+  };
+  const applied = applyDamage(rng, target, dmg, sourceTag);
+  ch.hp = applied.hp;
+  if (applied.paralysisBroken) {
+    ch.paralysed = false;
+    delete ch.buffs.paralysis;
+  }
+  if (applied.died) {
+    if (ch.kind === "hero") {
+      onHeroDeath?.();
     } else {
-      hero.inventory.push({ itemId, qty });
+      ctx.killMob(ch);
+    }
+  } else if (ch.kind === "mob") {
+    ch.onDamaged?.(ctx);
+  }
+}
+function beckonMob(mob, cell) {
+  if (mob.invulnerable)
+    return;
+  if (mob.state !== "hunting") {
+    mob.state = "wandering";
+  }
+  mob.target = cell;
+}
+function makeBlobWorld(ctx, hero, mobs) {
+  const level = ctx.level;
+  return {
+    w: level.w,
+    length: level.w * level.h,
+    depth: level.depth,
+    blobs: level.blobs,
+    solidAt: (pos) => isSolidForBlob(level.getAt(pos)),
+    flamableAt: (pos) => isFlamableForBlob(level.getAt(pos)),
+    tileAt: (pos) => level.getAt(pos),
+    setTile: (pos, t) => {
+      const { x, y } = level.xy(pos);
+      level.set(x, y, t);
+    },
+    charAt: (pos) => {
+      if (hero.isAlive() && hero.pos === pos)
+        return hero;
+      return mobs.find((m) => m.isAlive() && m.pos === pos) ?? null;
+    },
+    visibleAt: (pos) => level.visible[pos] !== 0,
+    damageChar: (rng, ch, dmg, sourceTag, onHeroDeath) => damageFromTrap(ctx, rng, ch, dmg, sourceTag, onHeroDeath ? () => onHeroDeath(ch) : undefined),
+    reigniteBurning: (ch) => {
+      if (ch.invulnerable)
+        return;
+      if (ch.immunities.includes("burning")) {
+        if (ch.hp < ch.ht)
+          ch.hp += 1;
+        return;
+      }
+      ch.buffs.burning = { kind: "burning", left: BURNING_DURATION };
+    },
+    prolongParalysis: (ch, duration) => {
+      if (ch.invulnerable)
+        return;
+      const cur = ch.buffs.paralysis?.left ?? 0;
+      ch.buffs.paralysis = { kind: "paralysis", left: Math.max(cur, duration) };
+      ch.paralysed = true;
+    },
+    prolongRoots: (ch) => {
+      if (ch.invulnerable)
+        return;
+      if (ch.flying)
+        return;
+      const cur = ch.buffs.roots?.left ?? 0;
+      ch.buffs.roots = { kind: "roots", left: Math.max(cur, 1) };
+      ch.rooted = true;
+    },
+    burnOutTile: (pos) => {
+      const t = level.getAt(pos);
+      const unstitchable = t === 2 /* DOOR */ || t === 17 /* BOOKSHELF */;
+      let burned = 38 /* EMBERS */;
+      if (unstitchable) {
+        const { x: x2, y: y2 } = level.xy(pos);
+        const flooded = level.neighbors4(x2, y2).some((n) => level.get(n.x, n.y) === 9 /* WATER */);
+        if (flooded)
+          burned = 9 /* WATER */;
+      }
+      const { x, y } = level.xy(pos);
+      level.set(x, y, burned);
+    },
+    log: (msg) => ctx.log(msg)
+  };
+}
+function toxicTrap(ctx, cell) {
+  const level = ctx.level;
+  seedBlob(level.blobs, "toxic", cell, 300 + 20 * level.depth, level.w * level.h);
+}
+function fireTrap(ctx, cell) {
+  const level = ctx.level;
+  seedBlob(level.blobs, "fire", cell, 2, level.w * level.h);
+}
+function paralyticTrap(ctx, cell) {
+  const level = ctx.level;
+  seedBlob(level.blobs, "paralytic", cell, 80 + 5 * level.depth, level.w * level.h);
+}
+function poisonTrap(ctx, ch) {
+  if (ch !== null) {
+    ch.buffs.poison = { kind: "poison", left: poisonTrapDuration(ctx.level.depth) };
+  }
+}
+function alarmTrap(ctx, cell, ch, mobs, visible) {
+  for (const mob of mobs) {
+    if (mob !== ch) {
+      beckonMob(mob, cell);
+    }
+  }
+  if (visible) {
+    ctx.log(TXT_ALARM_SOUND);
+  }
+}
+function lightningTrap(ctx, rng, cell, ch) {
+  if (ch !== null) {
+    const dmg = Math.max(1, rng.int(Math.floor(ch.hp / 3), Math.floor(2 * ch.hp / 3)));
+    damageFromTrap(ctx, rng, ch, dmg, "lightning", () => {
+      ctx.log(TXT_LIGHTNING_DEATH);
+    });
+    if (ch.kind === "hero" && ch.isAlive()) {
+      chargeHeroWands(ch);
+    }
+  } else {}
+}
+function chargeHeroWands(_hero) {
+  return 0;
+}
+function grippingTrap(rng, ch, depth) {
+  if (ch !== null) {
+    const damage = Math.max(0, depth + 3 - rng.intRange(0, Math.floor(trapCharDr(ch) / 2)));
+    ch.buffs.bleeding = { kind: "bleeding", left: 0, level: damage };
+    const cur = ch.buffs.cripple?.left ?? 0;
+    ch.buffs.cripple = { kind: "cripple", left: Math.max(cur, CRIPPLE_DURATION) };
+  } else {}
+}
+function bestiaryMobId(rng, depth) {
+  let chances;
+  let ids;
+  switch (depth) {
+    case 1:
+      chances = [1];
+      ids = ["rat"];
+      break;
+    case 2:
+      chances = [1, 1];
+      ids = ["rat", "gnoll"];
+      break;
+    case 3:
+      chances = [1, 2, 1, 0.02];
+      ids = ["rat", "gnoll", "crab", "swarm"];
+      break;
+    case 4:
+      chances = [1, 2, 3, 0.02, 0.01, 0.01];
+      ids = ["rat", "gnoll", "crab", "swarm", "skeleton", "thief"];
+      break;
+    case 6:
+      chances = [4, 2, 1, 0.2];
+      ids = ["skeleton", "thief", "swarm", "shaman"];
+      break;
+    case 7:
+      chances = [3, 1, 1, 1];
+      ids = ["skeleton", "shaman", "thief", "swarm"];
+      break;
+    case 8:
+      chances = [3, 2, 1, 1, 1, 0.02];
+      ids = ["skeleton", "shaman", "gnoll", "thief", "swarm", "bat"];
+      break;
+    case 9:
+      chances = [3, 3, 1, 1, 0.02, 0.01];
+      ids = ["skeleton", "shaman", "thief", "swarm", "bat", "brute"];
+      break;
+    default:
+      return null;
+  }
+  let sum = 0;
+  for (const c of chances)
+    sum += Math.max(0, c);
+  if (sum <= 0)
+    return null;
+  const value = rng.float(0, sum);
+  sum = 0;
+  for (let i = 0;i < chances.length; i++) {
+    sum += Math.max(0, chances[i]);
+    if (value < sum)
+      return ids[i];
+  }
+  return null;
+}
+function summoningTrap(ctx, rng, cell, ch, hero, mobs, summon) {
+  const level = ctx.level;
+  if (level.bossLevel) {
+    return;
+  }
+  let nMobs = 1;
+  if (rng.int(0, 2) === 0) {
+    nMobs++;
+    if (rng.int(0, 2) === 0) {
+      nMobs++;
+    }
+  }
+  const { x, y } = level.xy(cell);
+  const candidates = [];
+  for (const n of level.neighbors8(x, y)) {
+    const p = level.idx(n.x, n.y);
+    const occupied = hero.isAlive() && hero.pos === p || mobs.some((m) => m.isAlive() && m.pos === p);
+    if (!occupied && (level.isPassable(n.x, n.y) || level.isAvoid(n.x, n.y))) {
+      candidates.push(p);
+    }
+  }
+  const points = [];
+  while (nMobs > 0 && candidates.length > 0) {
+    const index = rng.int(0, candidates.length);
+    points.push(candidates.splice(index, 1)[0]);
+    nMobs--;
+  }
+  for (const point of points) {
+    const mobId = bestiaryMobId(rng, level.depth);
+    if (mobId === null)
+      continue;
+    summon(mobId, point);
+  }
+}
+function triggerTrap(ctx, rng, cell, kind, ch, hero, mobs, summon) {
+  const visible = ctx.level.visible[cell] !== 0;
+  switch (kind) {
+    case "toxic":
+      toxicTrap(ctx, cell);
+      break;
+    case "fire":
+      fireTrap(ctx, cell);
+      break;
+    case "paralytic":
+      paralyticTrap(ctx, cell);
+      break;
+    case "poison":
+      poisonTrap(ctx, ch);
+      break;
+    case "alarm":
+      alarmTrap(ctx, cell, ch, mobs, visible);
+      break;
+    case "lightning":
+      lightningTrap(ctx, rng, cell, ch);
+      break;
+    case "gripping":
+      grippingTrap(rng, ch, ctx.level.depth);
+      break;
+    case "summoning":
+      summoningTrap(ctx, rng, cell, ch, hero, mobs, summon);
+      break;
+  }
+}
+function deactivateTrapCell(level, cell) {
+  const { x, y } = level.xy(cell);
+  level.set(x, y, 36 /* TRAP_INACTIVE */);
+}
+function pressTrapCell(ctx, cell, ch, summon) {
+  const level = ctx.level;
+  const tile = level.getAt(cell);
+  const kind = trapKindOf(tile);
+  if (kind === null) {
+    return;
+  }
+  if (isHiddenTrap(tile)) {
+    ctx.log(TXT_HIDDEN_PLATE_CLICKS);
+  }
+  const hero = ctx.hero;
+  const mobs = ctx.mobs;
+  triggerTrap(ctx, ctx.rng, cell, kind, ch, hero, mobs, summon);
+  deactivateTrapCell(level, cell);
+}
+function mobPressTrapCell(ctx, mob, summon) {
+  const level = ctx.level;
+  const cell = mob.pos;
+  const tile = level.getAt(cell);
+  const kind = trapKindOf(tile);
+  if (kind === null || isHiddenTrap(tile)) {
+    return;
+  }
+  const hero = ctx.hero;
+  const mobs = ctx.mobs;
+  triggerTrap(ctx, ctx.rng, cell, kind, mob, hero, mobs, summon);
+  deactivateTrapCell(level, cell);
+}
+
+// src/core/path.ts
+function findPath(grid, passable, sx, sy, tx, ty, maxExpand = 8192) {
+  if (!grid.inBounds(tx, ty) || !passable(tx, ty))
+    return null;
+  if (sx === tx && sy === ty)
+    return [];
+  const start = grid.idx(sx, sy);
+  const target = grid.idx(tx, ty);
+  const open = [start];
+  const came = new Map;
+  const g = new Map([[start, 0]]);
+  const closed = new Set;
+  const h = (i) => {
+    const p = grid.xy(i);
+    return Math.max(Math.abs(p.x - tx), Math.abs(p.y - ty));
+  };
+  const f = (i) => (g.get(i) ?? Infinity) + h(i);
+  let expanded = 0;
+  while (open.length > 0 && expanded++ < maxExpand) {
+    let bi = 0;
+    for (let i = 1;i < open.length; i++) {
+      if (f(open[i]) < f(open[bi]))
+        bi = i;
+    }
+    const cur = open.splice(bi, 1)[0];
+    if (cur === target) {
+      const path = [];
+      let c = cur;
+      while (c !== undefined && c !== start) {
+        path.push(grid.xy(c));
+        c = came.get(c);
+      }
+      path.reverse();
+      return path;
+    }
+    closed.add(cur);
+    const p = grid.xy(cur);
+    for (const n of grid.neighbors8(p.x, p.y)) {
+      if (!passable(n.x, n.y))
+        continue;
+      const ni = grid.idx(n.x, n.y);
+      if (closed.has(ni))
+        continue;
+      const ng = (g.get(cur) ?? Infinity) + 1;
+      if (ng < (g.get(ni) ?? Infinity)) {
+        g.set(ni, ng);
+        came.set(ni, cur);
+        if (!open.includes(ni))
+          open.push(ni);
+      }
+    }
+  }
+  return null;
+}
+
+// src/dungeon/prisonBoss.ts
+function pressArenaCell(level, rng, cell, hooks) {
+  if (level.enteredArena)
+    return;
+  const arena = level.bossArena;
+  if (!arena)
+    return;
+  const w = level.w;
+  const x = cell % w;
+  const y = Math.floor(cell / w);
+  if (x < arena.l || x > arena.r || y < arena.t || y > arena.b)
+    return;
+  level.enteredArena = true;
+  let pos = -1;
+  for (let tries = 0;tries < 64 && pos < 0; tries++) {
+    const px = arena.l + 1 + rng.int(0, arena.r - arena.l - 1);
+    const py = arena.t + 1 + rng.int(0, arena.b - arena.t - 1);
+    const p = py * w + px;
+    if (p !== cell && !hooks.occupied(p))
+      pos = p;
+  }
+  if (pos >= 0)
+    hooks.spawn(pos);
+  if (level.arenaDoorCell >= 0) {
+    level.set(level.arenaDoorCell % w, Math.floor(level.arenaDoorCell / w), 3 /* DOOR_LOCKED */);
+  }
+}
+function onItemDropped(level, itemId) {
+  if (level.keyDropped || !level.bossArena)
+    return;
+  if (itemId !== "skeleton_key")
+    return;
+  level.keyDropped = true;
+  if (level.arenaDoorCell >= 0) {
+    const w = level.w;
+    level.set(level.arenaDoorCell % w, Math.floor(level.arenaDoorCell / w), 2 /* DOOR */);
+  }
+}
+
+// src/dungeon/cavesBoss.ts
+function pressArenaCell2(level, rng, cell, hooks) {
+  if (level.enteredArena)
+    return;
+  const arena = level.bossArena;
+  if (!arena)
+    return;
+  const w = level.w;
+  const x = cell % w;
+  const y = Math.floor(cell / w);
+  const outside = x < arena.l - 1 || x > arena.r + 1 || y < arena.t - 1 || y > arena.b + 1;
+  if (!outside)
+    return;
+  level.enteredArena = true;
+  let pos = -1;
+  for (let tries = 0;tries < 4096 && pos < 0; tries++) {
+    const p = rng.int(0, level.size);
+    const px = p % w;
+    const py = Math.floor(p / w);
+    const pOutside = px < arena.l - 1 || px > arena.r + 1 || py < arena.t - 1 || py > arena.b + 1;
+    if (pOutside && level.isPassable(px, py) && !level.visible[p] && !hooks.occupied(p)) {
+      pos = p;
+    }
+  }
+  if (pos >= 0)
+    hooks.spawn(pos);
+  if (level.arenaDoorCell >= 0) {
+    level.set(level.arenaDoorCell % w, Math.floor(level.arenaDoorCell / w), 0 /* WALL */);
+  }
+}
+function onItemDropped2(level, itemId) {
+  if (level.keyDropped || !level.bossArena)
+    return;
+  if (itemId !== "skeleton_key")
+    return;
+  level.keyDropped = true;
+  if (level.arenaDoorCell >= 0) {
+    const w = level.w;
+    level.set(level.arenaDoorCell % w, Math.floor(level.arenaDoorCell / w), 1 /* FLOOR */);
+  }
+}
+
+// src/mechanics/hunger.ts
+var HUNGER_STEP = 10;
+var HUNGRY = 260;
+var STARVING = 360;
+var STARVE_DAMAGE_CHANCE = 0.3;
+function isHungry(level) {
+  return level >= HUNGRY;
+}
+function isStarving(level) {
+  return level >= STARVING;
+}
+function hungerTick(rng, s) {
+  const wasHungry = isHungry(s.level);
+  const wasStarving = isStarving(s.level);
+  let level = s.level;
+  let damage = 0;
+  let died = false;
+  if (wasStarving) {
+    if (rng.float(0, 1) < STARVE_DAMAGE_CHANCE && (s.hp > 1 || !s.paralysed)) {
+      damage = 1;
+      died = s.hp - 1 <= 0;
     }
   } else {
-    for (let i = 0;i < qty; i++) {
-      hero.inventory.push({ itemId, qty: 1 });
+    level += HUNGER_STEP;
+  }
+  return {
+    level,
+    damage,
+    died,
+    becameStarving: !wasStarving && isStarving(level),
+    becameHungry: !wasHungry && level >= HUNGRY && level < STARVING
+  };
+}
+function satisfy(level, energy) {
+  const v = level - energy;
+  if (v < 0)
+    return 0;
+  if (v > STARVING)
+    return STARVING;
+  return v;
+}
+function regenTick(hp, ht, starving) {
+  return hp < ht && !starving ? hp + 1 : hp;
+}
+
+// src/content/enchantments.ts
+var ENCHANTMENT_ORDER = [
+  "fire",
+  "poison",
+  "death",
+  "paralysis",
+  "leech",
+  "slow",
+  "shock",
+  "instability",
+  "horror",
+  "luck",
+  "tempering"
+];
+var ENCHANTMENT_INFO = {
+  fire: { name: "blazing", weight: 10 },
+  poison: { name: "venomous", weight: 10 },
+  death: { name: "grim", weight: 1 },
+  paralysis: { name: "stunning", weight: 2 },
+  leech: { name: "vampiric", weight: 1 },
+  slow: { name: "chilling", weight: 2 },
+  shock: { name: "shocking", weight: 6 },
+  instability: { name: "unstable", weight: 3 },
+  horror: { name: "eldritch", weight: 2 },
+  luck: { name: "lucky", weight: 2 },
+  tempering: { name: "tempered", weight: 3 }
+};
+function randomEnchantmentId(rng) {
+  let total = 0;
+  for (const id of ENCHANTMENT_ORDER)
+    total += ENCHANTMENT_INFO[id].weight;
+  const roll = rng.float(0, total);
+  let acc = 0;
+  for (const id of ENCHANTMENT_ORDER) {
+    acc += ENCHANTMENT_INFO[id].weight;
+    if (roll < acc)
+      return id;
+  }
+  return ENCHANTMENT_ORDER[ENCHANTMENT_ORDER.length - 1];
+}
+function immune(ch, kind) {
+  return ch.immunities.includes(kind);
+}
+function affectBuff(ch, kind, duration, extra) {
+  if (immune(ch, kind))
+    return;
+  const b = ch.buffs[kind];
+  if (b) {
+    b.left += duration;
+    if (extra?.sourceId !== undefined)
+      b.sourceId = extra.sourceId;
+    if (extra?.amount !== undefined)
+      b.amount = extra.amount;
+  } else {
+    ch.buffs[kind] = { kind, left: duration, ...extra };
+  }
+}
+function prolongBuff(ch, kind, duration, extra) {
+  if (immune(ch, kind))
+    return;
+  const b = ch.buffs[kind];
+  if (b) {
+    if (b.left < duration)
+      b.left = duration;
+    if (extra?.sourceId !== undefined)
+      b.sourceId = extra.sourceId;
+    if (extra?.amount !== undefined)
+      b.amount = extra.amount;
+  } else {
+    ch.buffs[kind] = { kind, left: duration, ...extra };
+  }
+}
+function reigniteBurning(ch, duration) {
+  if (immune(ch, "burning"))
+    return;
+  ch.buffs["burning"] = { kind: "burning", left: duration };
+}
+var VERTIGO_DURATION = 10;
+var TERROR_DURATION = 10;
+var FROST_DURATION = 5;
+function deathProc(fx, _attacker, defender, level) {
+  if (defender.kind !== "hero" && defender.immunities.includes("death")) {
+    return;
+  }
+  if (fx.rng.int(0, level + 100) >= 92) {
+    fx.directDamage(defender, defender.hp, "death");
+  }
+}
+function fireProc(fx, _attacker, defender, _damage, level) {
+  if (fx.rng.int(0, level + 3) >= 2) {
+    if (fx.rng.int(0, 2) === 0) {
+      reigniteBurning(defender, 8);
+    } else {
+      fx.directDamage(defender, fx.rng.int(1, level + 2), "fire");
     }
   }
-  syncDarts(hero);
 }
-function removeFromInventory(hero, slot, qty = 1) {
-  const stack = hero.inventory[slot];
-  if (!stack || qty <= 0)
-    return null;
-  const take = Math.min(qty, stack.qty);
-  const removed = { itemId: stack.itemId, qty: take };
-  stack.qty -= take;
-  if (stack.qty <= 0) {
-    hero.inventory.splice(slot, 1);
+function horrorProc(fx, attacker, defender, level) {
+  if (fx.rng.int(0, level + 5) >= 4) {
+    if (defender.kind === "hero") {
+      affectBuff(defender, "vertigo", VERTIGO_DURATION);
+    } else {
+      affectBuff(defender, "terror", TERROR_DURATION, {
+        sourceId: attacker.id
+      });
+    }
   }
-  syncDarts(hero);
-  return removed;
+}
+function leechProc(fx, attacker, _defender, damage, level) {
+  const maxValue = Math.floor(damage * (level + 2) / (level + 6));
+  const healed = fx.heal(attacker, Math.min(fx.rng.intRange(0, maxValue), attacker.ht - attacker.hp));
+}
+function luckProc(fx, attacker, defender, damage, level) {
+  let best = damage;
+  for (let i = 1;i <= level + 1; i++) {
+    const roll = fx.attackerDamageRoll(attacker) - i;
+    if (roll > best)
+      best = roll;
+  }
+  if (best > damage) {
+    fx.directDamage(defender, best - damage, "luck");
+    fx.showStatus(defender, `+${best - damage}`);
+  }
+}
+function paralysisProc(fx, _attacker, defender, level) {
+  if (fx.rng.int(0, level + 8) >= 7) {
+    prolongBuff(defender, "paralysis", fx.rng.float(1, 1.5 + level));
+  }
+}
+function poisonProc(fx, _attacker, defender, level) {
+  if (fx.rng.int(0, level + 3) >= 2) {
+    if (immune(defender, "poison"))
+      return;
+    defender.buffs["poison"] = { kind: "poison", left: 1 * (level + 1) };
+  }
+}
+function shockProc(fx, _attacker, defender, damage, level) {
+  if (fx.rng.int(0, level + 4) >= 3) {
+    const affected = new Set;
+    const hit = (ch, dmg) => {
+      affected.add(ch.id);
+      let amount = fx.rng.int(1, Math.floor(dmg / 2));
+      if (!ch.flying && fx.isWater(ch.pos)) {
+        amount *= 2;
+      }
+      fx.directDamage(ch, amount, "lightning");
+      const candidates = fx.charsAround(ch.pos).filter((c) => !affected.has(c.id));
+      if (candidates.length > 0) {
+        const next = candidates[fx.rng.int(0, candidates.length)];
+        hit(next, fx.rng.int(Math.floor(dmg / 2), dmg));
+      }
+    };
+    hit(defender, damage);
+  }
+}
+function slowProc(fx, _attacker, defender, level) {
+  if (fx.rng.int(0, level + 4) >= 3) {
+    prolongBuff(defender, "slow", fx.rng.float(1, 1.5 + level));
+  }
+}
+function temperingProc(weapon) {
+  polish(weapon, "weapon");
+}
+function runEnchantment(fx, id, attacker, defender, damage, level, weapon) {
+  switch (id) {
+    case "death":
+      deathProc(fx, attacker, defender, level);
+      break;
+    case "fire":
+      fireProc(fx, attacker, defender, damage, level);
+      break;
+    case "horror":
+      horrorProc(fx, attacker, defender, level);
+      break;
+    case "instability":
+      runEnchantment(fx, randomEnchantmentId(fx.rng), attacker, defender, damage, level, weapon);
+      break;
+    case "leech":
+      leechProc(fx, attacker, defender, damage, level);
+      break;
+    case "luck":
+      luckProc(fx, attacker, defender, damage, level);
+      break;
+    case "paralysis":
+      paralysisProc(fx, attacker, defender, level);
+      break;
+    case "poison":
+      poisonProc(fx, attacker, defender, level);
+      break;
+    case "shock":
+      shockProc(fx, attacker, defender, damage, level);
+      break;
+    case "slow":
+      slowProc(fx, attacker, defender, level);
+      break;
+    case "tempering":
+      temperingProc(weapon);
+      break;
+  }
+}
+function enchantWeaponInstance(rng, weapon) {
+  let id = randomEnchantmentId(rng);
+  let guard = 0;
+  while (id === weapon.enchantment && guard++ < 100) {
+    id = randomEnchantmentId(rng);
+  }
+  weapon.enchantment = id;
+  return id;
+}
+function weaponAttackProc(fx, attacker, defender, damage, weapon) {
+  const level = effectiveLevel(weapon);
+  if (weapon.enchantment) {
+    runEnchantment(fx, weapon.enchantment, attacker, defender, damage, level, weapon);
+  }
+  const used = useDurability(weapon, "weapon", true);
+  if (used.warned) {
+    fx.log(TXT_GOING_TO_BREAK.replace("%s", weapon.name));
+  }
+  if (used.broke) {
+    fx.log(TXT_HAS_BROKEN.replace("%s", weapon.name));
+  }
+}
+
+// src/content/glyphs.ts
+var GLYPH_ORDER = [
+  "affection",
+  "antiEntropy",
+  "autoRepair",
+  "bounce",
+  "displacement",
+  "entanglement",
+  "metabolism",
+  "multiplicity",
+  "potential",
+  "stench",
+  "viscosity"
+];
+function randomGlyphId(rng) {
+  return GLYPH_ORDER[rng.int(0, GLYPH_ORDER.length)];
+}
+function adjacent(a, b) {
+  const dx = Math.abs(a.x - b.x);
+  const dy = Math.abs(a.y - b.y);
+  return dx <= 1 && dy <= 1 && (dx > 0 || dy > 0);
+}
+function affectionProc(fx, attacker, defender, damage, level) {
+  const lvl = Math.max(0, Math.min(level, 6));
+  if (adjacent(attacker, defender) && fx.rng.int(0, Math.floor(lvl / 2) + 5) >= 4) {
+    let duration = fx.rng.intRange(3, 7);
+    affectBuff(attacker, "charm", duration, { sourceId: defender.id });
+    duration = Math.floor(duration * fx.rng.float(0.5, 1));
+    affectBuff(defender, "charm", duration, { sourceId: attacker.id });
+  }
+  return damage;
+}
+function antiEntropyProc(fx, attacker, defender, damage, level) {
+  if (adjacent(attacker, defender) && fx.rng.int(0, level + 6) >= 5) {
+    prolongBuff(attacker, "frost", FROST_DURATION * fx.rng.float(1, 1.5));
+    reigniteBurning(defender, 8);
+  }
+  return damage;
+}
+function autoRepairProc(fx, _attacker, defender, damage, armor) {
+  if (defender.kind === "hero" && fx.spendGold(armor.tier)) {
+    polish(armor, "armor");
+  }
+  return damage;
+}
+function bounceProc(fx, attacker, defender, damage, level, w) {
+  if (adjacent(attacker, defender) && fx.rng.int(0, level + 5) >= 4) {
+    const ofsX = attacker.x - defender.x;
+    const ofsY = attacker.y - defender.y;
+    const newPos = (attacker.y + ofsY) * w + (attacker.x + ofsX);
+    if (fx.isFreeCell(newPos)) {
+      attacker.pos = newPos;
+      fx.pressCell(attacker);
+    }
+  }
+  return damage;
+}
+function displacementProc(fx, _attacker, defender, damage, level, w, h) {
+  if (fx.isBossLevel()) {
+    return damage;
+  }
+  const nTries = (level < 0 ? 1 : level + 1) * 5;
+  for (let i = 0;i < nTries; i++) {
+    const pos = fx.rng.int(0, w * h);
+    if (fx.isVisible(pos) && fx.isFreeCell(pos)) {
+      fx.teleport(defender, pos);
+      fx.pressCell(defender);
+      break;
+    }
+  }
+  return damage;
+}
+function entanglementProc(fx, _attacker, defender, damage, level) {
+  if (fx.rng.int(0, 4) === 0) {
+    prolongBuff(defender, "roots", 5 - Math.floor(level / 5));
+    const armorLevel = 5 * (level + 1);
+    const existing = defender.buffs["earthrootArmor"];
+    if (existing) {
+      if (existing.amount === undefined || existing.amount < armorLevel) {
+        existing.amount = armorLevel;
+      }
+    } else if (!defender.immunities.includes("earthrootArmor")) {
+      defender.buffs["earthrootArmor"] = {
+        kind: "earthrootArmor",
+        left: Number.POSITIVE_INFINITY,
+        amount: armorLevel
+      };
+    }
+  }
+  return damage;
+}
+function metabolismProc(fx, _attacker, defender, damage, level) {
+  if (defender.kind === "hero" && !fx.isStarving() && fx.rng.int(0, Math.floor(level / 2) + 5) >= 4) {
+    const healing = Math.min(defender.ht - defender.hp, fx.rng.int(1, Math.floor(defender.ht / 5)));
+    if (healing > 0) {
+      fx.addHunger(36);
+      fx.heal(defender, healing);
+    }
+  }
+  return damage;
+}
+function multiplicityProc(fx, _attacker, defender, damage, level, w) {
+  if (fx.rng.int(0, Math.floor(level / 2) + 6) >= 5) {
+    const candidates = [];
+    for (let dy = -1;dy <= 1; dy++) {
+      for (let dx = -1;dx <= 1; dx++) {
+        if (dx === 0 && dy === 0)
+          continue;
+        const pos = (defender.y + dy) * w + (defender.x + dx);
+        if (fx.isFreeCell(pos))
+          candidates.push(pos);
+      }
+    }
+    if (candidates.length > 0 && fx.spawnMirrorImage(defender)) {
+      fx.directDamage(defender, fx.rng.intRange(1, Math.floor(defender.ht / 6)), "multiplicity");
+    }
+  }
+  return damage;
+}
+function potentialProc(fx, attacker, defender, damage, level) {
+  if (adjacent(attacker, defender) && fx.rng.int(0, level + 7) >= 6) {
+    const dmg = fx.rng.intRange(1, damage);
+    fx.directDamage(attacker, dmg, "lightning");
+    if (attacker.kind === "hero" || defender.kind === "hero") {}
+    fx.directDamage(defender, fx.rng.intRange(1, dmg), "lightning");
+  }
+  return damage;
+}
+function stenchProc(fx, attacker, defender, damage, level) {
+  if (adjacent(attacker, defender) && fx.rng.int(0, level + 5) >= 4) {
+    fx.seedGas(attacker.pos, 20);
+  }
+  return damage;
+}
+function viscosityProc(fx, _attacker, defender, damage, level) {
+  if (damage === 0) {
+    return 0;
+  }
+  if (fx.rng.int(0, level + 7) >= 6) {
+    const existing = defender.buffs["deferredDamage"];
+    if (existing) {
+      existing.amount = (existing.amount ?? 0) + damage;
+    } else if (!defender.immunities.includes("deferredDamage")) {
+      defender.buffs["deferredDamage"] = {
+        kind: "deferredDamage",
+        left: Number.POSITIVE_INFINITY,
+        amount: damage
+      };
+    }
+    return 0;
+  }
+  return damage;
+}
+function inscribeArmorInstance(rng, armor) {
+  let id = randomGlyphId(rng);
+  let guard = 0;
+  while (id === armor.glyph && guard++ < 100) {
+    id = randomGlyphId(rng);
+  }
+  armor.glyph = id;
+  return id;
+}
+function earthrootAbsorb(armorLevel, damage) {
+  if (damage >= armorLevel) {
+    return { damage: damage - armorLevel, remaining: 0 };
+  }
+  return { damage: 0, remaining: armorLevel - damage };
+}
+function armorDefenseProc(fx, armor, attacker, defender, damage, w, h) {
+  const level = effectiveLevel(armor);
+  const earthroot = defender.buffs["earthrootArmor"];
+  if (earthroot && (earthroot.amount ?? 0) > 0) {
+    const absorbed = earthrootAbsorb(earthroot.amount ?? 0, damage);
+    damage = absorbed.damage;
+    if (absorbed.remaining <= 0) {
+      delete defender.buffs["earthrootArmor"];
+    } else {
+      earthroot.amount = absorbed.remaining;
+    }
+  }
+  if (armor.glyph) {
+    damage = runGlyph(fx, armor.glyph, armor, attacker, defender, damage, level, w, h);
+  }
+  const used = useDurability(armor, "armor", true);
+  if (used.warned) {
+    fx.log(TXT_GOING_TO_BREAK.replace("%s", armor.name));
+  }
+  if (used.broke) {
+    fx.log(TXT_HAS_BROKEN.replace("%s", armor.name));
+  }
+  return damage;
+}
+function runGlyph(fx, id, armor, attacker, defender, damage, level, w, h) {
+  switch (id) {
+    case "affection":
+      return affectionProc(fx, attacker, defender, damage, level);
+    case "antiEntropy":
+      return antiEntropyProc(fx, attacker, defender, damage, level);
+    case "autoRepair":
+      return autoRepairProc(fx, attacker, defender, damage, armor);
+    case "bounce":
+      return bounceProc(fx, attacker, defender, damage, level, w);
+    case "displacement":
+      return displacementProc(fx, attacker, defender, damage, level, w, h);
+    case "entanglement":
+      return entanglementProc(fx, attacker, defender, damage, level);
+    case "metabolism":
+      return metabolismProc(fx, attacker, defender, damage, level);
+    case "multiplicity":
+      return multiplicityProc(fx, attacker, defender, damage, level, w);
+    case "potential":
+      return potentialProc(fx, attacker, defender, damage, level);
+    case "stench":
+      return stenchProc(fx, attacker, defender, damage, level);
+    case "viscosity":
+      return viscosityProc(fx, attacker, defender, damage, level);
+  }
+}
+
+// src/content/itemgen.ts
+var GEN_CATEGORY_WEIGHTS = [
+  { cat: "weapon", weight: 15 },
+  { cat: "armor", weight: 10 },
+  { cat: "potion", weight: 50 },
+  { cat: "scroll", weight: 40 },
+  { cat: "wand", weight: 4 },
+  { cat: "ring", weight: 2 },
+  { cat: "seed", weight: 5 },
+  { cat: "food", weight: 0 },
+  { cat: "gold", weight: 50 },
+  { cat: "misc", weight: 5 }
+];
+var dart = (min, max) => (rng) => `dart:${rng.int(min, max)}`;
+var shortsword = () => "shortsword";
+var GEN_CLASSES = {
+  weapon: [
+    { cls: "Dagger", prob: 1, m1: shortsword },
+    { cls: "Knuckles", prob: 1, m1: shortsword },
+    { cls: "Quarterstaff", prob: 1, m1: shortsword },
+    { cls: "Spear", prob: 1, m1: shortsword },
+    { cls: "Mace", prob: 1, m1: shortsword },
+    { cls: "Sword", prob: 1, m1: shortsword },
+    { cls: "Longsword", prob: 1, m1: shortsword },
+    { cls: "BattleAxe", prob: 1, m1: shortsword },
+    { cls: "WarHammer", prob: 1, m1: shortsword },
+    { cls: "Glaive", prob: 1, m1: shortsword },
+    { cls: "ShortSword", prob: 0, m1: shortsword },
+    { cls: "Dart", prob: 0, m1: dart(5, 15) },
+    { cls: "Javelin", prob: 1, m1: dart(5, 15) },
+    { cls: "IncendiaryDart", prob: 1, m1: dart(3, 6) },
+    { cls: "CurareDart", prob: 1, m1: dart(2, 5) },
+    { cls: "Shuriken", prob: 1, m1: dart(5, 15) },
+    { cls: "Boomerang", prob: 0, m1: dart(5, 15) },
+    { cls: "Tamahawk", prob: 1, m1: dart(5, 12) }
+  ],
+  armor: [
+    { cls: "ClothArmor", prob: 1, m1: () => "cloth_armor" },
+    { cls: "LeatherArmor", prob: 1, m1: () => "cloth_armor" },
+    { cls: "MailArmor", prob: 1, m1: () => "cloth_armor" },
+    { cls: "ScaleArmor", prob: 1, m1: () => "cloth_armor" },
+    { cls: "PlateArmor", prob: 1, m1: () => "cloth_armor" }
+  ],
+  potion: [
+    { cls: "PotionOfHealing", prob: 45, m1: () => "potion_healing" },
+    { cls: "PotionOfExperience", prob: 4, m1: () => "potion_experience" },
+    { cls: "PotionOfToxicGas", prob: 15, m1: () => "potion_toxicgas" },
+    { cls: "PotionOfParalyticGas", prob: 10, m1: () => "potion_paralyticgas" },
+    { cls: "PotionOfLiquidFlame", prob: 15, m1: () => "potion_liquidflame" },
+    { cls: "PotionOfLevitation", prob: 10, m1: () => "potion_levitation" },
+    { cls: "PotionOfStrength", prob: 0, m1: () => "potion_strength" },
+    { cls: "PotionOfMindVision", prob: 20, m1: () => "potion_mindvision" },
+    { cls: "PotionOfPurity", prob: 12, m1: () => "potion_purity" },
+    { cls: "PotionOfInvisibility", prob: 10, m1: () => "potion_invisibility" },
+    { cls: "PotionOfMight", prob: 0, m1: () => "potion_might" },
+    { cls: "PotionOfFrost", prob: 10, m1: () => "potion_frost" }
+  ],
+  scroll: [
+    { cls: "ScrollOfIdentify", prob: 30, m1: () => "scroll_identify" },
+    { cls: "ScrollOfTeleportation", prob: 10, m1: () => "scroll_teleportation" },
+    { cls: "ScrollOfRemoveCurse", prob: 15, m1: () => "scroll_removecurse" },
+    { cls: "ScrollOfRecharging", prob: 10, m1: () => "scroll_recharging" },
+    { cls: "ScrollOfMagicMapping", prob: 15, m1: () => "scroll_magicmapping" },
+    { cls: "ScrollOfChallenge", prob: 12, m1: () => "scroll_challenge" },
+    { cls: "ScrollOfTerror", prob: 8, m1: () => "scroll_terror" },
+    { cls: "ScrollOfLullaby", prob: 8, m1: () => "scroll_lullaby" },
+    { cls: "ScrollOfPsionicBlast", prob: 4, m1: () => "scroll_psionicblast" },
+    { cls: "ScrollOfMirrorImage", prob: 6, m1: () => "scroll_mirrorimage" },
+    { cls: "ScrollOfUpgrade", prob: 0, m1: () => "scroll_upgrade" },
+    { cls: "ScrollOfEnchantment", prob: 1, m1: () => "scroll" }
+  ],
+  wand: [
+    { cls: "WandOfTeleportation", prob: 10, m1: () => "wand_of_teleportation" },
+    { cls: "WandOfSlowness", prob: 10, m1: () => "wand_of_slowness" },
+    { cls: "WandOfFirebolt", prob: 15, m1: () => "wand_of_firebolt" },
+    { cls: "WandOfRegrowth", prob: 6, m1: () => "wand_of_regrowth" },
+    { cls: "WandOfPoison", prob: 10, m1: () => "wand_of_poison" },
+    { cls: "WandOfBlink", prob: 11, m1: () => "wand_of_blink" },
+    { cls: "WandOfLightning", prob: 15, m1: () => "wand_of_lightning" },
+    { cls: "WandOfAmok", prob: 10, m1: () => "wand_of_amok" },
+    { cls: "WandOfReach", prob: 6, m1: () => "wand_of_reach" },
+    { cls: "WandOfFlock", prob: 10, m1: () => "wand_of_flock" },
+    { cls: "WandOfMagicMissile", prob: 0, m1: () => "wand_of_magic_missile" },
+    { cls: "WandOfDisintegration", prob: 5, m1: () => "wand_of_disintegration" },
+    { cls: "WandOfAvalanche", prob: 5, m1: () => "wand_of_avalanche" }
+  ],
+  ring: [
+    { cls: "RingOfMending", prob: 1, m1: () => "ring_of_mending" },
+    { cls: "RingOfDetection", prob: 1, m1: () => "ring_of_detection" },
+    { cls: "RingOfShadows", prob: 1, m1: () => "ring_of_shadows" },
+    { cls: "RingOfPower", prob: 1, m1: () => "ring_of_power" },
+    { cls: "RingOfHerbalism", prob: 1, m1: () => "ring_of_herbalism" },
+    { cls: "RingOfAccuracy", prob: 1, m1: () => "ring_of_accuracy" },
+    { cls: "RingOfEvasion", prob: 1, m1: () => "ring_of_evasion" },
+    { cls: "RingOfSatiety", prob: 1, m1: () => "ring_of_satiety" },
+    { cls: "RingOfHaste", prob: 1, m1: () => "ring_of_haste" },
+    { cls: "RingOfElements", prob: 1, m1: () => "ring_of_elements" },
+    { cls: "RingOfHaggler", prob: 0, m1: () => "ring_of_haggler" },
+    { cls: "RingOfThorns", prob: 0, m1: () => "ring_of_thorns" }
+  ],
+  seed: [
+    { cls: "Firebloom.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Icecap.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Sorrowmoss.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Dreamweed.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Sungrass.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Earthroot.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Fadeleaf.Seed", prob: 1, m1: () => "ration" },
+    { cls: "Rotberry.Seed", prob: 0, m1: () => "ration" }
+  ],
+  food: [
+    { cls: "Food", prob: 4, m1: () => "ration" },
+    { cls: "Pasty", prob: 1, m1: () => "ration" },
+    { cls: "MysteryMeat", prob: 0, m1: () => "ration" }
+  ],
+  gold: [
+    {
+      cls: "Gold",
+      prob: 1,
+      m1: (rng, depth) => `gold:${rng.int(20 + depth * 10, 40 + depth * 20)}`
+    }
+  ],
+  misc: [
+    { cls: "Bomb", prob: 2, m1: dart(5, 15) },
+    { cls: "Honeypot", prob: 1, m1: () => "honeypot" }
+  ]
+};
+function chances(rng, entries, weight) {
+  let total = 0;
+  for (const e of entries)
+    total += weight(e);
+  const roll = rng.float(0, total);
+  let acc = 0;
+  for (const e of entries) {
+    acc += weight(e);
+    if (roll < acc)
+      return e;
+  }
+  return entries[entries.length - 1];
+}
+
+class GeneratorBag {
+  weights = new Map;
+  constructor() {
+    this.reset();
+  }
+  reset() {
+    for (const { cat, weight } of GEN_CATEGORY_WEIGHTS) {
+      this.weights.set(cat, weight);
+    }
+  }
+  weightOf(cat) {
+    return this.weights.get(cat);
+  }
+  random(rng, depth) {
+    const cat = chances(rng, GEN_CATEGORY_WEIGHTS, (e) => this.weights.get(e.cat)).cat;
+    return this.randomFrom(rng, cat, depth);
+  }
+  randomFrom(rng, cat, depth) {
+    this.weights.set(cat, this.weights.get(cat) / 2);
+    const cls = chances(rng, GEN_CLASSES[cat], (e) => e.prob);
+    return cls.m1(rng, depth);
+  }
+}
+function skeletonWeaponDrop(rng, depth, bag) {
+  let best = "";
+  let bestLvl = Number.POSITIVE_INFINITY;
+  for (let i = 0;i < 3; i++) {
+    const id = bag.randomFrom(rng, "weapon", depth);
+    const lvl = 0;
+    if (lvl < bestLvl) {
+      best = id;
+      bestLvl = lvl;
+    }
+  }
+  return best;
+}
+var itemGenerator = new GeneratorBag;
+function resetItemGenerator() {
+  itemGenerator.reset();
 }
 
 // src/content/mobs.ts
@@ -5222,6 +6274,66 @@ var MOB_DEFS = {
     attackDelay: 1,
     immunities: ["terror"],
     resistances: []
+  },
+  spinner: {
+    id: "spinner",
+    name: "cave spinner",
+    sprite: "mob_spinner",
+    hp: 50,
+    atk: 20,
+    def: 14,
+    dmgMin: 12,
+    dmgMax: 16,
+    triangular: true,
+    dr: 6,
+    exp: MOB_EXP.spinner.exp,
+    maxLvl: MOB_EXP.spinner.maxLvl,
+    speed: 1,
+    flying: false,
+    ability: null,
+    attackDelay: 1,
+    immunities: ["roots"],
+    resistances: ["poison"]
+  },
+  elemental: {
+    id: "elemental",
+    name: "fire elemental",
+    sprite: "mob_elemental",
+    hp: 65,
+    atk: 25,
+    def: 20,
+    dmgMin: 16,
+    dmgMax: 20,
+    triangular: true,
+    dr: 5,
+    exp: MOB_EXP.elemental.exp,
+    maxLvl: MOB_EXP.elemental.maxLvl,
+    speed: 1,
+    flying: true,
+    ability: null,
+    attackDelay: 1,
+    immunities: ["burning", "fire", "firebolt", "psionic_blast"],
+    resistances: []
+  },
+  monk: {
+    id: "monk",
+    name: "dwarf monk",
+    sprite: "mob_monk",
+    hp: 70,
+    atk: 30,
+    def: 30,
+    dmgMin: 12,
+    dmgMax: 16,
+    triangular: true,
+    dr: 2,
+    exp: MOB_EXP.monk.exp,
+    maxLvl: MOB_EXP.monk.maxLvl,
+    speed: 1,
+    flying: false,
+    ability: null,
+    attackDelay: 0.5,
+    immunities: ["amok", "terror"],
+    resistances: []
   }
 };
 var mobIdCounter = 1;
@@ -5334,11 +6446,59 @@ function tickBuffs(rng, level, ch, log) {
     if (b.cripple.left <= 0)
       delete b.cripple;
   }
+  if (b.roots) {
+    b.roots.left -= 1;
+    if (b.roots.left <= 0) {
+      delete b.roots;
+      ch.rooted = false;
+    } else {
+      ch.rooted = true;
+    }
+  }
   if (b.blindness) {
     b.blindness.left -= 1;
     if (b.blindness.left <= 0)
       delete b.blindness;
   }
+  if (b.deferredDamage && ch.isAlive()) {
+    const pool = Math.floor(b.deferredDamage.amount ?? 0);
+    if (pool <= 0) {
+      delete b.deferredDamage;
+    } else {
+      b.deferredDamage.amount = pool - 1;
+      const applied = applyDamage(rng, buffTarget(ch), 1, "deferredDamage");
+      ch.hp = applied.hp;
+      if (applied.died)
+        delete b.deferredDamage;
+      else if ((b.deferredDamage.amount ?? 0) <= 0)
+        delete b.deferredDamage;
+      logBuffDeath("deferredDamage");
+      if (applied.paralysisBroken) {
+        ch.paralysed = false;
+        delete b.paralysis;
+      }
+    }
+  }
+  if (b.slow) {
+    b.slow.left -= 1;
+    if (b.slow.left <= 0)
+      delete b.slow;
+  }
+  if (b.vertigo) {
+    b.vertigo.left -= 1;
+    if (b.vertigo.left <= 0)
+      delete b.vertigo;
+  }
+  if (b.charm) {
+    b.charm.left -= 1;
+    if (b.charm.left <= 0)
+      delete b.charm;
+  }
+  tickPotionBuffs(b, ch, () => {
+    const m = ch;
+    if (m.aiState === "sleeping")
+      m.aiState = "wandering";
+  });
 }
 function heroOf(ctx) {
   return ctx.hero;
@@ -5414,7 +6574,11 @@ function randomDestination(rng, level) {
 }
 function dropItemAt(ctx, pos, itemId) {
   ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
-  onItemDropped(ctx.level, itemId);
+  if (ctx.level.depth === 10) {
+    onItemDropped(ctx.level, itemId);
+  } else if (ctx.level.depth === 15) {
+    onItemDropped2(ctx.level, itemId);
+  }
 }
 function runAttackSequence(rng, sides) {
   if (!hitRoll(rng, sides.accuracy, sides.evasion)) {
@@ -5817,6 +6981,63 @@ class BanditMob extends ThiefMob {
     return damage;
   }
 }
+
+class SpinnerMob extends ContentMob {
+  attackProc(ctx, hero, damage) {
+    if (ctx.rng.int(0, 2) === 0) {
+      hero.buffs.poison = {
+        kind: "poison",
+        left: ctx.rng.int(7, 9) * 1
+      };
+      this.state = "fleeing";
+    }
+    return damage;
+  }
+  afterMove(ctx, oldPos) {
+    if (this.state === "fleeing") {
+      seedBlob(ctx.level.blobs, "web", oldPos, ctx.rng.int(5, 7), ctx.level.w * ctx.level.h);
+    }
+    super.afterMove(ctx, oldPos);
+  }
+  nowhereToRun(_ctx) {
+    this.state = "hunting";
+  }
+  takeTurn(ctx) {
+    const cost = super.takeTurn(ctx);
+    if (this.state === "fleeing" && this.enemySeen) {
+      const hero = heroOf(ctx);
+      if (hero.isAlive() && !hero.buffs.poison) {
+        this.state = "hunting";
+      }
+    }
+    return cost;
+  }
+}
+
+class ElementalMob extends ContentMob {
+  attackProc(_ctx, hero, damage) {
+    if (_ctx.rng.int(0, 2) === 0) {
+      hero.buffs.burning = { kind: "burning", left: 8 };
+    }
+    return damage;
+  }
+}
+
+class MonkMob extends ContentMob {
+  defenseVerb() {
+    return "parried";
+  }
+  attackProc(ctx, hero, damage) {
+    if (ctx.rng.int(0, 6) === 0 && hero.weaponId !== null && hero.weaponId !== "knuckles") {
+      const def = getItem(hero.weaponId);
+      dropItemAt(ctx, hero.pos, hero.weaponId);
+      hero.weapon = null;
+      hero.weaponId = null;
+      ctx.log(`${this.name} has knocked the ${def.name} from your hands!`);
+    }
+    return damage;
+  }
+}
 function buildMob(mobId, id, pos, w, depth = 0) {
   if (mobId === "goo") {
     const ctor = gooCtor;
@@ -5833,6 +7054,12 @@ function buildMob(mobId, id, pos, w, depth = 0) {
     const ctor = tenguCtor;
     if (!ctor)
       throw new Error("tengu-boss not registered (import src/content/tengu-boss.js)");
+    return new ctor(id, pos, w);
+  }
+  if (mobId === "dm300") {
+    const ctor = dm300Ctor;
+    if (!ctor)
+      throw new Error("dm300-boss not registered (import src/content/dm300-boss.js)");
     return new ctor(id, pos, w);
   }
   const def = MOB_DEFS[mobId];
@@ -5853,6 +7080,12 @@ function buildMob(mobId, id, pos, w, depth = 0) {
       return new BanditMob(id, def, pos, w);
     case "shielded":
       return new ShieldedMob(id, def, pos, w);
+    case "spinner":
+      return new SpinnerMob(id, def, pos, w);
+    case "elemental":
+      return new ElementalMob(id, def, pos, w);
+    case "monk":
+      return new MonkMob(id, def, pos, w);
     default:
       return new ContentMob(id, def, pos, w);
   }
@@ -5864,6 +7097,10 @@ function registerGoo(ctor) {
 var tenguCtor = null;
 function registerTengu(ctor) {
   tenguCtor = ctor;
+}
+var dm300Ctor = null;
+function registerDM300(ctor) {
+  dm300Ctor = ctor;
 }
 var npcBuilder = null;
 function registerNpcBuilder(builder) {
@@ -6063,9 +7300,128 @@ function rollMobLoot(ctx, mob) {
         dropItemAt(ctx, mob.pos, `gold:${rng.intRange(20 + depth * 10, 40 + depth * 20)}`);
       }
       break;
+    case "spinner":
+      if (rng.float(0, 1) < 0.125) {
+        dropItemAt(ctx, mob.pos, "ration");
+      }
+      break;
+    case "elemental":
+      if (rng.float(0, 1) < 0.1 && ITEMS["potion_liquid_flame"]) {
+        dropItemAt(ctx, mob.pos, "potion_liquid_flame");
+      }
+      break;
+    case "monk":
+      if (rng.float(0, 1) < 0.083) {
+        dropItemAt(ctx, mob.pos, "ration");
+      }
+      break;
+    case "dm300":
+      if (rng.float(0, 1) < 0.333 && ITEMS["ring_of_thorns"]) {
+        dropItemAt(ctx, mob.pos, "ring_of_thorns");
+      }
+      break;
     default:
       break;
   }
+}
+function combatProcFx(ctx) {
+  const level = ctx.level;
+  const hero = heroOf(ctx);
+  const charAtPos2 = (pos) => {
+    if (hero.pos === pos && hero.isAlive())
+      return hero;
+    const m = ctx.mobs.find((mm) => mm.pos === pos && mm.isAlive());
+    return m ?? null;
+  };
+  const unoccupied = (pos) => !(hero.isAlive() && hero.pos === pos) && !ctx.mobs.some((mm) => mm.isAlive() && mm.pos === pos);
+  return {
+    rng: ctx.rng,
+    log: (msg) => ctx.log(msg),
+    directDamage: (target, amount, source) => {
+      if (target.hp <= 0)
+        return;
+      delete target.buffs.frost;
+      const applied = applyDamage(ctx.rng, {
+        hp: target.hp,
+        ht: target.ht,
+        paralysed: target.buffs.paralysis !== undefined,
+        immunities: target.immunities,
+        resistances: target.resistances
+      }, amount, source);
+      target.hp = applied.hp;
+      if (applied.paralysisBroken) {
+        delete target.buffs.paralysis;
+      }
+    },
+    heal: (target, amount) => {
+      const before = target.hp;
+      target.hp = Math.min(target.ht, target.hp + amount);
+      return target.hp - before;
+    },
+    attackerDamageRoll: (attacker) => {
+      if (attacker.kind === "hero") {
+        return heroDamageRoll(ctx.rng, hero, { ranged: false });
+      }
+      const mob = attacker;
+      return ctx.rng.intRange(mob.def.dmgMin, mob.def.dmgMax);
+    },
+    showStatus: (_target, _text) => {},
+    isWater: (pos) => level.getAt(pos) === 9 /* WATER */,
+    charsAround: (pos) => {
+      const { x, y } = level.xy(pos);
+      const out = [];
+      for (let dy = -1;dy <= 1; dy++) {
+        for (let dx = -1;dx <= 1; dx++) {
+          if (dx === 0 && dy === 0)
+            continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= level.w || ny >= level.h)
+            continue;
+          const ch = charAtPos2(ny * level.w + nx);
+          if (ch)
+            out.push(ch);
+        }
+      }
+      return out;
+    },
+    isFreeCell: (pos) => {
+      const { x, y } = level.xy(pos);
+      return level.isPassable(x, y) && unoccupied(pos);
+    },
+    isVisible: (pos) => level.visible[pos] === 1,
+    isBossLevel: () => level.bossLevel,
+    teleport: (ch, pos) => {
+      ch.pos = pos;
+    },
+    pressCell: (ch) => {
+      const noop = () => {
+        return;
+      };
+      if (ch.kind === "hero") {
+        pressTrapCell(ctx, ch.pos, hero, noop);
+      } else {
+        mobPressTrapCell(ctx, ch, noop);
+      }
+    },
+    seedGas: (pos, amount) => {
+      seedBlob(level.blobs, "toxic", pos, amount, level.w * level.h);
+    },
+    spawnMirrorImage: (_heroChar) => {
+      return false;
+    },
+    spendGold: (amount) => {
+      if (hero.gold < amount)
+        return false;
+      hero.gold -= amount;
+      return true;
+    },
+    polishHeroArmor: () => {},
+    addHunger: (amount) => {
+      hero.hungerLevel = satisfy(hero.hungerLevel, -amount);
+    },
+    isStarving: () => isStarving(hero.hungerLevel)
+  };
 }
 function strikeHeroVsMob(ctx, hero, mob, accuracy, damageRoll) {
   const rng = ctx.rng;
@@ -6074,6 +7430,16 @@ function strikeHeroVsMob(ctx, hero, mob, accuracy, damageRoll) {
     evasion: mob.mobDefenseSkill(),
     defenderDr: mob.def.dr,
     damageRoll,
+    onAttackProc: (_r, dmg) => {
+      const wep = hero.rangedWeapon ?? hero.weapon;
+      if (wep) {
+        if (wep === hero.weapon && hero.weaponId === "pickaxe") {} else {
+          const fx = combatProcFx(ctx);
+          weaponAttackProc(fx, hero, mob, dmg, wep);
+        }
+      }
+      return dmg;
+    },
     onDefenseProc: (_r, dmg) => mobDefenseProc(ctx, mob, dmg)
   });
   if (!seq.hit) {
@@ -6102,6 +7468,9 @@ function strikeHeroVsMob(ctx, hero, mob, accuracy, damageRoll) {
   ctx.log(seq.damageDealt > 0 ? `You hit the ${mob.name} for ${seq.damageDealt}.` : `You hit the ${mob.name}, but do no damage.`);
   if (applied.died) {
     killMob(ctx, mob, {});
+    if (mob.def.id === "bat" && hero.weaponId === "pickaxe" && hero.weapon) {
+      hero.weapon.bloodStained = true;
+    }
   } else {
     mob.onDamaged(ctx);
   }
@@ -6113,7 +7482,12 @@ function strikeMobVsHero(ctx, mob, hero, accuracy, damageRoll, onAttackProc) {
     evasion: heroDefenseSkill(hero),
     defenderDr: heroDR(hero),
     damageRoll,
-    onAttackProc
+    onAttackProc,
+    onDefenseProc: (_r, dmg) => {
+      if (!hero.armor)
+        return dmg;
+      return armorDefenseProc(combatProcFx(ctx), hero.armor, mob, hero, dmg, ctx.level.w, ctx.level.h);
+    }
   });
   if (!seq.hit) {
     ctx.log(`The ${mob.name} misses you.`);
@@ -6128,314 +7502,2578 @@ function strikeMobVsHero(ctx, mob, hero, accuracy, damageRoll, onAttackProc) {
   ctx.log(seq.damageDealt > 0 ? `The ${mob.name} hits you for ${seq.damageDealt}.` : `The ${mob.name} hits you, but does no damage.`);
   if (applied.died)
     ctx.log(`You were killed by the ${mob.name}...`);
+  if (!mob.isAlive()) {
+    killMob(ctx, mob, {});
+  }
 }
 
-// src/mechanics/traps.ts
-var TXT_HIDDEN_PLATE_CLICKS = "A hidden pressure plate clicks!";
-var TXT_ALARM_SOUND = "The trap emits a piercing sound that echoes throughout the dungeon!";
-var TXT_LIGHTNING_DEATH = "You were killed by a discharge of a lightning trap...";
-function trapKindOf(t) {
-  switch (t) {
-    case 20 /* TRAP_TOXIC */:
-    case 21 /* TRAP_TOXIC_HIDDEN */:
-      return "toxic";
-    case 22 /* TRAP_FIRE */:
-    case 23 /* TRAP_FIRE_HIDDEN */:
-      return "fire";
-    case 24 /* TRAP_PARALYTIC */:
-    case 25 /* TRAP_PARALYTIC_HIDDEN */:
-      return "paralytic";
-    case 26 /* TRAP_POISON */:
-    case 27 /* TRAP_POISON_HIDDEN */:
-      return "poison";
-    case 28 /* TRAP_ALARM */:
-    case 29 /* TRAP_ALARM_HIDDEN */:
-      return "alarm";
-    case 30 /* TRAP_LIGHTNING */:
-    case 31 /* TRAP_LIGHTNING_HIDDEN */:
-      return "lightning";
-    case 32 /* TRAP_GRIPPING */:
-    case 33 /* TRAP_GRIPPING_HIDDEN */:
-      return "gripping";
-    case 34 /* TRAP_SUMMONING */:
-    case 35 /* TRAP_SUMMONING_HIDDEN */:
-      return "summoning";
-    default:
-      return null;
+class MirrorImageMob extends ContentMob {
+  constructor(id, pos, w, stats) {
+    super(id, {
+      id: "mirrorimage",
+      name: "mirror image",
+      sprite: "mirror_image",
+      hp: 1,
+      atk: stats.attackSkill,
+      def: 0,
+      dmgMin: stats.damage,
+      dmgMax: stats.damage,
+      triangular: false,
+      dr: 0,
+      exp: 0,
+      maxLvl: 0,
+      speed: 1,
+      flying: false,
+      ability: null,
+      attackDelay: 1,
+      immunities: [],
+      resistances: []
+    }, pos, w);
+    this.hostile = false;
+    this.state = "hunting";
+  }
+  shatterAfterAttack() {
+    this.hp = 0;
   }
 }
-function trapCharDr(ch) {
-  if (ch.kind === "hero") {
-    return ch.armor ? Math.max(ch.armor.dr + ch.armor.level, 0) : 0;
+
+// src/mechanics/rings.ts
+var RING_SPECS = [
+  {
+    id: "mending",
+    javaClass: "RingOfMending",
+    name: "Ring of Mending",
+    desc: "This ring increases the body's regenerative properties, allowing " + "one to recover lost health at an accelerated rate. Degraded rings will " + "decrease or even halt one's natural regeneration.",
+    spriteKey: "item_ring_mending",
+    buffKind: "ring_mending"
+  },
+  {
+    id: "detection",
+    javaClass: "RingOfDetection",
+    name: "Ring of Detection",
+    desc: "Wearing this ring will allow the wearer to notice hidden secrets - " + "traps and secret doors - without taking time to search. Degraded rings of detection " + "will dull your senses, making it harder to notice secrets even when actively searching for them.",
+    spriteKey: "item_ring_detection",
+    buffKind: "ring_detection"
+  },
+  {
+    id: "shadows",
+    javaClass: "RingOfShadows",
+    name: "Ring of Shadows",
+    desc: "Enemies will be less likely to notice you if you wear this ring. Degraded rings " + "of shadows will alert enemies who might otherwise not have noticed your presence.",
+    spriteKey: "item_ring_shadows",
+    buffKind: "ring_shadows"
+  },
+  {
+    id: "power",
+    javaClass: "RingOfPower",
+    name: "Ring of Power",
+    desc: "Your wands will become more powerful in the energy field " + "that radiates from this ring. Degraded rings of power will instead weaken your wands.",
+    spriteKey: "item_ring_power",
+    buffKind: "ring_power"
+  },
+  {
+    id: "herbalism",
+    javaClass: "RingOfHerbalism",
+    name: "Ring of Herbalism",
+    desc: "This ring increases your chance to gather dew and seeds from trampled grass.",
+    spriteKey: "item_ring_herbalism",
+    buffKind: "ring_herbalism"
+  },
+  {
+    id: "accuracy",
+    javaClass: "RingOfAccuracy",
+    name: "Ring of Accuracy",
+    desc: "This ring increases your chance to hit the enemy.",
+    spriteKey: "item_ring_accuracy",
+    buffKind: "ring_accuracy"
+  },
+  {
+    id: "evasion",
+    javaClass: "RingOfEvasion",
+    name: "Ring of Evasion",
+    desc: "This ring increases your chance to dodge enemy attack.",
+    spriteKey: "item_ring_evasion",
+    buffKind: "ring_evasion"
+  },
+  {
+    id: "satiety",
+    javaClass: "RingOfSatiety",
+    name: "Ring of Satiety",
+    desc: "Wearing this ring you can go without food longer. Degraded rings of satiety will cause the opposite effect.",
+    spriteKey: "item_ring_satiety",
+    buffKind: "ring_satiety"
+  },
+  {
+    id: "haste",
+    javaClass: "RingOfHaste",
+    name: "Ring of Haste",
+    desc: "This ring accelerates the wearer's flow of time, allowing one to perform all actions a little faster.",
+    spriteKey: "item_ring_haste",
+    buffKind: "ring_haste"
+  },
+  {
+    id: "haggler",
+    javaClass: "RingOfHaggler",
+    name: "Ring of Haggler",
+    desc: "In fact this ring doesn't provide any magic effect, but it demonstrates " + "to shopkeepers and vendors, that the owner of the ring is a member of " + "The Thieves' Guild. Usually they are glad to give a discount in exchange " + "for temporary immunity guarantee. Upgrading this ring won't give any additional " + "bonuses.",
+    spriteKey: "item_ring_haggler",
+    buffKind: "ring_haggler",
+    fixedPlusOne: true
+  },
+  {
+    id: "elements",
+    javaClass: "RingOfElements",
+    name: "Ring of Elements",
+    desc: "This ring provides resistance to different elements, such as fire, " + "electricity, gases etc. Also it decreases duration of negative effects.",
+    spriteKey: "item_ring_elements",
+    buffKind: "ring_elements"
+  },
+  {
+    id: "thorns",
+    javaClass: "RingOfThorns",
+    name: "Ring of Thorns",
+    desc: "Though this ring doesn't provide real thorns, an enemy that attacks you " + "will itself be wounded by a fraction of the damage that it inflicts. " + "Upgrading this ring won't give any additional bonuses.",
+    spriteKey: "item_ring_thorns",
+    buffKind: "ring_thorns",
+    fixedPlusOne: true
   }
-  return ch.def.dr;
+];
+
+// src/content/rings.ts
+function ringSpec(id) {
+  const spec = RING_SPECS.find((s) => s.id === id);
+  if (!spec)
+    throw new Error(`unknown ring id: ${id}`);
+  return spec;
 }
-function damageFromTrap(ctx, rng, ch, dmg, sourceTag, onHeroDeath) {
-  if (ch.kind === "mob" && ch.invulnerable)
-    return;
-  const target = {
-    hp: ch.hp,
-    ht: ch.ht,
-    paralysed: ch.paralysed,
-    immunities: ch.immunities,
-    resistances: ch.resistances
-  };
-  const applied = applyDamage(rng, target, dmg, sourceTag);
-  ch.hp = applied.hp;
-  if (applied.paralysisBroken) {
-    ch.paralysed = false;
-    delete ch.buffs.paralysis;
-  }
-  if (applied.died) {
-    if (ch.kind === "hero") {
-      onHeroDeath?.();
-    } else {
-      ctx.killMob(ch);
-    }
-  } else if (ch.kind === "mob") {
-    ch.onDamaged?.(ctx);
-  }
-}
-function beckonMob(mob, cell) {
-  if (mob.invulnerable)
-    return;
-  if (mob.state !== "hunting") {
-    mob.state = "wandering";
-  }
-  mob.target = cell;
-}
-function makeBlobWorld(ctx, hero, mobs) {
-  const level = ctx.level;
-  return {
-    w: level.w,
-    length: level.w * level.h,
-    depth: level.depth,
-    blobs: level.blobs,
-    solidAt: (pos) => isSolidForBlob(level.getAt(pos)),
-    flamableAt: (pos) => isFlamableForBlob(level.getAt(pos)),
-    tileAt: (pos) => level.getAt(pos),
-    setTile: (pos, t) => {
-      const { x, y } = level.xy(pos);
-      level.set(x, y, t);
-    },
-    charAt: (pos) => {
-      if (hero.isAlive() && hero.pos === pos)
-        return hero;
-      return mobs.find((m) => m.isAlive() && m.pos === pos) ?? null;
-    },
-    visibleAt: (pos) => level.visible[pos] !== 0,
-    damageChar: (rng, ch, dmg, sourceTag, onHeroDeath) => damageFromTrap(ctx, rng, ch, dmg, sourceTag, onHeroDeath ? () => onHeroDeath(ch) : undefined),
-    reigniteBurning: (ch) => {
-      if (ch.invulnerable)
-        return;
-      ch.buffs.burning = { kind: "burning", left: BURNING_DURATION };
-    },
-    prolongParalysis: (ch, duration) => {
-      if (ch.invulnerable)
-        return;
-      const cur = ch.buffs.paralysis?.left ?? 0;
-      ch.buffs.paralysis = { kind: "paralysis", left: Math.max(cur, duration) };
-      ch.paralysed = true;
-    },
-    burnOutTile: (pos) => {
-      const t = level.getAt(pos);
-      const unstitchable = t === 2 /* DOOR */ || t === 17 /* BOOKSHELF */;
-      let burned = 38 /* EMBERS */;
-      if (unstitchable) {
-        const { x: x2, y: y2 } = level.xy(pos);
-        const flooded = level.neighbors4(x2, y2).some((n) => level.get(n.x, n.y) === 9 /* WATER */);
-        if (flooded)
-          burned = 9 /* WATER */;
-      }
-      const { x, y } = level.xy(pos);
-      level.set(x, y, burned);
-    },
-    log: (msg) => ctx.log(msg)
-  };
-}
-function toxicTrap(ctx, cell) {
-  const level = ctx.level;
-  seedBlob(level.blobs, "toxic", cell, 300 + 20 * level.depth, level.w * level.h);
-}
-function fireTrap(ctx, cell) {
-  const level = ctx.level;
-  seedBlob(level.blobs, "fire", cell, 2, level.w * level.h);
-}
-function paralyticTrap(ctx, cell) {
-  const level = ctx.level;
-  seedBlob(level.blobs, "paralytic", cell, 80 + 5 * level.depth, level.w * level.h);
-}
-function poisonTrap(ctx, ch) {
-  if (ch !== null) {
-    ch.buffs.poison = { kind: "poison", left: poisonTrapDuration(ctx.level.depth) };
-  }
-}
-function alarmTrap(ctx, cell, ch, mobs, visible) {
-  for (const mob of mobs) {
-    if (mob !== ch) {
-      beckonMob(mob, cell);
-    }
-  }
-  if (visible) {
-    ctx.log(TXT_ALARM_SOUND);
-  }
-}
-function lightningTrap(ctx, rng, cell, ch) {
-  if (ch !== null) {
-    const dmg = Math.max(1, rng.int(Math.floor(ch.hp / 3), Math.floor(2 * ch.hp / 3)));
-    damageFromTrap(ctx, rng, ch, dmg, "lightning", () => {
-      ctx.log(TXT_LIGHTNING_DEATH);
-    });
-    if (ch.kind === "hero" && ch.isAlive()) {
-      chargeHeroWands(ch);
-    }
-  } else {}
-}
-function chargeHeroWands(_hero) {
-  return 0;
-}
-function grippingTrap(rng, ch, depth) {
-  if (ch !== null) {
-    const damage = Math.max(0, depth + 3 - rng.intRange(0, Math.floor(trapCharDr(ch) / 2)));
-    ch.buffs.bleeding = { kind: "bleeding", left: 0, level: damage };
-    const cur = ch.buffs.cripple?.left ?? 0;
-    ch.buffs.cripple = { kind: "cripple", left: Math.max(cur, CRIPPLE_DURATION) };
-  } else {}
-}
-function bestiaryMobId(rng, depth) {
-  let chances2;
-  let ids;
-  switch (depth) {
-    case 1:
-      chances2 = [1];
-      ids = ["rat"];
-      break;
-    case 2:
-      chances2 = [1, 1];
-      ids = ["rat", "gnoll"];
-      break;
-    case 3:
-      chances2 = [1, 2, 1, 0.02];
-      ids = ["rat", "gnoll", "crab", "swarm"];
-      break;
-    case 4:
-      chances2 = [1, 2, 3, 0.02, 0.01, 0.01];
-      ids = ["rat", "gnoll", "crab", "swarm", "skeleton", "thief"];
-      break;
-    case 6:
-      chances2 = [4, 2, 1, 0.2];
-      ids = ["skeleton", "thief", "swarm", "shaman"];
-      break;
-    case 7:
-      chances2 = [3, 1, 1, 1];
-      ids = ["skeleton", "shaman", "thief", "swarm"];
-      break;
-    case 8:
-      chances2 = [3, 2, 1, 1, 1, 0.02];
-      ids = ["skeleton", "shaman", "gnoll", "thief", "swarm", "bat"];
-      break;
-    case 9:
-      chances2 = [3, 3, 1, 1, 0.02, 0.01];
-      ids = ["skeleton", "shaman", "thief", "swarm", "bat", "brute"];
-      break;
-    default:
-      return null;
-  }
-  let sum = 0;
-  for (const c of chances2)
-    sum += Math.max(0, c);
-  if (sum <= 0)
+var RING_GEMS = [
+  "diamond",
+  "opal",
+  "garnet",
+  "ruby",
+  "amethyst",
+  "topaz",
+  "onyx",
+  "tourmaline",
+  "emerald",
+  "sapphire",
+  "quartz",
+  "agate"
+];
+var RING_PRICE_BASE = 80;
+var ringStates = new Map;
+function parseRingId(itemId) {
+  const hash = itemId.indexOf("#");
+  const base = hash === -1 ? itemId : itemId.slice(0, hash);
+  if (!base.startsWith("ring_of_"))
     return null;
-  const value = rng.float(0, sum);
-  sum = 0;
-  for (let i = 0;i < chances2.length; i++) {
-    sum += Math.max(0, chances2[i]);
-    if (value < sum)
-      return ids[i];
+  const ringId = base.slice("ring_of_".length);
+  if (!RING_SPECS.some((s) => s.id === ringId))
+    return null;
+  return { ringId, instanceId: hash === -1 ? null : itemId };
+}
+function isRingId(itemId) {
+  return parseRingId(itemId) !== null;
+}
+function ringEffectiveLevel(state) {
+  return state.level;
+}
+var localGemLabels = new Map;
+var localKnown = new Set;
+function ensureLocalLabels(rng) {
+  if (localGemLabels.size > 0)
+    return;
+  const gems = [...RING_GEMS];
+  const r = rng ?? { float: (a, b) => a + Math.random() * (b - a) };
+  for (let i = gems.length - 1;i > 0; i--) {
+    const j = Math.floor(r.float(0, i + 1));
+    [gems[i], gems[j]] = [gems[j], gems[i]];
+  }
+  RING_SPECS.forEach((spec, i) => localGemLabels.set(spec.javaClass, gems[i]));
+}
+function isRingTypeKnown(ringId) {
+  const spec = ringSpec(ringId);
+  ensureLocalLabels();
+  return localKnown.has(spec.javaClass);
+}
+function ringGemLabel(ringId) {
+  ensureLocalLabels();
+  return localGemLabels.get(ringSpec(ringId).javaClass) ?? "diamond";
+}
+function registerRingIdClasses() {
+  registerRingClasses({
+    classes: RING_SPECS.map((s) => s.javaClass),
+    labels: RING_GEMS,
+    images: RING_SPECS.map((s) => s.spriteKey)
+  });
+}
+function ringDisplayName(ringId) {
+  const spec = ringSpec(ringId);
+  if (isRingTypeKnown(ringId))
+    return spec.name;
+  return `${ringGemLabel(ringId)} ring`;
+}
+function ringDisplayDesc(ringId) {
+  const spec = ringSpec(ringId);
+  if (isRingTypeKnown(ringId))
+    return spec.desc;
+  return `This metal band is adorned with a large ${ringGemLabel(ringId)} gem ` + "that glitters in the darkness. Who knows what effect it has when worn?";
+}
+function ringDisplaySprite(ringId) {
+  const spec = ringSpec(ringId);
+  if (isRingTypeKnown(ringId))
+    return spec.spriteKey;
+  return spec.spriteKey;
+}
+function ringPrice(state) {
+  let price = RING_PRICE_BASE;
+  if (state.cursed && state.cursedKnown)
+    price = Math.floor(price / 2);
+  const levelKnown = isRingTypeKnown(state.ringId);
+  const level = ringEffectiveLevel(state);
+  if (levelKnown) {
+    if (level > 0) {
+      price *= level + 1;
+    } else if (level < 0) {
+      price = Math.floor(price / (1 - level));
+    }
+  }
+  return Math.max(1, price);
+}
+function ringItemDefFor(defId) {
+  const parsed = parseRingId(defId);
+  if (!parsed || !parsed.instanceId)
+    return null;
+  const st = ringStates.get(parsed.instanceId);
+  if (!st)
+    return null;
+  return {
+    id: parsed.instanceId,
+    name: ringDisplayName(st.ringId),
+    desc: ringDisplayDesc(st.ringId),
+    sprite: ringDisplaySprite(st.ringId),
+    type: "misc",
+    stackable: false,
+    price: ringPrice(st)
+  };
+}
+registerRingIdClasses();
+
+// src/content/wands.ts
+var wandStates = new Map;
+var wandSeq = 0;
+function registerWandIdClasses() {
+  const randomized = WAND_SPECS.filter((s) => s.id !== "magic_missile");
+  registerWandClasses({
+    classes: randomized.map((s) => s.className),
+    labels: WAND_WOODS,
+    images: randomized.map((s) => s.sprite)
+  });
+}
+function parseWandId(itemId) {
+  const hash = itemId.indexOf("#");
+  const base = hash === -1 ? itemId : itemId.slice(0, hash);
+  if (!base.startsWith("wand_of_"))
+    return null;
+  const wandId = base.slice("wand_of_".length);
+  if (!WAND_SPECS.some((s) => s.id === wandId))
+    return null;
+  return {
+    wandId,
+    instanceId: hash === -1 ? null : itemId
+  };
+}
+function isWandId(itemId) {
+  return parseWandId(itemId) !== null;
+}
+function getWandState(instanceId) {
+  return wandStates.get(instanceId);
+}
+function createWand(rng, wandId, opts = {}) {
+  const spec = wandSpec(wandId);
+  const instanceId = `wand_of_${wandId}#${++wandSeq}`;
+  let level = 0;
+  if (opts.randomize) {
+    if (rng.float(0, 1) < 0.5) {
+      level++;
+      if (rng.float(0, 1) < 0.15)
+        level++;
+    }
+  }
+  level += opts.upgrades ?? 0;
+  const maxCharges = wandMaxCharges(spec.initialCharges, level);
+  wandStates.set(instanceId, {
+    instanceId,
+    wandId,
+    level,
+    curCharges: maxCharges,
+    maxCharges,
+    usagesToKnow: USAGES_TO_KNOW,
+    chargeKnown: false,
+    rechargeAcc: 0
+  });
+  return instanceId;
+}
+var WAND_WOODS = [
+  "holly",
+  "yew",
+  "ebony",
+  "cherry",
+  "teak",
+  "rowan",
+  "ash",
+  "birch",
+  "willow",
+  "oak",
+  "elm",
+  "elder"
+];
+function wandDisplayName(wandId) {
+  const spec = wandSpec(wandId);
+  if (spec.wood === null)
+    return spec.name;
+  if (isWandKnown(spec.className))
+    return spec.name;
+  return `${wandLabel(spec.className)} wand`;
+}
+function wandDisplayDesc(wandId) {
+  const spec = wandSpec(wandId);
+  if (spec.wood === null || isWandKnown(spec.className))
+    return spec.desc;
+  return "This wand is of a type you don’t know yet.";
+}
+function wandDisplaySprite(wandId) {
+  const spec = wandSpec(wandId);
+  if (spec.wood === null)
+    return spec.sprite;
+  if (isWandKnown(spec.className))
+    return spec.sprite;
+  return wandImage(spec.className);
+}
+function wandPrice(state) {
+  return Math.max(0, state.level * 20);
+}
+function wandItemDef(instanceId) {
+  const parsed = parseWandId(instanceId);
+  if (!parsed || !parsed.instanceId)
+    return null;
+  const st = wandStates.get(parsed.instanceId);
+  if (!st)
+    return null;
+  const spec = wandSpec(st.wandId);
+  return {
+    id: parsed.instanceId,
+    name: wandDisplayName(st.wandId),
+    desc: wandDisplayDesc(st.wandId),
+    sprite: wandDisplaySprite(st.wandId),
+    type: "misc",
+    stackable: false,
+    price: wandPrice(st)
+  };
+}
+function identifyWandType(wandId, log = () => {}) {
+  const spec = wandSpec(wandId);
+  if (spec.wood === null || isWandKnown(spec.className))
+    return;
+  knowWand(spec.className);
+  log(txtWandIdentified(spec.name));
+}
+function createWandReward(rng, wandId) {
+  return createWand(rng, wandId, { randomize: true, upgrades: 1 });
+}
+var sheepLifespans = new Map;
+registerWandIdClasses();
+function instanceItemDef(defId) {
+  if (defId.startsWith("wand_of_"))
+    return wandItemDef(defId);
+  return ringItemDefFor(defId);
+}
+
+// src/content/hero.ts
+class ContentHero extends Actor {
+  kind = "hero";
+  id = 0;
+  pos;
+  w;
+  hp = 20;
+  ht = 20;
+  sprite = "hero_warrior";
+  name = "you";
+  sight = 8;
+  paralysed = false;
+  rooted = false;
+  flying = false;
+  buffs = {};
+  immunities = [];
+  resistances = [];
+  str = 11;
+  weakened = false;
+  lvl = 1;
+  exp = 0;
+  attackSkill = 10;
+  defenseSkill = 5;
+  awareness = 0.1;
+  weapon = null;
+  weaponId = null;
+  armor = null;
+  armorId = null;
+  rangedWeapon = null;
+  darts = 0;
+  inventory = [];
+  gold = 0;
+  hungerLevel = 0;
+  hungerClock = 0;
+  constructor(pos, w) {
+    super();
+    this.pos = pos;
+    this.w = w;
+  }
+  get x() {
+    return this.pos % this.w;
+  }
+  set x(v) {
+    this.pos = this.y * this.w + v;
+  }
+  get y() {
+    return Math.floor(this.pos / this.w);
+  }
+  set y(v) {
+    this.pos = v * this.w + this.x;
+  }
+  getSpeed() {
+    return heroSpeed(this);
+  }
+  getTimeScale() {
+    return charTimeScale(this);
+  }
+  isAlive() {
+    return this.hp > 0;
+  }
+  act() {
+    throw new Error("ContentHero.act: route through MechanicsHooks.handleHeroIntent");
+  }
+}
+function createStarterHero(pos, w) {
+  const hero = new ContentHero(pos, w);
+  const sword = getItem("shortsword");
+  const armor = getItem("cloth_armor");
+  hero.weapon = sword.weapon ? { ...sword.weapon } : null;
+  hero.weaponId = "shortsword";
+  hero.armor = armor.armor ? { ...armor.armor } : null;
+  hero.armorId = "cloth_armor";
+  hero.inventory.push({ itemId: "ration", qty: 1 });
+  hero.inventory.push({ itemId: "dart", qty: 8 });
+  syncDarts(hero);
+  return hero;
+}
+function syncDarts(hero) {
+  hero.darts = hero.inventory.find((s) => s.itemId === "dart")?.qty ?? 0;
+}
+function addToInventory(hero, itemId, qty, gear) {
+  const def = instanceItemDef(itemId) ?? getItem(itemId);
+  if (qty <= 0)
+    return;
+  if (def.stackable) {
+    const existing = hero.inventory.find((s) => s.itemId === itemId);
+    if (existing) {
+      existing.qty += qty;
+    } else {
+      hero.inventory.push({ itemId, qty });
+    }
+  } else {
+    for (let i = 0;i < qty; i++) {
+      const stack = { itemId, qty: 1 };
+      if (def.weapon || def.armor) {
+        const inst = gear && i === 0 ? gear : {
+          weapon: def.weapon ? { ...def.weapon } : undefined,
+          armor: def.armor ? { ...def.armor } : undefined
+        };
+        if (inst.weapon && inst.weapon.durability === undefined) {
+          initDurability(inst.weapon, "weapon");
+        }
+        if (inst.armor && inst.armor.durability === undefined) {
+          initDurability(inst.armor, "armor");
+        }
+        stack.gear = inst;
+      }
+      hero.inventory.push(stack);
+    }
+  }
+  syncDarts(hero);
+}
+function ensureStackGear(stack) {
+  const def = getItem(stack.itemId);
+  if (!def.weapon && !def.armor)
+    return null;
+  if (!stack.gear) {
+    stack.gear = {
+      weapon: def.weapon ? { ...def.weapon } : undefined,
+      armor: def.armor ? { ...def.armor } : undefined
+    };
+  }
+  const g = stack.gear;
+  if (g.weapon && g.weapon.durability === undefined) {
+    initDurability(g.weapon, "weapon");
+  }
+  if (g.armor && g.armor.durability === undefined) {
+    initDurability(g.armor, "armor");
+  }
+  return g;
+}
+function removeFromInventory(hero, slot, qty = 1) {
+  const stack = hero.inventory[slot];
+  if (!stack || qty <= 0)
+    return null;
+  const take = Math.min(qty, stack.qty);
+  const removed = { itemId: stack.itemId, qty: take };
+  if (stack.gear && take >= stack.qty) {
+    removed.gear = stack.gear;
+  }
+  stack.qty -= take;
+  if (stack.qty <= 0) {
+    hero.inventory.splice(slot, 1);
+  }
+  syncDarts(hero);
+  return removed;
+}
+
+// src/content/potions.ts
+function affectBuff2(buffs, kind, duration) {
+  const cur = buffs[kind];
+  buffs[kind] = cur ? { ...cur, left: cur.left + duration } : { kind, left: duration };
+}
+function prolongBuff2(buffs, kind, duration, extra) {
+  const cur = buffs[kind];
+  const next = cur ? { ...cur, left: Math.max(cur.left, duration) } : { kind, left: duration };
+  if (extra?.sourceId !== undefined)
+    next.sourceId = extra.sourceId;
+  buffs[kind] = next;
+}
+var POTION_CLASS_ORDER = [
+  "potion_healing",
+  "potion_experience",
+  "potion_toxicgas",
+  "potion_liquidflame",
+  "potion_strength",
+  "potion_paralyticgas",
+  "potion_levitation",
+  "potion_mindvision",
+  "potion_purity",
+  "potion_invisibility",
+  "potion_might",
+  "potion_frost"
+];
+var POTION_ID_SET = new Set(POTION_CLASS_ORDER);
+function isPotionId(id) {
+  return POTION_ID_SET.has(id);
+}
+function def(id, name, sprite, desc) {
+  return {
+    id,
+    name,
+    sprite,
+    type: "potion",
+    stackable: true,
+    desc,
+    price: 20
+  };
+}
+var POTION_DEFS = {
+  potion_experience: def("potion_experience", "Potion of Experience", "item_potion_experience", "The storied experiences of multitudes of battles reduced to vapours, " + "this draught will instantly raise your experience level."),
+  potion_toxicgas: def("potion_toxicgas", "Potion of Toxic Gas", "item_potion_toxicgas", "Uncorking or shattering this pressurized glass will cause its contents " + "to explode into a deadly cloud of toxic green gas. You might choose " + "to fling this potion at distant enemies instead of uncorking it by hand."),
+  potion_liquidflame: def("potion_liquidflame", "Potion of Liquid Flame", "item_potion_liquidflame", "This flask contains an unstable compound which will burst violently " + "into flame upon exposure to open air."),
+  potion_paralyticgas: def("potion_paralyticgas", "Potion of Paralytic Gas", "item_potion_paralyticgas", "Uncorking or shattering this pressurized glass will cause its contents " + "to explode into a cloud of paralyzing gas. You might choose to fling " + "this potion at distant enemies instead of uncorking it by hand."),
+  potion_levitation: def("potion_levitation", "Potion of Levitation", "item_potion_levitation", "This curious solution will fill you with buoyancy. If you drink it, " + "you will begin to float."),
+  potion_mindvision: def("potion_mindvision", "Potion of Mind Vision", "item_potion_mindvision", "After drinking this, your mind will become attuned to the psychic " + "signature of distant creatures, enabling you to sense biological " + "presences through walls. Also this potion will permit you to see " + "through nearby walls and darkness."),
+  potion_purity: def("potion_purity", "Potion of Purification", "item_potion_purity", "This cloudy fluid will disperse any noxious clouds of gas which may be " + "plaguing your vicinity. When you drink it, any gas effects afflicting " + "you will be neutralized."),
+  potion_invisibility: def("potion_invisibility", "Potion of Invisibility", "item_potion_invisibility", "Drinking this potion will render you temporarily invisible. Enemies " + "will be unable to see you, although any action you take (such as " + "attacking) will dispel the effect."),
+  potion_might: def("potion_might", "Potion of Might", "item_potion_might", "This powerful liquid will course through your muscles, permanently " + "increasing your strength by one point and health by five points."),
+  potion_frost: def("potion_frost", "Potion of Frost", "item_potion_frost", "Upon exposure to open air, the fluid will evaporate, releasing an icy " + "blast.")
+};
+function potionSprite(id, fallback) {
+  return identificationReady() ? potionImage(id) : fallback;
+}
+function potionUiInfo(id, knownName, catalogSprite) {
+  if (!isPotionId(id))
+    return null;
+  const known = identificationReady() && isPotionKnown(id);
+  return {
+    name: known ? knownName : `${potionLabel(id)} potion`,
+    sprite: identificationReady() ? potionImage(id) : catalogSprite,
+    identified: known
+  };
+}
+var HARMFUL_DRINK_IDS = new Set([
+  "potion_liquidflame",
+  "potion_toxicgas",
+  "potion_paralyticgas"
+]);
+var BENEFICIAL_THROW_IDS = new Set([
+  "potion_experience",
+  "potion_healing",
+  "potion_levitation",
+  "potion_mindvision",
+  "potion_strength",
+  "potion_invisibility",
+  "potion_might"
+]);
+var pendingConfirm = null;
+var TIME_TO_DRINK = 1;
+function isKnownSafe(id) {
+  return identificationReady() && isPotionKnown(id);
+}
+function drinkPotion(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack || !isPotionId(stack.itemId)) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  if (isKnownSafe(stack.itemId) && HARMFUL_DRINK_IDS.has(stack.itemId)) {
+    pendingConfirm = {
+      slot,
+      itemId: stack.itemId,
+      mode: "drink",
+      cell: -1,
+      title: "Harmful potion!",
+      question: "Are you sure you want to drink it?"
+    };
+    ctx.log("Harmful potion! Are you sure you want to drink it?");
+    return 0;
+  }
+  return drinkPotionConfirmed(ctx, hero, slot);
+}
+function drinkPotionConfirmed(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack || !isPotionId(stack.itemId))
+    return 1;
+  const id = stack.itemId;
+  removeFromInventory(hero, slot, 1);
+  applyDrinkEffect(ctx, hero, id);
+  return TIME_TO_DRINK;
+}
+function applyDrinkEffect(ctx, hero, id) {
+  switch (id) {
+    case "potion_healing": {
+      hero.hp = hero.ht;
+      delete hero.buffs.poison;
+      delete hero.buffs.cripple;
+      delete hero.buffs.bleeding;
+      hero.weakened = false;
+      ctx.log("Your wounds heal completely.");
+      break;
+    }
+    case "potion_strength": {
+      hero.str += 1;
+      ctx.log("Newfound strength surges through your body.");
+      break;
+    }
+    case "potion_experience": {
+      const need2 = maxExp(hero.lvl) - hero.exp;
+      earnExp(hero, need2);
+      ctx.log("You feel more experienced.");
+      break;
+    }
+    case "potion_might": {
+      hero.str += 1;
+      hero.ht += 5;
+      hero.hp += 5;
+      ctx.log("You feel stronger.");
+      break;
+    }
+    case "potion_mindvision": {
+      affectBuff2(hero.buffs, "mindvision", 20);
+      break;
+    }
+    case "potion_levitation": {
+      affectBuff2(hero.buffs, "levitation", 20);
+      hero.flying = true;
+      delete hero.buffs.roots;
+      ctx.log("You float into the air!");
+      break;
+    }
+    case "potion_invisibility": {
+      affectBuff2(hero.buffs, "invisibility", 15);
+      ctx.log("You vanish!");
+      break;
+    }
+    case "potion_purity": {
+      affectBuff2(hero.buffs, "gasesimmunity", 5);
+      ctx.log("You feel cleansed of impurities.");
+      break;
+    }
+    default: {
+      shatterPotionAt(ctx, hero, hero.pos, id);
+      break;
+    }
+  }
+  knowPotion(id);
+}
+var TIME_TO_THROW = 1;
+function throwPotion(ctx, hero, slot, cell) {
+  const stack = hero.inventory[slot];
+  if (!stack || !isPotionId(stack.itemId)) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  if (isKnownSafe(stack.itemId) && BENEFICIAL_THROW_IDS.has(stack.itemId)) {
+    pendingConfirm = {
+      slot,
+      itemId: stack.itemId,
+      mode: "throw",
+      cell,
+      title: "Beneficial potion",
+      question: "Are you sure you want to shatter it?"
+    };
+    ctx.log("Beneficial potion. Are you sure you want to shatter it?");
+    return 0;
+  }
+  return throwPotionConfirmed(ctx, hero, slot, cell);
+}
+function throwPotionConfirmed(ctx, hero, slot, cell) {
+  const stack = hero.inventory[slot];
+  if (!stack || !isPotionId(stack.itemId))
+    return 1;
+  const id = stack.itemId;
+  removeFromInventory(hero, slot, 1);
+  const w = ctx.level.w;
+  const x = cell % w;
+  const y = Math.floor(cell / w);
+  const tile = ctx.level.get(x, y);
+  if (cell === hero.pos) {
+    applyDrinkEffect(ctx, hero, id);
+  } else if (tile === 12 /* WELL */ || tile === 8 /* CHASM */) {
+    const fallback = POTION_DEFS[id]?.sprite ?? "potion_red";
+    ctx.level.items.push({
+      pos: cell,
+      itemId: id,
+      sprite: potionSprite(id, fallback)
+    });
+  } else {
+    shatterPotionAt(ctx, hero, cell, id);
+  }
+  return TIME_TO_THROW;
+}
+function shatterPotionAt(ctx, hero, cell, id) {
+  const visible = isCellVisible(ctx, cell);
+  switch (id) {
+    case "potion_toxicgas": {
+      if (visible)
+        knowPotion(id);
+      seedBlob(ctx.level.blobs, "toxic", cell, 1000, ctx.level.w * ctx.level.h);
+      break;
+    }
+    case "potion_paralyticgas": {
+      if (visible)
+        knowPotion(id);
+      seedBlob(ctx.level.blobs, "paralytic", cell, 1000, ctx.level.w * ctx.level.h);
+      break;
+    }
+    case "potion_liquidflame": {
+      if (visible)
+        knowPotion(id);
+      seedBlob(ctx.level.blobs, "fire", cell, 2, ctx.level.w * ctx.level.h);
+      break;
+    }
+    case "potion_frost": {
+      const affected = cellsWithin2(ctx, cell);
+      const anyVisible = affected.some((c) => isCellVisible(ctx, c));
+      if (anyVisible)
+        knowPotion(id);
+      for (const c of affected) {
+        const ch = charAtCell(ctx, hero, c);
+        if (ch) {
+          prolongBuff2(ch.buffs, "frost", 5 * ctx.rng.float(1, 1.5));
+          ch.paralysed = true;
+          delete ch.buffs.burning;
+        }
+      }
+      const fire = ctx.level.blobs.find((b) => b.kind === "fire");
+      if (fire)
+        for (const c of affected)
+          fire.cur[c] = 0;
+      break;
+    }
+    case "potion_purity": {
+      for (const c of cellsWithin2(ctx, cell)) {
+        for (const kind of ["toxic", "paralytic"]) {
+          const blob = ctx.level.blobs.find((b) => b.kind === kind);
+          if (blob && blob.cur[c] > 0) {
+            blob.volume -= blob.cur[c];
+            blob.cur[c] = 0;
+          }
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+function cellsWithin2(ctx, cell) {
+  const w = ctx.level.w;
+  const h = ctx.level.h;
+  const out = [];
+  const dist = new Int32Array(w * h).fill(-1);
+  dist[cell] = 0;
+  const queue = [cell];
+  while (queue.length > 0) {
+    const c = queue.shift();
+    if (dist[c] >= 2)
+      continue;
+    const cx = c % w;
+    const cy = Math.floor(c / w);
+    const dirs = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [1, 1],
+      [1, -1],
+      [-1, 1],
+      [-1, -1]
+    ];
+    for (const [dx, dy] of dirs) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h)
+        continue;
+      const n = ny * w + nx;
+      if (dist[n] !== -1)
+        continue;
+      if (isOpaque(ctx, nx, ny))
+        continue;
+      dist[n] = dist[c] + 1;
+      queue.push(n);
+    }
+  }
+  for (let i = 0;i < w * h; i++) {
+    if (dist[i] !== -1)
+      out.push(i);
+  }
+  return out;
+}
+function isOpaque(ctx, x, y) {
+  const t = ctx.level.get(x, y);
+  return t === 0 /* WALL */ || t === 2 /* DOOR */ || t === 4 /* DOOR_SECRET */ || t === 37 /* BARRICADE */;
+}
+function isCellVisible(ctx, cell) {
+  return !!ctx.level.visible[cell];
+}
+function charAtCell(ctx, hero, cell) {
+  if (hero.pos === cell)
+    return hero;
+  const w = ctx.level.w;
+  for (const m of ctx.mobs) {
+    if (m.isAlive() && m.y * w + m.x === cell) {
+      return m;
+    }
   }
   return null;
 }
-function summoningTrap(ctx, rng, cell, ch, hero, mobs, summon) {
-  const level = ctx.level;
-  if (level.bossLevel) {
-    return;
+function tickFlavourBuff(buffs, kind) {
+  const b = buffs[kind];
+  if (!b)
+    return false;
+  b.left -= 1;
+  if (b.left <= 0) {
+    delete buffs[kind];
+    return false;
   }
-  let nMobs = 1;
-  if (rng.int(0, 2) === 0) {
-    nMobs++;
-    if (rng.int(0, 2) === 0) {
-      nMobs++;
+  return true;
+}
+function tickPotionBuffs(buffs, flags, onSleepEnd) {
+  const hadSleep = !!buffs.sleep;
+  for (const kind of [
+    "frost",
+    "levitation",
+    "invisibility",
+    "mindvision",
+    "gasesimmunity",
+    "terror",
+    "rage",
+    "sleep"
+  ]) {
+    tickFlavourBuff(buffs, kind);
+  }
+  if (hadSleep && !buffs.sleep && onSleepEnd)
+    onSleepEnd();
+  if (!buffs.frost && flags.paralysed) {
+    if (!buffs.paralysis)
+      flags.paralysed = false;
+  }
+  if (!buffs.levitation)
+    flags.flying = false;
+}
+function takeFromSlot(hero, slot, n) {
+  const stack = hero.inventory[slot];
+  if (!stack || stack.qty < n)
+    return false;
+  removeFromInventory(hero, slot, n);
+  return true;
+}
+
+// src/content/scrolls.ts
+var SCROLL_CLASS_ORDER = [
+  "scroll_identify",
+  "scroll_magicmapping",
+  "scroll_recharging",
+  "scroll_removecurse",
+  "scroll_teleportation",
+  "scroll_challenge",
+  "scroll_terror",
+  "scroll_lullaby",
+  "scroll_psionicblast",
+  "scroll_mirrorimage",
+  "scroll_upgrade",
+  "scroll_enchantment"
+];
+var SCROLL_ID_SET = new Set(SCROLL_CLASS_ORDER);
+function isScrollId(id) {
+  return SCROLL_ID_SET.has(id);
+}
+function def2(id, name, sprite, desc) {
+  return {
+    id,
+    name,
+    sprite,
+    type: "scroll",
+    stackable: true,
+    desc,
+    price: 15
+  };
+}
+var SCROLL_DEFS = {
+  scroll_identify: def2("scroll_identify", "Scroll of Identify", "item_scroll_identify", "Permanently reveals all of the secrets of a single item."),
+  scroll_teleportation: def2("scroll_teleportation", "Scroll of Teleportation", "item_scroll_teleportation", "The spell on this parchment will teleport the reader to a random " + "location on the current level."),
+  scroll_removecurse: def2("scroll_removecurse", "Scroll of Remove Curse", "item_scroll_removecurse", "The incantation on this scroll will instantly strip from the reader's " + "weapon, armor, rings and carried items any evil enchantments that " + "might prevent the wearer from removing them."),
+  scroll_recharging: def2("scroll_recharging", "Scroll of Recharging", "item_scroll_recharging", "The spell on this scroll will instantly recharge all of the wands " + "the reader has."),
+  scroll_magicmapping: def2("scroll_magicmapping", "Scroll of Magic Mapping", "item_scroll_magicmapping", "When this scroll is read, an image of crystal clarity will be etched " + "into your memory, alerting you to the precise layout of the level " + "and revealing all hidden secrets. The locations of items and " + "creatures will remain unknown."),
+  scroll_challenge: def2("scroll_challenge", "Scroll of Challenge", "item_scroll_challenge", "When this scroll is read, it lets out a challenging cry that " + "compels all of the creatures on the level to pay attention to the " + "reader."),
+  scroll_terror: def2("scroll_terror", "Scroll of Terror", "item_scroll_terror", "A fearsome magic will course through your enemies when this scroll " + "is read, causing them to flee from your presence in terror."),
+  scroll_lullaby: def2("scroll_lullaby", "Scroll of Lullaby", "item_scroll_lullaby", "Soothing notes will drift from this scroll, sending all nearby " + "creatures into a deep slumber."),
+  scroll_psionicblast: def2("scroll_psionicblast", "Scroll of Psionic Blast", "item_scroll_psionicblast", "This scroll contains a devastating blast of psychic energy. It will " + "damage and stun all creatures on the level that can see the reader, " + "but it will also blind and damage the reader."),
+  scroll_mirrorimage: def2("scroll_mirrorimage", "Scroll of Mirror Image", "item_scroll_mirrorimage", "The incantation on this scroll will create illusory duplicates of " + "the reader, which will needle and distract the enemies."),
+  scroll_enchantment: def2("scroll_enchantment", "Scroll of Enchantment", "item_scroll_enchantment", "This scroll is able to imbue a weapon or a suit of armor with a " + "magical enchantment, or to strengthen an enchantment which " + "already exists on the item.")
+};
+function scrollUiInfo(id, knownName, catalogSprite) {
+  if (!isScrollId(id))
+    return null;
+  const known = identificationReady() && isScrollKnown(id);
+  return {
+    name: known ? knownName : `scroll "${scrollRune(id)}"`,
+    sprite: identificationReady() ? scrollImage(id) : catalogSprite,
+    identified: known
+  };
+}
+var TIME_TO_READ = 1;
+function readScroll(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack || !isScrollId(stack.itemId)) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  const id = stack.itemId;
+  if (hero.buffs.blindness) {
+    ctx.log("You can't read a scroll while blind!");
+    return 1;
+  }
+  if (id === "scroll_upgrade")
+    return readUpgradeScroll(ctx, hero, slot);
+  if (id === "scroll_identify" || id === "scroll_enchantment") {
+    return openInventoryScroll(ctx, hero, slot, id);
+  }
+  removeFromInventory(hero, slot, 1);
+  doReadEffect(ctx, hero, id);
+  knowScroll(id);
+  return TIME_TO_READ;
+}
+var pendingSelect = null;
+function openInventoryScroll(ctx, hero, slot, id) {
+  const kind = id === "scroll_identify" ? "identify" : "enchant";
+  removeFromInventory(hero, slot, 1);
+  knowScroll(id);
+  const candidates = inventoryScrollCandidates(hero, kind);
+  if (candidates.length === 0) {
+    ctx.log(kind === "identify" ? "You have nothing to identify." : "You have nothing to enchant.");
+    return TIME_TO_READ;
+  }
+  pendingSelect = {
+    kind,
+    candidates,
+    title: kind === "identify" ? "Select an item to identify" : "Select an enchantable item"
+  };
+  return TIME_TO_READ;
+}
+function inventoryScrollCandidates(hero, kind) {
+  const out = [];
+  hero.inventory.forEach((stack, slot) => {
+    if (kind === "identify") {
+      if (isItemUnidentified(stack.itemId))
+        out.push(slot);
+    } else {
+      const t = itemTypeOf(stack.itemId);
+      if (t === "weapon" || t === "armor")
+        out.push(slot);
+    }
+  });
+  return out;
+}
+var itemTypeLookup = () => null;
+function itemTypeOf(id) {
+  return itemTypeLookup(id);
+}
+function isItemUnidentified(id) {
+  if (!identificationReady())
+    return false;
+  if (isPotionId(id))
+    return !isPotionKnown(id);
+  if (isScrollId(id))
+    return !isScrollKnown(id);
+  if (isWandRegistered()) {
+    try {
+      return !isWandKnown(id);
+    } catch {
+      return false;
     }
   }
-  const { x, y } = level.xy(cell);
-  const candidates = [];
-  for (const n of level.neighbors8(x, y)) {
-    const p = level.idx(n.x, n.y);
-    const occupied = hero.isAlive() && hero.pos === p || mobs.some((m) => m.isAlive() && m.pos === p);
-    if (!occupied && (level.isPassable(n.x, n.y) || level.isAvoid(n.x, n.y))) {
-      candidates.push(p);
-    }
-  }
-  const points = [];
-  while (nMobs > 0 && candidates.length > 0) {
-    const index = rng.int(0, candidates.length);
-    points.push(candidates.splice(index, 1)[0]);
-    nMobs--;
-  }
-  for (const point of points) {
-    const mobId = bestiaryMobId(rng, level.depth);
-    if (mobId === null)
+  return false;
+}
+function uncurseItemId(hero, itemId) {
+  let cleared = false;
+  for (const stack of hero.inventory) {
+    if (stack.itemId !== itemId)
       continue;
-    summon(mobId, point);
+    const g = ensureStackGear(stack);
+    if (g?.weapon?.cursed) {
+      g.weapon.cursed = false;
+      cleared = true;
+    }
+    if (g?.armor?.cursed) {
+      g.armor.cursed = false;
+      cleared = true;
+    }
+  }
+  if (hero.weaponId === itemId && hero.weapon?.cursed) {
+    hero.weapon.cursed = false;
+    cleared = true;
+  }
+  if (hero.armorId === itemId && hero.armor?.cursed) {
+    hero.armor.cursed = false;
+    cleared = true;
+  }
+  return cleared;
+}
+var defaultEnchantHooks = {
+  uncurse: uncurseItemId,
+  enchantWeapon: (ctx, hero, slot) => {
+    const stack = hero.inventory[slot];
+    const g = stack ? ensureStackGear(stack) : null;
+    if (g?.weapon)
+      enchantWeaponInstance(ctx.rng, g.weapon);
+  },
+  inscribeArmor: (ctx, hero, slot) => {
+    const stack = hero.inventory[slot];
+    const g = stack ? ensureStackGear(stack) : null;
+    if (g?.armor)
+      inscribeArmorInstance(ctx.rng, g.armor);
+  },
+  fixItem: (hero, slot) => {
+    const stack = hero.inventory[slot];
+    const g = stack ? ensureStackGear(stack) : null;
+    if (g?.weapon)
+      fixDurability(g.weapon, "weapon");
+    if (g?.armor)
+      fixDurability(g.armor, "armor");
+  }
+};
+var enchantHooks = defaultEnchantHooks;
+var rechargeImpl = null;
+function readUpgradeScroll(ctx, hero, slot) {
+  knowScroll("scroll_upgrade");
+  const weapon = hero.weapon;
+  const armor = hero.armor;
+  if (!weapon && !armor) {
+    ctx.log("You have nothing to upgrade.");
+    return TIME_TO_READ;
+  }
+  removeFromInventory(hero, slot, 1);
+  if (weapon) {
+    if (isBroken(weapon)) {
+      fixDurability(weapon, "weapon");
+    } else {
+      upgradeWeapon(weapon, ctx.rng, { log: (m) => ctx.log(m) });
+    }
+    ctx.log(`your ${gearDisplayName(weapon)} certainly looks better now`);
+  } else {
+    if (isBroken(armor)) {
+      fixDurability(armor, "armor");
+    } else {
+      upgradeArmor(armor, ctx.rng, { log: (m) => ctx.log(m) });
+    }
+    ctx.log(`your ${gearDisplayName(armor)} certainly looks better now`);
+  }
+  return TIME_TO_READ;
+}
+function doReadEffect(ctx, hero, id) {
+  switch (id) {
+    case "scroll_removecurse":
+      doRemoveCurse(ctx, hero);
+      break;
+    case "scroll_magicmapping":
+      doMagicMapping(ctx, hero);
+      break;
+    case "scroll_teleportation":
+      doTeleportation(ctx, hero);
+      break;
+    case "scroll_recharging":
+      doRecharging(ctx, hero);
+      break;
+    case "scroll_challenge":
+      doChallenge(ctx, hero);
+      break;
+    case "scroll_terror":
+      doTerror(ctx, hero);
+      break;
+    case "scroll_lullaby":
+      doLullaby(ctx, hero);
+      break;
+    case "scroll_psionicblast":
+      doPsionicBlast(ctx, hero);
+      break;
+    case "scroll_mirrorimage":
+      doMirrorImage(ctx, hero);
+      break;
+    default:
+      break;
   }
 }
-function triggerTrap(ctx, rng, cell, kind, ch, hero, mobs, summon) {
-  const visible = ctx.level.visible[cell] !== 0;
-  switch (kind) {
-    case "toxic":
-      toxicTrap(ctx, cell);
-      break;
-    case "fire":
-      fireTrap(ctx, cell);
-      break;
-    case "paralytic":
-      paralyticTrap(ctx, cell);
-      break;
-    case "poison":
-      poisonTrap(ctx, ch);
-      break;
-    case "alarm":
-      alarmTrap(ctx, cell, ch, mobs, visible);
-      break;
-    case "lightning":
-      lightningTrap(ctx, rng, cell, ch);
-      break;
-    case "gripping":
-      grippingTrap(rng, ch, ctx.level.depth);
-      break;
-    case "summoning":
-      summoningTrap(ctx, rng, cell, ch, hero, mobs, summon);
-      break;
+function doRemoveCurse(ctx, hero) {
+  delete hero.buffs.invisibility;
+  let procced = false;
+  for (const stack of hero.inventory) {
+    if (enchantHooks.uncurse(hero, stack.itemId))
+      procced = true;
   }
+  if (hero.weaponId && enchantHooks.uncurse(hero, hero.weaponId))
+    procced = true;
+  if (hero.armorId && enchantHooks.uncurse(hero, hero.armorId))
+    procced = true;
+  hero.weakened = false;
+  ctx.log(procced ? "Your pack glows with a cleansing light." : "Your pack glows with a cleansing light, but nothing happens.");
 }
-function deactivateTrapCell(level, cell) {
-  const { x, y } = level.xy(cell);
-  level.set(x, y, 36 /* TRAP_INACTIVE */);
-}
-function pressTrapCell(ctx, cell, ch, summon) {
+function doMagicMapping(ctx, _hero) {
   const level = ctx.level;
-  const tile = level.getAt(cell);
-  const kind = trapKindOf(tile);
-  if (kind === null) {
-    return;
+  const n = level.w * level.h;
+  for (let i = 0;i < n; i++) {
+    const t = level.getAt(i);
+    if (t === 0 /* WALL */ || t === 8 /* CHASM */) {
+      continue;
+    }
+    level.explored[i] = 1;
   }
-  if (isHiddenTrap(tile)) {
-    ctx.log(TXT_HIDDEN_PLATE_CLICKS);
+  for (let i = 0;i < n; i++) {
+    const x = i % level.w;
+    const y = Math.floor(i / level.w);
+    level.revealSecretDoor(x, y);
+    level.revealTrap(x, y);
   }
-  const hero = ctx.hero;
-  const mobs = ctx.mobs;
-  triggerTrap(ctx, ctx.rng, cell, kind, ch, hero, mobs, summon);
-  deactivateTrapCell(level, cell);
+  ctx.log("You feel fully aware of your surroundings.");
+}
+function doTeleportation(ctx, hero) {
+  const level = ctx.level;
+  for (let i = 0;i < 10; i++) {
+    const cell = randomRespawnCell(ctx, hero);
+    if (cell !== -1) {
+      hero.pos = cell;
+      ctx.log("You teleport!");
+      return;
+    }
+  }
+  ctx.log("The scroll fizzles.");
+}
+function randomRespawnCell(ctx, hero) {
+  const level = ctx.level;
+  const n = level.w * level.h;
+  for (let i = 0;i < 10; i++) {
+    const cell = ctx.rng.int(0, n);
+    const x = cell % level.w;
+    const y = Math.floor(cell / level.w);
+    if (!level.isPassable(x, y))
+      continue;
+    if (level.visible[cell])
+      continue;
+    if (hero.pos === cell)
+      continue;
+    if (charAtPos(ctx, cell))
+      continue;
+    return cell;
+  }
+  return -1;
+}
+function doRecharging(_ctx, hero) {
+  if (rechargeImpl)
+    rechargeImpl(hero);
+}
+function doChallenge(ctx, hero) {
+  const w = ctx.level.w;
+  for (const m of ctx.mobs) {
+    const mob = m;
+    if (typeof mob.beckon === "function")
+      mob.beckon(hero.pos);
+    else
+      mob.beckonedTo = hero.pos;
+    if (isMobVisible(ctx, mob.pos)) {
+      const d = chebyshev(hero.pos, mob.pos, w);
+      prolongBuff2(mob.buffs, "rage", d);
+    }
+  }
+  ctx.log("You let out a challenging cry!");
+}
+function doTerror(ctx, hero) {
+  for (const m of ctx.mobs) {
+    const mob = m;
+    if (isMobVisible(ctx, mob.pos)) {
+      prolongBuff2(mob.buffs, "terror", 10, { sourceId: hero.id });
+      mob.terrorFrom = hero.pos;
+    }
+  }
+  ctx.log("You unleash a terrifying scream!");
+}
+function doLullaby(ctx, hero) {
+  for (const m of ctx.mobs) {
+    const mob = m;
+    if (isMobVisible(ctx, mob.pos)) {
+      affectBuff2(mob.buffs, "sleep", 1.5);
+      mob.putToSleep = true;
+    }
+  }
+  ctx.log("A soothing melody drifts through the air.");
+}
+function doPsionicBlast(ctx, hero) {
+  const rng = ctx.rng;
+  const blindFor = rng.int(3, 6);
+  for (const m of ctx.mobs) {
+    const mob = m;
+    if (!isMobVisible(ctx, mob.pos))
+      continue;
+    affectBuff2(mob.buffs, "blindness", blindFor);
+    const dmg = rng.intRange(1, Math.floor(mob.ht * 2 / 3));
+    damageMobDirect(ctx, mob, dmg);
+  }
+  affectBuff2(hero.buffs, "blindness", blindFor);
+  const heroDmg = rng.intRange(1, Math.floor(hero.ht * 2 / 3));
+  hero.hp -= heroDmg;
+  ctx.log("A blast of psionic energy erupts!");
+}
+var MIRROR_IMAGE_COUNT = 3;
+function doMirrorImage(ctx, hero) {
+  const rng = ctx.rng;
+  const w = ctx.level.w;
+  const spawned = [];
+  const candidates = [];
+  const hx = hero.pos % w;
+  const hy = Math.floor(hero.pos / w);
+  for (const [dx, dy] of [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1]
+  ]) {
+    const nx = hx + dx;
+    const ny = hy + dy;
+    if (nx < 0 || ny < 0 || nx >= w || ny >= ctx.level.h)
+      continue;
+    const c = ny * w + nx;
+    const t = ctx.level.get(nx, ny);
+    const okTile = ctx.level.isPassable(nx, ny) || ctx.level.isAvoid(nx, ny);
+    if (!okTile)
+      continue;
+    if (hero.pos === c || charAtPos(ctx, c))
+      continue;
+    candidates.push(c);
+  }
+  const stats = {
+    attackSkill: hero.attackSkill,
+    damage: heroDamageForMirror(rng, hero)
+  };
+  let nImages = 0;
+  while (nImages < MIRROR_IMAGE_COUNT && candidates.length > 0) {
+    const idx = rng.int(0, candidates.length);
+    const cell = candidates.splice(idx, 1)[0];
+    const img = new MirrorImageMob(nextMobId2(), cell, w, stats);
+    ctx.addMob(img, cell);
+    spawned.push(cell);
+    nImages++;
+  }
+  if (nImages === 0)
+    knowScroll("scroll_mirrorimage");
+  else
+    ctx.log("Mirror images shimmer into being!");
+}
+function heroDamageForMirror(rng, hero) {
+  const weapon = hero.weapon;
+  if (weapon) {
+    const min = weapon.min ?? 1;
+    const max = weapon.max ?? min;
+    return Math.max(1, Math.round((min + max) / 2));
+  }
+  return 1;
+}
+var mirrorIdCounter = -1e5;
+function nextMobId2() {
+  return mirrorIdCounter--;
+}
+function isMobVisible(ctx, pos) {
+  return !!ctx.level.visible[pos];
+}
+function chebyshev(a, b, w) {
+  const dx = Math.abs(a % w - b % w);
+  const dy = Math.abs(Math.floor(a / w) - Math.floor(b / w));
+  return Math.max(dx, dy);
+}
+
+// src/content/honeypot.ts
+var HONEYPOT_ID = "honeypot";
+var HONEYPOT_THROW_TIME = 1;
+var HONEYPOT_DEF = {
+  id: HONEYPOT_ID,
+  name: "honeypot",
+  sprite: "item_honeypot",
+  type: "misc",
+  stackable: true,
+  desc: "There is not much honey in this small honeypot, but there is a golden bee there and it doesn't want to leave it.",
+  price: 50
+};
+var summonBeeImpl = null;
+function shatterHoneypotAt(ctx, hero, cell) {
+  const w = ctx.level.w;
+  const occupied = (c) => {
+    if (hero.pos === c)
+      return true;
+    for (const m of ctx.mobs) {
+      if (m.isAlive() && m.y * w + m.x === c)
+        return true;
+    }
+    return false;
+  };
+  let newPos = cell;
+  if (occupied(cell)) {
+    const candidates = [];
+    const cx = cell % w;
+    const cy = Math.floor(cell / w);
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1]
+    ]) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (!ctx.level.inBounds(nx, ny))
+        continue;
+      if (!ctx.level.isPassable(nx, ny))
+        continue;
+      const c = ny * w + nx;
+      if (!occupied(c))
+        candidates.push(c);
+    }
+    newPos = candidates.length > 0 ? ctx.rng.pick(candidates) : -1;
+  }
+  if (newPos !== -1 && summonBeeImpl) {
+    summonBeeImpl(newPos);
+  }
+}
+function shatterHoneypotInHands(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack || stack.itemId !== HONEYPOT_ID) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  shatterHoneypotAt(ctx, hero, hero.pos);
+  takeFromSlot(hero, slot, 1);
+  return HONEYPOT_THROW_TIME;
+}
+function throwHoneypot(ctx, hero, slot, cell) {
+  const stack = hero.inventory[slot];
+  if (!stack || stack.itemId !== HONEYPOT_ID) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  takeFromSlot(hero, slot, 1);
+  const x = cell % ctx.level.w;
+  const y = Math.floor(cell / ctx.level.w);
+  const tile = ctx.level.get(x, y);
+  if (tile === 8 /* CHASM */) {
+    dropItemAt(ctx, cell, HONEYPOT_ID);
+  } else {
+    shatterHoneypotAt(ctx, hero, cell);
+  }
+  return HONEYPOT_THROW_TIME;
+}
+
+// src/content/items.ts
+var DARK_GOLD = {
+  id: "darkgold",
+  name: "dark gold ore",
+  sprite: "item_darkgold",
+  type: "misc",
+  stackable: true,
+  desc: "A chunk of dark gold ore, prized by the blacksmith of the caves.",
+  price: 1
+};
+var PICKAXE = {
+  id: "pickaxe",
+  name: "pickaxe",
+  sprite: "item_pickaxe",
+  type: "weapon",
+  stackable: false,
+  desc: "A sturdy pickaxe, useful for mining dark gold veins.",
+  weapon: {
+    name: "pickaxe",
+    tier: 1,
+    level: 0,
+    min: 3,
+    max: 12,
+    str: 14,
+    acu: 1,
+    dly: 1,
+    missile: false,
+    bloodStained: false,
+    upgradable: false
+  },
+  price: 0
+};
+var SHORT_SWORD = {
+  id: "shortsword",
+  name: "short sword",
+  sprite: "shortsword",
+  type: "weapon",
+  stackable: false,
+  desc: "It is indeed quite short, just a few inches longer than a dagger.",
+  weapon: { name: "short sword", tier: 1, level: 0, min: 1, max: 12, str: 11, acu: 1, dly: 1, missile: false },
+  price: 20
+};
+var DART2 = {
+  id: "dart",
+  name: "dart",
+  sprite: "dart",
+  type: "missile",
+  stackable: true,
+  desc: "These simple metal spikes are weighted to fly true and sting their prey with a flick of the wrist.",
+  weapon: { name: "dart", tier: 1, level: 0, min: 1, max: 4, str: 10, acu: 1, dly: 1, missile: true },
+  price: 2
+};
+var CLOTH_ARMOR = {
+  id: "cloth_armor",
+  name: "cloth armor",
+  sprite: "armor_cloth",
+  type: "armor",
+  stackable: false,
+  desc: "This lightweight armor offers basic protection.",
+  armor: { name: "cloth armor", level: 0, tier: 1, str: 9, dr: 2 },
+  price: 10
+};
+var POTION_HEALING = {
+  id: "potion_healing",
+  name: "potion of healing",
+  sprite: "potion_red",
+  type: "potion",
+  stackable: true,
+  desc: "An elixir that will instantly return you to full health and cure poison.",
+  price: 20
+};
+var POTION_STRENGTH = {
+  id: "potion_strength",
+  name: "potion of strength",
+  sprite: "potion_strength",
+  type: "potion",
+  stackable: true,
+  desc: "This powerful liquid will course through your muscles, permanently increasing your strength by one point.",
+  price: 20
+};
+var RATION = {
+  id: "ration",
+  name: "ration of food",
+  sprite: "ration",
+  type: "food",
+  stackable: true,
+  desc: "Nothing fancy here: dried meat, some biscuits - things like that.",
+  energy: 260,
+  price: 10
+};
+var SCROLL = {
+  id: "scroll",
+  name: "scroll",
+  sprite: "scroll",
+  type: "scroll",
+  stackable: true,
+  desc: "A scroll covered in indecipherable runes.",
+  price: 15
+};
+var SCROLL_UPGRADE = {
+  id: "scroll_upgrade",
+  name: "Scroll of Upgrade",
+  sprite: "scroll_upgrade",
+  type: "scroll",
+  stackable: true,
+  desc: "This scroll will upgrade a single item, improving its quality. A weapon will inflict more damage; a suit of armor will deflect additional blows. Weapons and armor will also require less strength to use.",
+  price: 15
+};
+var GOLD = {
+  id: "gold",
+  name: "gold",
+  sprite: "gold",
+  type: "gold",
+  stackable: true,
+  desc: "Collect gold coins to spend them later in a shop.",
+  price: 0
+};
+var IRON_KEY = {
+  id: "iron_key",
+  name: "iron key",
+  sprite: "key_iron",
+  type: "key",
+  stackable: true,
+  desc: "The notches on this ancient iron key are well worn.",
+  price: 0
+};
+var SKELETON_KEY = {
+  id: "skeleton_key",
+  name: "skeleton key",
+  sprite: "key_skeleton",
+  type: "key",
+  stackable: true,
+  desc: "A key carved from bone. It must open the way down.",
+  price: 0
+};
+var GOLDEN_KEY = {
+  id: "golden_key",
+  name: "golden key",
+  sprite: "key_gold",
+  type: "key",
+  stackable: true,
+  desc: "The notches on this golden key are tiny and intricate. Maybe it can open some chest lock?",
+  price: 0
+};
+var DEWDROP = {
+  id: "dewdrop",
+  name: "dewdrop",
+  sprite: "dewdrop",
+  type: "dewdrop",
+  stackable: true,
+  desc: "A crystal clear dewdrop.",
+  price: 0
+};
+var SEED = {
+  id: "seed",
+  name: "seed",
+  sprite: "seed",
+  type: "seed",
+  stackable: true,
+  desc: "A strange seed. Perhaps it can be planted.",
+  price: 0
+};
+var DRIED_ROSE = {
+  id: "dried_rose",
+  name: "dried rose",
+  sprite: "rose",
+  type: "quest",
+  stackable: false,
+  desc: "The rose has dried long ago, but it has kept all its petals somehow."
+};
+var RAT_SKULL = {
+  id: "rat_skull",
+  name: "giant rat skull",
+  sprite: "skull",
+  type: "quest",
+  stackable: false,
+  desc: "It could be a nice hunting trophy, but it smells too bad to place it on a wall.",
+  price: 100
+};
+var CORPSE_DUST = {
+  id: "corpse_dust",
+  name: "corpse dust",
+  sprite: "dust",
+  type: "quest",
+  stackable: false,
+  desc: "The ball of corpse dust doesn't differ outwardly from a regular dust ball. " + "However, you know somehow that it's better to get rid of it as soon as possible."
+};
+var PHANTOM_FISH = {
+  id: "phantom_fish",
+  name: "phantom fish",
+  sprite: "phantom",
+  type: "quest",
+  stackable: false,
+  desc: "You can barely see this tiny translucent fish in the air. " + "In the water it becomes effectively invisible."
+};
+var ROTBERRY_SEED = {
+  id: "rotberry_seed",
+  name: "seed of Rotberry",
+  sprite: "seed_rotberry",
+  type: "quest",
+  stackable: false,
+  desc: "A strange seed. Perhaps it can be planted."
+};
+var QUARTERSTAFF = {
+  id: "quarterstaff",
+  name: "quarterstaff",
+  sprite: "weapon_quarterstaff",
+  type: "weapon",
+  stackable: false,
+  desc: "A staff of hardwood, its ends are shod with iron.",
+  weapon: { name: "quarterstaff", tier: 2, level: 0, min: 2, max: 12, str: 12, acu: 1, dly: 1, missile: false },
+  price: 40
+};
+var SPEAR = {
+  id: "spear",
+  name: "spear",
+  sprite: "weapon_spear",
+  type: "weapon",
+  stackable: false,
+  desc: "A slender wooden rod tipped with sharpened iron.",
+  weapon: { name: "spear", tier: 2, level: 0, min: 2, max: 18, str: 12, acu: 1, dly: 1.5, missile: false },
+  price: 40
+};
+var SWORD = {
+  id: "sword",
+  name: "sword",
+  sprite: "weapon_sword",
+  type: "weapon",
+  stackable: false,
+  desc: "The razor-sharp length of steel blade shines reassuringly.",
+  weapon: { name: "sword", tier: 3, level: 0, min: 3, max: 16, str: 14, acu: 1, dly: 1, missile: false },
+  price: 80
+};
+var MACE = {
+  id: "mace",
+  name: "mace",
+  sprite: "weapon_mace",
+  type: "weapon",
+  stackable: false,
+  desc: "The iron head of this weapon inflicts substantial damage.",
+  weapon: { name: "mace", tier: 3, level: 0, min: 3, max: 12, str: 14, acu: 1, dly: 0.8, missile: false },
+  price: 80
+};
+var LONGSWORD = {
+  id: "longsword",
+  name: "longsword",
+  sprite: "weapon_longsword",
+  type: "weapon",
+  stackable: false,
+  desc: "This towering blade inflicts heavy damage by investing its heft into every cut.",
+  weapon: { name: "longsword", tier: 4, level: 0, min: 4, max: 22, str: 16, acu: 1, dly: 1, missile: false },
+  price: 160
+};
+var BATTLE_AXE = {
+  id: "battle_axe",
+  name: "battle axe",
+  sprite: "weapon_battle_axe",
+  type: "weapon",
+  stackable: false,
+  desc: "The enormous steel head of this battle axe puts considerable heft behind each stroke.",
+  weapon: { name: "battle axe", tier: 4, level: 0, min: 4, max: 18, str: 16, acu: 1.2, dly: 1, missile: false },
+  price: 160
+};
+var GLAIVE = {
+  id: "glaive",
+  name: "glaive",
+  sprite: "weapon_glaive",
+  type: "weapon",
+  stackable: false,
+  desc: "A polearm consisting of a sword blade on the end of a pole.",
+  weapon: { name: "glaive", tier: 5, level: 0, min: 5, max: 30, str: 18, acu: 1, dly: 1, missile: false },
+  price: 320
+};
+var WAR_HAMMER = {
+  id: "war_hammer",
+  name: "war hammer",
+  sprite: "weapon_war_hammer",
+  type: "weapon",
+  stackable: false,
+  desc: "Few creatures can withstand the crushing blow of this towering mass of lead and steel, but only the strongest of adventurers can use it effectively.",
+  weapon: { name: "war hammer", tier: 5, level: 0, min: 5, max: 25, str: 18, acu: 1.2, dly: 1, missile: false },
+  price: 320
+};
+var LEATHER_ARMOR = {
+  id: "leather_armor",
+  name: "leather armor",
+  sprite: "armor_leather",
+  type: "armor",
+  stackable: false,
+  desc: "Armor made from tanned monster hide. Not as light as cloth armor but provides better protection.",
+  armor: { name: "leather armor", level: 0, tier: 2, str: 11, dr: 4 },
+  price: 20
+};
+var MAIL_ARMOR = {
+  id: "mail_armor",
+  name: "mail armor",
+  sprite: "armor_mail",
+  type: "armor",
+  stackable: false,
+  desc: "Interlocking metal links make for a tough but flexible suit of armor.",
+  armor: { name: "mail armor", level: 0, tier: 3, str: 13, dr: 6 },
+  price: 40
+};
+var SCALE_ARMOR = {
+  id: "scale_armor",
+  name: "scale armor",
+  sprite: "armor_scale",
+  type: "armor",
+  stackable: false,
+  desc: "The metal scales sewn onto a leather vest create a flexible, yet protective armor.",
+  armor: { name: "scale armor", level: 0, tier: 4, str: 15, dr: 8 },
+  price: 80
+};
+var PLATE_ARMOR = {
+  id: "plate_armor",
+  name: "plate armor",
+  sprite: "armor_plate",
+  type: "armor",
+  stackable: false,
+  desc: "Enormous plates of metal are joined together into a suit that provides unmatched protection to any adventurer strong enough to bear its staggering weight.",
+  armor: { name: "plate armor", level: 0, tier: 5, str: 17, dr: 10 },
+  price: 160
+};
+var SEED_POUCH = {
+  id: "seed_pouch",
+  name: "seed pouch",
+  sprite: "seed_pouch",
+  type: "bag",
+  stackable: false,
+  desc: "This small velvet pouch allows you to store any number of seeds in it. Very convenient.",
+  price: 50
+};
+var SCROLL_HOLDER = {
+  id: "scroll_holder",
+  name: "scroll holder",
+  sprite: "scroll_holder",
+  type: "bag",
+  stackable: false,
+  desc: "You can place any number of scrolls into this tubular container. It saves room in your backpack and protects scrolls from fire.",
+  price: 50
+};
+var WAND_HOLSTER = {
+  id: "wand_holster",
+  name: "wand holster",
+  sprite: "wand_holster",
+  type: "bag",
+  stackable: false,
+  desc: "This slim holder is made of leather of some exotic animal. It allows to compactly carry up to 12 wands.",
+  price: 50
+};
+var WEIGHTSTONE = {
+  id: "weightstone",
+  name: "weightstone",
+  sprite: "weightstone",
+  type: "misc",
+  stackable: true,
+  desc: "Using a weightstone, you can balance your melee weapon to increase its speed or accuracy.",
+  price: 40
+};
+var TORCH = {
+  id: "torch",
+  name: "torch",
+  sprite: "torch",
+  type: "misc",
+  stackable: true,
+  desc: "It's an indispensable item in The Demon Halls, which are notorious for their poor ambient lighting.",
+  price: 10
+};
+var ANKH = {
+  id: "ankh",
+  name: "Ankh",
+  sprite: "ankh",
+  type: "misc",
+  stackable: true,
+  desc: "The ancient symbol of immortality grants an ability to return to life after death. Upon resurrection all non-equipped items are lost.",
+  price: 50
+};
+var OVERPRICED_RATION = {
+  id: "overpriced_ration",
+  name: "overpriced food ration",
+  sprite: "overpriced_ration",
+  type: "food",
+  stackable: true,
+  desc: "It looks exactly like a standard ration of food but smaller.",
+  energy: 100,
+  price: 20
+};
+var WAND_BASE_DEFS = {};
+for (const spec of WAND_SPECS) {
+  const id = `wand_of_${spec.id}`;
+  WAND_BASE_DEFS[id] = {
+    id,
+    name: spec.name,
+    sprite: spec.sprite,
+    type: "wand",
+    stackable: false,
+    desc: spec.desc,
+    price: 50
+  };
+}
+var RING_BASE_DEFS = {};
+for (const spec of RING_SPECS) {
+  const id = `ring_of_${spec.id}`;
+  RING_BASE_DEFS[id] = {
+    id,
+    name: spec.name,
+    sprite: spec.spriteKey,
+    type: "ring",
+    stackable: false,
+    desc: spec.desc,
+    price: 80
+  };
+}
+var ITEMS = {
+  shortsword: SHORT_SWORD,
+  dart: DART2,
+  cloth_armor: CLOTH_ARMOR,
+  potion_healing: POTION_HEALING,
+  potion_strength: POTION_STRENGTH,
+  ration: RATION,
+  scroll: SCROLL,
+  scroll_upgrade: SCROLL_UPGRADE,
+  gold: GOLD,
+  iron_key: IRON_KEY,
+  skeleton_key: SKELETON_KEY,
+  golden_key: GOLDEN_KEY,
+  dewdrop: DEWDROP,
+  seed: SEED,
+  dried_rose: DRIED_ROSE,
+  rat_skull: RAT_SKULL,
+  corpse_dust: CORPSE_DUST,
+  phantom_fish: PHANTOM_FISH,
+  rotberry_seed: ROTBERRY_SEED,
+  quarterstaff: QUARTERSTAFF,
+  spear: SPEAR,
+  sword: SWORD,
+  mace: MACE,
+  longsword: LONGSWORD,
+  battle_axe: BATTLE_AXE,
+  glaive: GLAIVE,
+  war_hammer: WAR_HAMMER,
+  leather_armor: LEATHER_ARMOR,
+  mail_armor: MAIL_ARMOR,
+  scale_armor: SCALE_ARMOR,
+  plate_armor: PLATE_ARMOR,
+  seed_pouch: SEED_POUCH,
+  scroll_holder: SCROLL_HOLDER,
+  wand_holster: WAND_HOLSTER,
+  weightstone: WEIGHTSTONE,
+  torch: TORCH,
+  ankh: ANKH,
+  overpriced_ration: OVERPRICED_RATION,
+  ...POTION_DEFS,
+  ...SCROLL_DEFS,
+  honeypot: HONEYPOT_DEF,
+  darkgold: DARK_GOLD,
+  pickaxe: PICKAXE,
+  ...WAND_BASE_DEFS,
+  ...RING_BASE_DEFS
+};
+function getItem(id) {
+  const { defId } = parseItemId(id);
+  const def3 = ITEMS[defId];
+  if (!def3)
+    throw new Error(`unknown item id: ${id}`);
+  return def3;
+}
+function parseItemId(id) {
+  const colon = id.indexOf(":");
+  if (colon === -1)
+    return { defId: id, qty: 1 };
+  const n = parseInt(id.slice(colon + 1), 10);
+  return {
+    defId: id.slice(0, colon),
+    qty: Number.isFinite(n) && n > 0 ? n : 1
+  };
+}
+
+// src/content/actions.ts
+function pickupAt(ctx, hero) {
+  const level = ctx.level;
+  const item = level.items.find((it) => it.pos === hero.pos);
+  if (!item) {
+    ctx.log("There is nothing here to pick up.");
+    return 1;
+  }
+  level.items = level.items.filter((it) => it !== item);
+  const { defId, qty } = parseItemId(item.itemId);
+  if (defId === "dewdrop")
+    return pickupDewdrop(ctx, hero, qty);
+  if (item.lockedChest)
+    return openLockedChest(ctx, hero, item);
+  const def3 = getItem(defId);
+  if (def3.type === "gold") {
+    hero.gold += qty;
+    ctx.log(`You pick up ${qty} gold.`);
+  } else {
+    addToInventory(hero, defId, qty);
+    const label = qty > 1 ? `${qty}x ${def3.name}` : def3.name;
+    ctx.log(`You pick up the ${label}.`);
+  }
+  return 1;
+}
+function useInventorySlot(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  const def3 = getItem(stack.itemId);
+  if (isWandId(stack.itemId) || isRingId(stack.itemId)) {
+    ctx.log("Nothing happens.");
+    return 1;
+  }
+  switch (def3.type) {
+    case "potion":
+      return drinkPotion2(ctx, hero, slot, stack);
+    case "food":
+      return eatFood(ctx, hero, slot, stack);
+    case "scroll":
+      return readScroll2(ctx, hero, slot, stack);
+    case "weapon":
+      return equipWeaponFromInventory(ctx, hero, slot, stack);
+    case "armor":
+      return equipArmorFromInventory(ctx, hero, slot, stack);
+    case "missile":
+      ctx.log("Choose a target to throw the dart at.");
+      return 0;
+    case "key":
+      return useKey(ctx, hero, slot, stack);
+    case "gold":
+      return 1;
+    case "dewdrop":
+    case "seed":
+      return 1;
+    case "bag":
+    case "misc":
+    case "quest":
+      return 1;
+    case "wand":
+    case "ring":
+      return 1;
+  }
+}
+function drinkPotion2(ctx, hero, slot, _stack) {
+  return drinkPotion(ctx, hero, slot);
+}
+function readScroll2(ctx, hero, slot, _stack) {
+  return readScroll(ctx, hero, slot);
+}
+function eatFood(ctx, hero, slot, stack) {
+  const def3 = getItem(stack.itemId);
+  removeFromInventory(hero, slot, 1);
+  hero.hungerLevel = satisfy(hero.hungerLevel, def3.energy ?? 260);
+  if (hero.hp < hero.ht) {
+    hero.hp = Math.min(hero.hp + 5, hero.ht);
+  }
+  ctx.log("That food tasted delicious!");
+  return 3;
+}
+function equipWeaponFromInventory(ctx, hero, slot, stack) {
+  const def3 = getItem(stack.itemId);
+  if (!def3.weapon) {
+    ctx.log("You can't wield that.");
+    return 1;
+  }
+  if (hero.weapon?.cursed) {
+    ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.weapon.name));
+    return 1;
+  }
+  const oldWeapon = hero.weapon;
+  const oldId = hero.weaponId;
+  const inst = stack.gear?.weapon ? { ...stack.gear.weapon } : { ...def3.weapon };
+  if (inst.durability === undefined)
+    initDurability(inst, "weapon");
+  removeFromInventory(hero, slot, 1);
+  hero.weapon = inst;
+  hero.weaponId = def3.id;
+  hero.weapon.cursedKnown = true;
+  if (oldId && oldWeapon) {
+    addToInventory(hero, oldId, 1, { weapon: oldWeapon });
+  }
+  ctx.log(`You equip the ${def3.name}.`);
+  if (inst.cursed) {
+    ctx.log(TXT_EQUIP_CURSED_WEAPON.replace("%s", inst.name));
+  }
+  return 1;
+}
+function equipArmorFromInventory(ctx, hero, slot, stack) {
+  const def3 = getItem(stack.itemId);
+  if (!def3.armor) {
+    ctx.log("You can't wear that.");
+    return 1;
+  }
+  if (hero.armor?.cursed) {
+    ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.armor.name));
+    return 1;
+  }
+  const oldArmor = hero.armor;
+  const oldId = hero.armorId;
+  const inst = stack.gear?.armor ? { ...stack.gear.armor } : { ...def3.armor };
+  if (inst.durability === undefined)
+    initDurability(inst, "armor");
+  removeFromInventory(hero, slot, 1);
+  hero.armor = inst;
+  hero.armorId = def3.id;
+  hero.armor.cursedKnown = true;
+  if (oldId && oldArmor) {
+    addToInventory(hero, oldId, 1, { armor: oldArmor });
+  }
+  ctx.log(`You equip the ${def3.name}.`);
+  if (inst.cursed) {
+    ctx.log(TXT_EQUIP_CURSED_ARMOR.replace("%s", inst.name));
+  }
+  return 1;
+}
+function useKey(ctx, hero, slot, stack) {
+  const level = ctx.level;
+  const w = level.w;
+  const x = hero.x;
+  const y = hero.y;
+  const lockedAround = [
+    [x + 1, y],
+    [x - 1, y],
+    [x, y + 1],
+    [x, y - 1]
+  ];
+  if (stack.itemId === "iron_key") {
+    for (const [nx, ny] of lockedAround) {
+      if (level.inBounds(nx, ny) && level.get(nx, ny) === 3 /* DOOR_LOCKED */) {
+        level.set(nx, ny, 2 /* DOOR */);
+        removeFromInventory(hero, slot, 1);
+        ctx.log("You unlock the door.");
+        return 1;
+      }
+    }
+    ctx.log("There is no locked door nearby.");
+    return 1;
+  }
+  if (stack.itemId === "skeleton_key") {
+    for (const [nx, ny] of lockedAround) {
+      if (level.inBounds(nx, ny) && level.get(nx, ny) === 5 /* EXIT_LOCKED */) {
+        level.set(nx, ny, 7 /* EXIT */);
+        removeFromInventory(hero, slot, 1);
+        ctx.log("You unlock the way down with the skeleton key.");
+        return 1;
+      }
+    }
+    ctx.log("There is no locked exit nearby.");
+    return 1;
+  }
+  ctx.log("You can't use that here.");
+  return 1;
+}
+function throwDart(ctx, hero, slot, targetPos) {
+  const stack = hero.inventory[slot];
+  if (!stack || stack.itemId !== "dart") {
+    ctx.log("You have no darts to throw.");
+    return 1;
+  }
+  const level = ctx.level;
+  const trace = dartTrace(level, hero.pos, targetPos);
+  removeFromInventory(hero, slot, 1);
+  syncDarts(hero);
+  for (const cell of trace.cells) {
+    const mob = ctx.mobs.find((m) => m.isAlive() && m.x === cell % level.w && m.y === Math.floor(cell / level.w));
+    if (mob) {
+      const ranged = { ...getItem("dart").weapon };
+      const dist = trace.distances.get(cell) ?? 1;
+      try {
+        hero.rangedWeapon = ranged;
+        strikeHeroVsMob(ctx, hero, mob, heroAttackSkill(hero, { ranged: true, adjacent: dist <= 1 }), (rng) => heroDamageRoll(rng, hero, { ranged: true }));
+      } finally {
+        hero.rangedWeapon = null;
+      }
+      return 1;
+    }
+  }
+  dropDartAt(level, trace.landCell);
+  ctx.log("The dart clatters to the floor.");
+  return 1;
+}
+function dropDartAt(level, pos) {
+  level.items.push({ pos, itemId: "dart", sprite: getItem("dart").sprite });
+}
+function equipSlot(ctx, hero, slot) {
+  if (slot === -1) {
+    if (!hero.weaponId) {
+      ctx.log("You wield nothing.");
+      return 1;
+    }
+    if (hero.weapon?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.weapon.name));
+      return 1;
+    }
+    const def4 = getItem(hero.weaponId);
+    const inst = hero.weapon;
+    addToInventory(hero, hero.weaponId, 1, inst ? { weapon: inst } : undefined);
+    hero.weapon = null;
+    hero.weaponId = null;
+    ctx.log(`You unwield the ${def4.name}.`);
+    return 1;
+  }
+  if (slot === -2) {
+    if (!hero.armorId) {
+      ctx.log("You wear nothing.");
+      return 1;
+    }
+    if (hero.armor?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.armor.name));
+      return 1;
+    }
+    const def4 = getItem(hero.armorId);
+    const inst = hero.armor;
+    addToInventory(hero, hero.armorId, 1, inst ? { armor: inst } : undefined);
+    hero.armor = null;
+    hero.armorId = null;
+    ctx.log(`You take off the ${def4.name}.`);
+    return 1;
+  }
+  const stack = hero.inventory[slot];
+  if (!stack) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  const def3 = getItem(stack.itemId);
+  if (def3.type === "weapon")
+    return equipWeaponFromInventory(ctx, hero, slot, stack);
+  if (def3.type === "armor")
+    return equipArmorFromInventory(ctx, hero, slot, stack);
+  ctx.log("You can't equip that.");
+  return 1;
+}
+function dropSlot(ctx, hero, slot) {
+  if (slot === -1 || slot === -2) {
+    const equippedId = slot === -1 ? hero.weaponId : hero.armorId;
+    if (!equippedId) {
+      ctx.log("Nothing in that slot.");
+      return 1;
+    }
+    const inst = slot === -1 ? hero.weapon : hero.armor;
+    if (inst?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", inst.name));
+      return 1;
+    }
+    if (slot === -1) {
+      hero.weapon = null;
+      hero.weaponId = null;
+    } else {
+      hero.armor = null;
+      hero.armorId = null;
+    }
+    const def4 = getItem(equippedId);
+    ctx.level.items.push({
+      pos: hero.pos,
+      itemId: equippedId,
+      sprite: def4.sprite
+    });
+    ctx.log(`You drop the ${def4.name}.`);
+    return 0.5;
+  }
+  const stack = hero.inventory[slot];
+  if (!stack) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  const removed = removeFromInventory(hero, slot, stack.qty);
+  const def3 = getItem(removed.itemId);
+  ctx.level.items.push({
+    pos: hero.pos,
+    itemId: removed.itemId,
+    sprite: def3.sprite
+  });
+  ctx.log(`You drop the ${def3.name}.`);
+  return 0.5;
+}
+var chasmArmed = null;
+function stepTowardChasm(ctx, hero, nx, ny) {
+  const level = ctx.level;
+  const from = hero.pos;
+  const to = ny * level.w + nx;
+  if (hero.flying) {
+    hero.pos = to;
+    passiveSearch(ctx, hero);
+    return 1;
+  }
+  if (chasmArmed !== null && chasmArmed.from === from && chasmArmed.to === to) {
+    chasmArmed = null;
+    return heroFall(ctx, hero);
+  }
+  chasmArmed = { from, to };
+  ctx.log("Do you really want to jump into the chasm? You can probably die.");
+  return 0;
+}
+function heroFall(ctx, hero) {
+  chasmArmed = null;
+  ctx.log("You fall into the chasm!");
+  hero.buffs.cripple = { kind: "cripple", left: CRIPPLE_DURATION };
+  const dmg = ctx.rng.intRange(Math.floor(hero.ht / 3), Math.floor(hero.ht / 2));
+  const applied = applyDamage(ctx.rng, hero, dmg);
+  hero.hp = applied.hp;
+  if (applied.paralysisBroken) {
+    hero.paralysed = false;
+    delete hero.buffs.paralysis;
+  }
+  if (!hero.isAlive()) {
+    ctx.log("You fell to death...");
+  }
+  return 1;
+}
+function doorEnter(ctx, x, y) {
+  ctx.level.set(x, y, 40 /* OPEN_DOOR */);
+}
+function doorLeave(ctx, x, y) {
+  const level = ctx.level;
+  if (!level.items.some((it) => it.pos === level.idx(x, y))) {
+    level.set(x, y, 2 /* DOOR */);
+  }
+}
+function trampleHighGrass(ctx, hero, x, y) {
+  const level = ctx.level;
+  level.set(x, y, 10 /* GRASS */);
+  const herbalismLevel = 0;
+  if (ctx.rng.int(0, 18) <= ctx.rng.int(0, herbalismLevel + 1)) {
+    dropAt(ctx, level.idx(x, y), "seed");
+  }
+  if (ctx.rng.int(0, 6) <= ctx.rng.int(0, herbalismLevel + 1)) {
+    dropAt(ctx, level.idx(x, y), "dewdrop");
+  }
+}
+function dropAt(ctx, pos, itemId) {
+  ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
+}
+function pickupDewdrop(ctx, hero, qty) {
+  const level = ctx.level;
+  const value = 1 + Math.floor((level.depth - 1) / 5);
+  const effect = Math.min(hero.ht - hero.hp, value * qty);
+  if (effect > 0) {
+    hero.hp += effect;
+    ctx.log(`+${effect}HP`);
+  }
+  return 1;
+}
+function openLockedChest(ctx, hero, item) {
+  const level = ctx.level;
+  const keySlot = hero.inventory.findIndex((s) => s.itemId === "golden_key");
+  if (keySlot === -1) {
+    ctx.log("This chest is locked and you don't have matching key");
+    return 0;
+  }
+  removeFromInventory(hero, keySlot, 1);
+  level.items = level.items.filter((it) => it !== item);
+  const { defId, qty } = parseItemId(item.itemId);
+  const def3 = getItem(defId);
+  const label = qty > 1 ? `${qty}x ${def3.name}` : def3.name;
+  if (def3.type === "gold") {
+    hero.gold += qty;
+    ctx.log(`You unlock the chest and take ${qty} gold.`);
+  } else {
+    addToInventory(hero, defId, qty);
+    ctx.log(`You unlock the chest and take the ${label}.`);
+  }
+  return 1;
+}
+var SIGN_TIPS = [
+  "Wear the highest tier armor you can; do not rely on dodging alone.",
+  "Enchantments on weapons and armor are potent; identify items to find them.",
+  "Dewdrops heal a little; save potions of healing for emergencies.",
+  "Do not be afraid to run from a fight you cannot win.",
+  "Upgrade scrolls are precious; spend them on gear you will keep.",
+  "Mystery meat is risky; cook it at a stove if you can.",
+  "Strength potions let you wear heavier gear sooner.",
+  "Hidden traps and doors can be found by searching.",
+  "Blandfruit can be cooked with seeds for useful meals.",
+  "Flies are weak alone; do not let a swarm surround you.",
+  "Gnoll scouts hit hard; use doorways to fight them one at a time.",
+  "Crabs block a lot of damage; use wands or surprise attacks.",
+  "Goo is coming. Fire will keep it from healing.",
+  "Fire hurts Goo, but do not stand in it yourself.",
+  "Keep your distance from spinners and their webs.",
+  "Skeletons hit hard; blind or slow them first.",
+  "Thieves steal; kill them before they flee with your gear.",
+  "Shaman bolts hurt; break line of sight.",
+  "Brutes enrage when hurt; finish them quickly.",
+  "DM-300 is coming. Lightning hurts it most.",
+  "Lightning wands and surprise attacks bring DM-300 down.",
+  "The City awaits. Mind the monks and their disabling strikes."
+];
+var signCells = new WeakMap;
+function noteSignCells(level, cells) {
+  signCells.set(level, new Set(cells));
+}
+var wallDecoCells = new WeakMap;
+function noteWallDecoCells(level, cells) {
+  wallDecoCells.set(level, new Set(cells));
+}
+function mineDarkGold(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack || stack.itemId !== "pickaxe") {
+    ctx.log("Nothing to mine with.");
+    return 0;
+  }
+  if (ctx.level.depth < 11 || ctx.level.depth > 15) {
+    ctx.log(TXT_NO_VEIN);
+    return 0;
+  }
+  const veins = wallDecoCells.get(ctx.level);
+  const w = ctx.level.w;
+  const hx = hero.pos % w;
+  const hy = Math.floor(hero.pos / w);
+  let vein = null;
+  for (let dy = -1;dy <= 1 && vein === null; dy++) {
+    for (let dx = -1;dx <= 1; dx++) {
+      if (dx === 0 && dy === 0)
+        continue;
+      const pos = (hy + dy) * w + (hx + dx);
+      if (veins?.has(pos)) {
+        vein = pos;
+        break;
+      }
+    }
+  }
+  if (vein === null) {
+    ctx.log(TXT_NO_VEIN);
+    return 0;
+  }
+  veins.delete(vein);
+  addToInventory(hero, "darkgold", 1);
+  ctx.log("You now have dark gold ore");
+  if (hero.hungerLevel < STARVING) {
+    hero.hungerLevel = satisfy(hero.hungerLevel, -STARVING / 10);
+  }
+  return 2;
+}
+var TXT_NO_VEIN = "There is no dark gold vein near you to mine";
+function readSign(ctx, hero) {
+  const cells = signCells.get(ctx.level);
+  if (!cells || !cells.has(hero.pos))
+    return 1;
+  const index = ctx.level.depth - 1;
+  if (index < SIGN_TIPS.length) {
+    ctx.log(SIGN_TIPS[index]);
+  } else {
+    cells.delete(hero.pos);
+    ctx.level.set(hero.x, hero.y, 38 /* EMBERS */);
+    ctx.log("As you try to read the sign it bursts into greenish flames.");
+  }
+  return 0;
+}
+function waitTurn(ctx, hero) {
+  return readSign(ctx, hero);
+}
+function moveHero(ctx, hero, dx, dy) {
+  const level = ctx.level;
+  if (hero.rooted)
+    return 1;
+  let nx = hero.x + dx;
+  let ny = hero.y + dy;
+  if (!level.inBounds(nx, ny))
+    return 1;
+  const foe = ctx.mobs.find((m) => m.isAlive() && m.x === nx && m.y === ny);
+  if (foe) {
+    strikeHeroVsMob(ctx, hero, foe, heroAttackSkill(hero, { ranged: false, adjacent: false }), (r) => heroDamageRoll(r, hero, { ranged: false }));
+    return 1;
+  }
+  if (hasBuff(hero, "vertigo")) {
+    const step = vertigoRedirect(ctx.rng, hero.pos, level.w, (p) => {
+      const px = p % level.w;
+      const py = Math.floor(p / level.w);
+      return !level.inBounds(px, py) || !level.isPassable(px, py) || ctx.mobs.some((m) => m.isAlive() && m.x === px && m.y === py);
+    });
+    if (step === null) {
+      passiveSearch(ctx, hero);
+      return 1;
+    }
+    nx = step % level.w;
+    ny = Math.floor(step / level.w);
+  }
+  const tile = level.get(nx, ny);
+  if (tile === 8 /* CHASM */)
+    return stepTowardChasm(ctx, hero, nx, ny);
+  if (tile === 3 /* DOOR_LOCKED */) {
+    const keySlot = hero.inventory.findIndex((s) => s.itemId === "iron_key");
+    if (keySlot === -1) {
+      ctx.log("You don't have a matching key");
+      return 0;
+    }
+    level.set(nx, ny, 2 /* DOOR */);
+    removeFromInventory(hero, keySlot, 1);
+    ctx.log("You unlock the door.");
+    return 1;
+  }
+  if (!level.isPassable(nx, ny))
+    return 1;
+  if (level.get(hero.x, hero.y) === 40 /* OPEN_DOOR */) {
+    doorLeave(ctx, hero.x, hero.y);
+  }
+  hero.pos = ny * level.w + nx;
+  if (!hero.flying) {
+    pressTrapCell(ctx, hero.pos, hero, (mobId, pos) => {
+      const mob = buildMob(mobId, nextMobId(), pos, level.w);
+      mob.state = "wandering";
+      ctx.addMob(mob, 2);
+    });
+    if (ctx.level.depth === 10) {
+      pressArenaCell(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          const tengu = buildMob("tengu", nextMobId(), pos, level.w);
+          tengu.state = "hunting";
+          ctx.addMob(tengu);
+          tengu.notice(ctx);
+        }
+      });
+    } else if (ctx.level.depth === 15) {
+      pressArenaCell2(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          const dm300 = buildMob("dm300", nextMobId(), pos, level.w);
+          dm300.state = "hunting";
+          ctx.addMob(dm300);
+          dm300.notice(ctx);
+        }
+      });
+    }
+    enterCell(ctx, hero, nx, ny);
+  } else if (tile === 2 /* DOOR */) {
+    doorEnter(ctx, nx, ny);
+  }
+  passiveSearch(ctx, hero);
+  return 1;
+}
+function enterCell(ctx, hero, x, y) {
+  const t = ctx.level.get(x, y);
+  if (t === 39 /* HIGH_GRASS */)
+    trampleHighGrass(ctx, hero, x, y);
+  else if (t === 2 /* DOOR */)
+    doorEnter(ctx, x, y);
+}
+function searchIntentional(ctx, hero) {
+  const level = ctx.level;
+  const distance = 1;
+  const level_ = intentionalSearchLevel(hero.awareness);
+  let found = false;
+  for (let dy = -distance;dy <= distance; dy++) {
+    for (let dx = -distance;dx <= distance; dx++) {
+      const nx = hero.x + dx;
+      const ny = hero.y + dy;
+      if (!level.inBounds(nx, ny))
+        continue;
+      if (level.visible[level.idx(nx, ny)] === 0)
+        continue;
+      const t = level.get(nx, ny);
+      if (t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) {
+        if (t === 4 /* DOOR_SECRET */) {
+          level.revealSecretDoor(nx, ny);
+        } else {
+          level.revealTrap(nx, ny);
+        }
+        found = true;
+      }
+    }
+  }
+  if (found) {
+    ctx.log("You noticed something");
+  }
+  return searchTimeCost(ctx.rng, found, level_);
+}
+function passiveSearch(ctx, hero) {
+  const level = ctx.level;
+  const chance = passiveSearchLevel(hero.awareness);
+  for (let dy = -1;dy <= 1; dy++) {
+    for (let dx = -1;dx <= 1; dx++) {
+      const nx = hero.x + dx;
+      const ny = hero.y + dy;
+      if (!level.inBounds(nx, ny))
+        continue;
+      if (level.visible[level.idx(nx, ny)] === 0)
+        continue;
+      const t = level.get(nx, ny);
+      if ((t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) && ctx.rng.float(0, 1) < chance) {
+        if (t === 4 /* DOOR_SECRET */) {
+          level.revealSecretDoor(nx, ny);
+        } else {
+          level.revealTrap(nx, ny);
+        }
+      }
+    }
+  }
+}
+function tickHeroClock(rng, ctx, hero, cost) {
+  hero.hungerClock += cost;
+  while (hero.hungerClock >= HUNGER_STEP) {
+    hero.hungerClock -= HUNGER_STEP;
+    const t = hungerTick(rng, {
+      level: hero.hungerLevel,
+      hp: hero.hp,
+      paralysed: hero.paralysed
+    });
+    hero.hungerLevel = t.level;
+    if (t.becameStarving)
+      ctx.log(MSG_STARVING);
+    else if (t.becameHungry)
+      ctx.log(MSG_HUNGRY);
+    if (t.damage > 0) {
+      ctx.log(MSG_STARVING);
+      hero.hp = Math.max(hero.hp - t.damage, 0);
+      if (!hero.isAlive())
+        ctx.log(MSG_STARVED_TO_DEATH);
+    }
+    if (hero.isAlive()) {
+      hero.hp = regenTick(hero.hp, hero.ht, isStarving(hero.hungerLevel));
+    }
+  }
+}
+function dartTrace(level, from, to) {
+  const w = level.w;
+  const x0 = from % w;
+  const y0 = Math.floor(from / w);
+  const x1 = to % w;
+  const y1 = Math.floor(to / w);
+  const cells = [];
+  const distances = new Map;
+  let dx = Math.abs(x1 - x0);
+  let dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  let x = x0;
+  let y = y0;
+  let dist = 0;
+  for (;; ) {
+    if (dist > 0) {
+      if (!level.inBounds(x, y) || level.isOpaque(x, y))
+        break;
+      const pos = y * w + x;
+      cells.push(pos);
+      distances.set(pos, dist);
+    }
+    if (x === x1 && y === y1)
+      break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+    dist++;
+    if (dist > 64)
+      break;
+  }
+  return {
+    cells,
+    distances,
+    landCell: cells.length > 0 ? cells[cells.length - 1] : from
+  };
 }
 
 // src/ui/palette.ts
@@ -6812,9 +10450,9 @@ function readShopStock(game) {
     let name = it.itemId;
     let sprite = it.sprite;
     try {
-      const def = getItem(defId);
-      name = def.name;
-      sprite = def.sprite;
+      const def3 = getItem(defId);
+      name = def3.name;
+      sprite = def3.sprite;
     } catch {}
     out.push({ levelIndex, pos: it.pos, itemId: it.itemId, qty, name, sprite, unitPrice: unitPriceOf(it.itemId) });
   });
@@ -6834,9 +10472,9 @@ function readSellable(game) {
     let name = stack.itemId;
     let sprite = "scroll";
     try {
-      const def = getItem(defId);
-      name = def.name;
-      sprite = def.sprite;
+      const def3 = getItem(defId);
+      name = def3.name;
+      sprite = def3.sprite;
     } catch {}
     out.push({ slot, itemId: stack.itemId, name, sprite, qty: stack.qty, equipped: false, unitPrice });
   });
@@ -6849,8 +10487,8 @@ function readSellable(game) {
     const unitPrice = unitPriceOf(id);
     if (unitPrice <= 0)
       continue;
-    const def = getItem(parseItemId(id).defId);
-    out.push({ slot, itemId: id, name: def.name, sprite: def.sprite, qty: 1, equipped, unitPrice });
+    const def3 = getItem(parseItemId(id).defId);
+    out.push({ slot, itemId: id, name: def3.name, sprite: def3.sprite, qty: 1, equipped, unitPrice });
   }
   return out;
 }
@@ -6876,14 +10514,20 @@ function sellToShop(game, entry, which) {
   if (entry.slot === -1) {
     if (hero.weaponId !== entry.itemId)
       return { ok: false, reason: "gone" };
-    addToInventory(hero, hero.weaponId, 1);
+    if (hero.weapon?.cursed)
+      return { ok: false, reason: "cursed" };
+    const inst = hero.weapon;
+    addToInventory(hero, hero.weaponId, 1, inst ? { weapon: inst } : undefined);
     hero.weapon = null;
     hero.weaponId = null;
     stack = hero.inventory[hero.inventory.length - 1];
   } else if (entry.slot === -2) {
     if (hero.armorId !== entry.itemId)
       return { ok: false, reason: "gone" };
-    addToInventory(hero, hero.armorId, 1);
+    if (hero.armor?.cursed)
+      return { ok: false, reason: "cursed" };
+    const inst = hero.armor;
+    addToInventory(hero, hero.armorId, 1, inst ? { armor: inst } : undefined);
     hero.armor = null;
     hero.armorId = null;
     stack = hero.inventory[hero.inventory.length - 1];
@@ -6937,6 +10581,29 @@ var wandmakerQuest = freshWandmakerQuest();
 function resetQuestState() {
   Object.assign(ghostQuest, freshGhostQuest());
   Object.assign(wandmakerQuest, freshWandmakerQuest());
+  Object.assign(blacksmithQuest, freshBlacksmithQuest());
+}
+function freshBlacksmithQuest() {
+  return {
+    spawned: false,
+    alternative: false,
+    given: false,
+    completed: false,
+    reforged: false
+  };
+}
+var blacksmithQuest = freshBlacksmithQuest();
+function saveQuestState() {
+  return {
+    ghost: { ...ghostQuest },
+    wandmaker: { ...wandmakerQuest },
+    blacksmith: { ...blacksmithQuest }
+  };
+}
+function restoreQuestState(data) {
+  Object.assign(ghostQuest, freshGhostQuest(), data?.ghost ?? {});
+  Object.assign(wandmakerQuest, freshWandmakerQuest(), data?.wandmaker ?? {});
+  Object.assign(blacksmithQuest, freshBlacksmithQuest(), data?.blacksmith ?? {});
 }
 function initGhostQuest(rng, depth) {
   ghostQuest.spawned = true;
@@ -6974,24 +10641,12 @@ function initWandmakerQuest(rng, waterCells, levelLength) {
   }
   wandmakerQuest.type = type;
   wandmakerQuest.given = false;
-  const battle = [
-    "wand_avalanche",
-    "wand_disintegration",
-    "wand_firebolt",
-    "wand_lightning",
-    "wand_poison"
-  ];
-  const nonBattle = [
-    "wand_amok",
-    "wand_blink",
-    "wand_regrowth",
-    "wand_slowness",
-    "wand_reach"
-  ];
-  wandmakerQuest.wand1 = rng.pick(battle);
-  wandmakerQuest.wand2 = rng.pick(nonBattle);
+  const battle = ["avalanche", "disintegration", "firebolt", "lightning", "poison"];
+  const nonBattle = ["amok", "blink", "regrowth", "slowness", "reach"];
+  wandmakerQuest.wand1 = createWandReward(rng, rng.pick(battle));
+  wandmakerQuest.wand2 = createWandReward(rng, rng.pick(nonBattle));
 }
-function randomRespawnCell(ctx) {
+function randomRespawnCell2(ctx) {
   const level = ctx.level;
   const n = level.w * level.h;
   for (let i = 0;i < 100; i++) {
@@ -7041,8 +10696,8 @@ function npcDef(id, name, sprite, speed, flying) {
 }
 
 class NpcMob extends ContentMob {
-  constructor(id, def, pos, w) {
-    super(id, def, pos, w);
+  constructor(id, def3, pos, w) {
+    super(id, def3, pos, w);
     this.invulnerable = true;
     this.hostile = false;
   }
@@ -7190,7 +10845,7 @@ class GhostMob extends NpcMob {
 function relocateGhost(ctx, ghost) {
   let newPos = -1;
   for (let i = 0;i < 10; i++) {
-    newPos = randomRespawnCell(ctx);
+    newPos = randomRespawnCell2(ctx);
     if (newPos !== -1)
       break;
   }
@@ -7231,7 +10886,7 @@ function onSewersKill(ctx, pos) {
     }
   } else if (ghostQuest.type === "rat") {
     const rat = new FetidRatMob(nextNpcId(), 0, ctx.level.w);
-    rat.pos = randomRespawnCell(ctx);
+    rat.pos = randomRespawnCell2(ctx);
     if (rat.pos !== -1) {
       ctx.addMob(rat, 0);
       ghostQuest.processed = true;
@@ -7296,36 +10951,44 @@ function grantWandReward(ctx, wandmaker, questItemId, value) {
   const slot = questItemSlot(hero, questItemId);
   if (slot !== -1)
     removeFromInventory(hero, slot, 1);
-  const wandDesc = value === "battle" ? wandmakerQuest.wand1 : wandmakerQuest.wand2;
-  const grantId = resolveWandReward(wandDesc);
+  const rewardId = value === "battle" ? wandmakerQuest.wand1 : wandmakerQuest.wand2;
+  const grantId = resolveWandRewardInstance(ctx.rng, rewardId);
   if (grantId) {
+    const parsed = parseWandId(grantId);
+    if (parsed)
+      identifyWandType(parsed.wandId, ctx.log);
     addToInventory(hero, grantId, 1);
-    ctx.log(`You now have the ${getItem(grantId).name}.`);
+    ctx.log(`You now have the ${instanceItemDef(grantId)?.name ?? grantId}.`);
   }
   ctx.log(fillClassName("The old wandmaker yells: " + TXT_FAREWELL_WANDMAKER));
   ctx.removeMob(wandmaker);
   wandmakerQuest.wand1 = null;
   wandmakerQuest.wand2 = null;
 }
-function resolveWandReward(wandDesc) {
-  if (wandDesc === null)
+function resolveWandRewardInstance(rng, rewardId) {
+  if (rewardId === null)
     return null;
-  return "scroll";
+  if (getWandState(rewardId))
+    return rewardId;
+  const parsed = parseWandId(rewardId);
+  if (!parsed)
+    return null;
+  return createWandReward(rng, parsed.wandId);
 }
 function placeWandmakerItem(ctx, type) {
   if (type === "berry") {
-    let pos = randomRespawnCell(ctx);
+    let pos = randomRespawnCell2(ctx);
     let guard = 0;
     while (pos !== -1 && ctx.level.items.some((it) => it.pos === pos) && guard++ < 100) {
-      pos = randomRespawnCell(ctx);
+      pos = randomRespawnCell2(ctx);
     }
     if (pos !== -1)
       dropItemAt(ctx, pos, "rotberry_seed");
   } else if (type === "dust") {
-    let pos = randomRespawnCell(ctx);
+    let pos = randomRespawnCell2(ctx);
     let guard = 0;
     while (pos !== -1 && ctx.level.items.some((it) => it.pos === pos) && guard++ < 100) {
-      pos = randomRespawnCell(ctx);
+      pos = randomRespawnCell2(ctx);
     }
     if (pos !== -1)
       dropItemAt(ctx, pos, "corpse_dust");
@@ -7341,10 +11004,10 @@ function placeWandmakerItem(ctx, type) {
       }
     }
     if (!placed) {
-      let pos = randomRespawnCell(ctx);
+      let pos = randomRespawnCell2(ctx);
       let guard = 0;
       while (pos !== -1 && ctx.level.items.some((it) => it.pos === pos) && guard++ < 100) {
-        pos = randomRespawnCell(ctx);
+        pos = randomRespawnCell2(ctx);
       }
       if (pos !== -1)
         dropItemAt(ctx, pos, "phantom_fish");
@@ -7451,6 +11114,258 @@ class ShopkeeperMob extends NpcMob {
     return this.keeper.description();
   }
 }
+var TXT_GOLD_1 = "Hey human! Wanna be useful, eh? Take dis pickaxe and mine me some _dark gold ore_, _15 pieces_ should be enough. " + `What do you mean, how am I gonna pay? You greedy...
+` + "Ok, ok, I don't have money to pay, but I can do some smithin' for you. Consider yourself lucky, " + "I'm the only blacksmith around.";
+var TXT_BLOOD_1 = "Hey human! Wanna be useful, eh? Take dis pickaxe and _kill a bat_ wit' it, I need its blood on the head. " + `What do you mean, how am I gonna pay? You greedy...
+` + "Ok, ok, I don't have money to pay, but I can do some smithin' for you. Consider yourself lucky, " + "I'm the only blacksmith around.";
+var TXT2 = "Are you kiddin' me? Where is my pickaxe?!";
+var TXT3 = "Dark gold ore. 15 pieces. Seriously, is it dat hard?";
+var TXT4 = "I said I need bat blood on the pickaxe. Chop chop!";
+var TXT_COMPLETED = "Oh, you have returned... Better late dan never.";
+var TXT_GET_LOST = "I'm busy. Get lost!";
+var TXT_LOOKS_BETTER = "your %s certainly looks better now";
+var TXT_REFORGE_PROMPT = "Ok, a deal is a deal, dat's what I can do for you: I can reforge " + "2 items and turn them into one of a better quality.";
+var TXT_REFORGE_SELECT = "Select an item to reforge";
+var TXT_REFORGE_BUTTON = "Reforge them";
+
+class BlacksmithMob extends NpcMob {
+  constructor(id, pos, w) {
+    super(id, npcDef("blacksmith", "troll blacksmith", "npc_blacksmith", 1, false), pos, w);
+    this.state = "passive";
+  }
+  onTalk(ctx) {
+    this.interact(ctx);
+  }
+  async interact(ctx) {
+    const hero = heroOf(ctx);
+    const q = blacksmithQuest;
+    if (!q.given) {
+      await showDialog({
+        title: "Troll blacksmith",
+        sprite: this.sprite,
+        text: q.alternative ? TXT_BLOOD_1 : TXT_GOLD_1,
+        choices: []
+      });
+      q.given = true;
+      q.completed = false;
+      addToInventory(hero, "pickaxe", 1);
+      ctx.log("You now have pickaxe");
+      return;
+    }
+    if (!q.completed) {
+      await this.turnIn(ctx, hero);
+      return;
+    }
+    if (!q.reforged) {
+      await this.reforgeFlow(ctx, hero);
+      return;
+    }
+    await showDialog({
+      title: "Troll blacksmith",
+      sprite: this.sprite,
+      text: TXT_GET_LOST,
+      choices: []
+    });
+  }
+  async turnIn(ctx, hero) {
+    const q = blacksmithQuest;
+    const pickEquipped = hero.weaponId === "pickaxe" && hero.weapon !== null;
+    const pickSlot = hero.inventory.findIndex((s) => s.itemId === "pickaxe");
+    if (pickSlot === -1 && !pickEquipped) {
+      await this.tell(TXT2);
+      return;
+    }
+    const bloodStained = pickEquipped ? hero.weapon.bloodStained === true : hero.inventory[pickSlot]?.gear?.weapon?.bloodStained === true;
+    if (q.alternative) {
+      if (!bloodStained) {
+        await this.tell(TXT4);
+        return;
+      }
+    } else {
+      const goldQty = hero.inventory.filter((s) => s.itemId === "darkgold").reduce((sum, s) => sum + s.qty, 0);
+      if (goldQty < 15) {
+        await this.tell(TXT3);
+        return;
+      }
+    }
+    if (pickEquipped) {
+      hero.weapon = null;
+      hero.weaponId = null;
+    } else {
+      removeFromInventory(hero, pickSlot, 1);
+    }
+    if (!q.alternative) {
+      for (let i = hero.inventory.length - 1;i >= 0; i--) {
+        if (hero.inventory[i]?.itemId === "darkgold") {
+          removeFromInventory(hero, i, hero.inventory[i].qty);
+        }
+      }
+    }
+    await this.tell(TXT_COMPLETED);
+    q.completed = true;
+    q.reforged = false;
+  }
+  tell(text) {
+    return showDialog({
+      title: "Troll blacksmith",
+      sprite: this.sprite,
+      text,
+      choices: []
+    });
+  }
+  async reforgeFlow(ctx, hero) {
+    const first = await this.pickItem(hero, TXT_REFORGE_PROMPT, null);
+    if (!first)
+      return;
+    const second = await this.pickItem(hero, TXT_REFORGE_SELECT, first);
+    if (!second)
+      return;
+    const err = verifyReforge(hero, first, second);
+    if (err) {
+      await showDialog({
+        title: "Troll blacksmith",
+        sprite: this.sprite,
+        text: err,
+        choices: []
+      });
+      return;
+    }
+    const confirm = await showDialog({
+      title: "Troll blacksmith",
+      sprite: this.sprite,
+      text: `Reforge the ${first.label} and the ${second.label} into one?`,
+      choices: [
+        { label: TXT_REFORGE_BUTTON, value: "yes" },
+        { label: "Never mind", value: "no" }
+      ]
+    });
+    if (confirm === "yes") {
+      reforgeItems(ctx, hero, first, second);
+    }
+  }
+  async pickItem(hero, prompt, exclude) {
+    const candidates = reforgeCandidates(hero).filter((c) => !exclude || c.key !== exclude.key);
+    if (candidates.length === 0) {
+      await showDialog({
+        title: "Troll blacksmith",
+        sprite: this.sprite,
+        text: "You have nothing I can reforge.",
+        choices: []
+      });
+      return null;
+    }
+    const value = await showDialog({
+      title: "Troll blacksmith",
+      sprite: this.sprite,
+      text: prompt,
+      choices: candidates.map((c) => ({ label: c.label, value: c.key }))
+    });
+    return candidates.find((c) => c.key === value) ?? null;
+  }
+  description() {
+    return "This troll blacksmith looks like all trolls look: he is tall and lean, and his skin resembles stone " + "in both color and texture. The troll blacksmith is tinkering with unproportionally small tools.";
+  }
+}
+function reforgeCandidates(hero) {
+  const out = [];
+  const push = (key, itemId, isWeapon, level, upgradable) => {
+    if (upgradable === false)
+      return;
+    const def3 = getItem(itemId);
+    out.push({
+      key,
+      itemId,
+      isWeapon,
+      label: level > 0 ? `${def3.name} +${level}` : def3.name
+    });
+  };
+  hero.inventory.forEach((s, slot) => {
+    const g = s.gear;
+    if (g?.weapon) {
+      push(`inv:${slot}`, s.itemId, true, g.weapon.level, g.weapon.upgradable);
+    } else if (g?.armor) {
+      push(`inv:${slot}`, s.itemId, false, g.armor.level, g.armor.upgradable);
+    } else {
+      const def3 = getItem(s.itemId);
+      if (def3.weapon) {
+        push(`inv:${slot}`, s.itemId, true, def3.weapon.level, def3.weapon.upgradable);
+      } else if (def3.armor) {
+        push(`inv:${slot}`, s.itemId, false, def3.armor.level, def3.armor.upgradable);
+      }
+    }
+  });
+  if (hero.weaponId && hero.weapon) {
+    push("wielded", hero.weaponId, true, hero.weapon.level, hero.weapon.upgradable);
+  }
+  if (hero.armorId && hero.armor) {
+    push("worn", hero.armorId, false, hero.armor.level, hero.armor.upgradable);
+  }
+  return out;
+}
+function verifyReforge(hero, c1, c2) {
+  if (c1.key === c2.key) {
+    return "Select 2 different items, not the same item twice!";
+  }
+  if (c1.itemId !== c2.itemId) {
+    return "Select 2 items of the same type!";
+  }
+  const g1 = reforgeGear(hero, c1);
+  const g2 = reforgeGear(hero, c2);
+  if ((g1?.cursed || g2?.cursed) === true) {
+    return "I don't work with cursed items!";
+  }
+  if ((g1?.level ?? 0) < 0 || (g2?.level ?? 0) < 0) {
+    return "It's a junk, the quality is too poor!";
+  }
+  if (g1?.upgradable === false || g2?.upgradable === false) {
+    return "I can't reforge these items!";
+  }
+  return null;
+}
+function reforgeGear(hero, c) {
+  if (c.key === "wielded")
+    return hero.weapon;
+  if (c.key === "worn")
+    return hero.armor;
+  const slot = Number(c.key.slice(4));
+  const g = hero.inventory[slot]?.gear;
+  return (c.isWeapon ? g?.weapon : g?.armor) ?? null;
+}
+function reforgeItems(ctx, hero, c1, c2) {
+  const l1 = reforgeGear(hero, c1)?.level ?? 0;
+  const l2 = reforgeGear(hero, c2)?.level ?? 0;
+  const first = l2 > l1 ? c2 : c1;
+  const second = first === c1 ? c2 : c1;
+  const survivorGear = reforgeGear(hero, first);
+  if (first.key === "wielded" && hero.weapon) {
+    const inst = hero.weapon;
+    hero.weapon = null;
+    hero.weaponId = null;
+    addToInventory(hero, first.itemId, 1, { weapon: inst });
+  } else if (first.key === "worn" && hero.armor) {
+    const inst = hero.armor;
+    hero.armor = null;
+    hero.armorId = null;
+    addToInventory(hero, first.itemId, 1, { armor: inst });
+  }
+  if (survivorGear && "enchantment" in survivorGear) {
+    upgradeItem(survivorGear, "weapon");
+  } else if (survivorGear) {
+    upgradeItem(survivorGear, "armor");
+  }
+  if (second.key === "wielded") {
+    hero.weapon = null;
+    hero.weaponId = null;
+  } else if (second.key === "worn") {
+    hero.armor = null;
+    hero.armorId = null;
+  } else {
+    removeFromInventory(hero, Number(second.key.slice(4)), 1);
+  }
+  ctx.log(TXT_LOOKS_BETTER.replace("%s", first.label));
+  tickHeroClock(ctx.rng, ctx, hero, 2);
+  blacksmithQuest.reforged = true;
+}
 var npcIdCounter = -1;
 function nextNpcId() {
   return npcIdCounter--;
@@ -7467,6 +11382,8 @@ function buildNpc(mobId, id, pos, w, depth) {
       return new CurseMob(id, pos, w, depth);
     case "shopkeeper":
       return new ShopkeeperMob(id, pos, w);
+    case "blacksmith":
+      return new BlacksmithMob(id, pos, w);
     default:
       return null;
   }
@@ -7522,6 +11439,30 @@ var SEWER_MOB_TABLE = {
     { id: "swarm", weight: 1 },
     { id: "bat", weight: 0.02 },
     { id: "brute", weight: 0.01 }
+  ],
+  11: [
+    { id: "bat", weight: 1 },
+    { id: "brute", weight: 0.2 }
+  ],
+  12: [
+    { id: "bat", weight: 1 },
+    { id: "brute", weight: 1 },
+    { id: "spinner", weight: 0.2 }
+  ],
+  13: [
+    { id: "bat", weight: 1 },
+    { id: "brute", weight: 3 },
+    { id: "shaman", weight: 1 },
+    { id: "spinner", weight: 1 },
+    { id: "elemental", weight: 0.02 }
+  ],
+  14: [
+    { id: "bat", weight: 1 },
+    { id: "brute", weight: 3 },
+    { id: "shaman", weight: 1 },
+    { id: "spinner", weight: 4 },
+    { id: "elemental", weight: 0.02 },
+    { id: "monk", weight: 0.01 }
   ]
 };
 function pickMobId(rng, depth) {
@@ -7544,7 +11485,7 @@ function resolveMobSpawns(rng, depth, spawns, level) {
     if (s.kind === "mob") {
       out.push({ pos: s.pos, mobId: pickMobId(rng, depth) });
     } else if (s.kind === "boss") {
-      out.push({ pos: s.pos, mobId: depth === 10 ? "tengu" : "goo" });
+      out.push({ pos: s.pos, mobId: depth === 15 ? "dm300" : depth === 10 ? "tengu" : "goo" });
     } else if (s.kind === "ghost") {
       if (!ghostQuest.spawned) {
         initGhostQuest(rng, depth);
@@ -7566,6 +11507,13 @@ function resolveMobSpawns(rng, depth, spawns, level) {
       }
     } else if (s.kind === "shopkeeper") {
       out.push({ pos: s.pos, mobId: "shopkeeper" });
+    } else if (s.kind === "blacksmith") {
+      if (!blacksmithQuest.spawned) {
+        blacksmithQuest.spawned = true;
+        blacksmithQuest.alternative = rng.int(0, 2) === 0;
+        blacksmithQuest.given = false;
+        out.push({ pos: s.pos, mobId: "blacksmith" });
+      }
     }
   }
   return out;
@@ -7657,9 +11605,9 @@ function resolveItemTag(rng, depth, tag) {
     case "scroll-of-identify":
       return "scroll_identify";
     case "scroll-of-remove-curse":
-      return "scroll_remove_curse";
+      return "scroll_removecurse";
     case "scroll-of-magic-mapping":
-      return "scroll_magic_mapping";
+      return "scroll_magicmapping";
     case "random-scroll":
       return itemGenerator.randomFrom(rng, "scroll", depth);
     case "overpriced-ration":
@@ -7707,666 +11655,6 @@ var contentLevelGen = {
     return result.level;
   }
 };
-
-// src/mechanics/hunger.ts
-var HUNGER_STEP = 10;
-var HUNGRY = 260;
-var STARVING = 360;
-var STARVE_DAMAGE_CHANCE = 0.3;
-function isHungry(level) {
-  return level >= HUNGRY;
-}
-function isStarving(level) {
-  return level >= STARVING;
-}
-function hungerTick(rng, s) {
-  const wasHungry = isHungry(s.level);
-  const wasStarving = isStarving(s.level);
-  let level = s.level;
-  let damage = 0;
-  let died = false;
-  if (wasStarving) {
-    if (rng.float(0, 1) < STARVE_DAMAGE_CHANCE && (s.hp > 1 || !s.paralysed)) {
-      damage = 1;
-      died = s.hp - 1 <= 0;
-    }
-  } else {
-    level += HUNGER_STEP;
-  }
-  return {
-    level,
-    damage,
-    died,
-    becameStarving: !wasStarving && isStarving(level),
-    becameHungry: !wasHungry && level >= HUNGRY && level < STARVING
-  };
-}
-function satisfy(level, energy) {
-  const v = level - energy;
-  if (v < 0)
-    return 0;
-  if (v > STARVING)
-    return STARVING;
-  return v;
-}
-function regenTick(hp, ht, starving) {
-  return hp < ht && !starving ? hp + 1 : hp;
-}
-
-// src/content/actions.ts
-function pickupAt(ctx, hero) {
-  const level = ctx.level;
-  const item = level.items.find((it) => it.pos === hero.pos);
-  if (!item) {
-    ctx.log("There is nothing here to pick up.");
-    return 1;
-  }
-  level.items = level.items.filter((it) => it !== item);
-  const { defId, qty } = parseItemId(item.itemId);
-  if (defId === "dewdrop")
-    return pickupDewdrop(ctx, hero, qty);
-  if (item.lockedChest)
-    return openLockedChest(ctx, hero, item);
-  const def = getItem(defId);
-  if (def.type === "gold") {
-    hero.gold += qty;
-    ctx.log(`You pick up ${qty} gold.`);
-  } else {
-    addToInventory(hero, defId, qty);
-    const label = qty > 1 ? `${qty}x ${def.name}` : def.name;
-    ctx.log(`You pick up the ${label}.`);
-  }
-  return 1;
-}
-function useInventorySlot(ctx, hero, slot) {
-  const stack = hero.inventory[slot];
-  if (!stack) {
-    ctx.log("Nothing in that slot.");
-    return 1;
-  }
-  const def = getItem(stack.itemId);
-  switch (def.type) {
-    case "potion":
-      return drinkPotion(ctx, hero, slot, stack);
-    case "food":
-      return eatFood(ctx, hero, slot, stack);
-    case "scroll":
-      return readScroll(ctx, hero, slot, stack);
-    case "weapon":
-      return equipWeaponFromInventory(ctx, hero, slot, stack);
-    case "armor":
-      return equipArmorFromInventory(ctx, hero, slot, stack);
-    case "missile":
-      ctx.log("Choose a target to throw the dart at.");
-      return 0;
-    case "key":
-      return useKey(ctx, hero, slot, stack);
-    case "gold":
-      return 1;
-    case "dewdrop":
-    case "seed":
-      return 1;
-    case "bag":
-    case "misc":
-    case "quest":
-      return 1;
-  }
-}
-function drinkPotion(ctx, hero, slot, stack) {
-  const def = getItem(stack.itemId);
-  removeFromInventory(hero, slot, 1);
-  switch (stack.itemId) {
-    case "potion_healing":
-      hero.hp = hero.ht;
-      delete hero.buffs.poison;
-      ctx.log("Your wounds heal completely.");
-      break;
-    case "potion_strength":
-      hero.str += 1;
-      ctx.log("Newfound strength surges through your body.");
-      break;
-    default:
-      ctx.log(`You drink the ${def.name}. Nothing happens.`);
-      break;
-  }
-  return 1;
-}
-function readScroll(ctx, hero, slot, stack) {
-  switch (stack.itemId) {
-    case "scroll_upgrade": {
-      const weapon = hero.weapon;
-      const armor = hero.armor;
-      if (!weapon && !armor) {
-        ctx.log("You have nothing to upgrade.");
-        return 1;
-      }
-      removeFromInventory(hero, slot, 1);
-      if (weapon) {
-        upgradeWeapon(weapon);
-        ctx.log(`your ${gearDisplayName(weapon)} certainly looks better now`);
-      } else {
-        upgradeArmor(armor);
-        ctx.log(`your ${gearDisplayName(armor)} certainly looks better now`);
-      }
-      return 1;
-    }
-    default:
-      ctx.log("You cannot read that yet.");
-      return 1;
-  }
-}
-function eatFood(ctx, hero, slot, stack) {
-  const def = getItem(stack.itemId);
-  removeFromInventory(hero, slot, 1);
-  hero.hungerLevel = satisfy(hero.hungerLevel, def.energy ?? 260);
-  if (hero.hp < hero.ht) {
-    hero.hp = Math.min(hero.hp + 5, hero.ht);
-  }
-  ctx.log("That food tasted delicious!");
-  return 3;
-}
-function equipWeaponFromInventory(ctx, hero, slot, stack) {
-  const def = getItem(stack.itemId);
-  if (!def.weapon) {
-    ctx.log("You can't wield that.");
-    return 1;
-  }
-  const oldId = hero.weaponId;
-  hero.weapon = { ...def.weapon };
-  hero.weaponId = def.id;
-  removeFromInventory(hero, slot, 1);
-  if (oldId)
-    addToInventory(hero, oldId, 1);
-  ctx.log(`You equip the ${def.name}.`);
-  return 1;
-}
-function equipArmorFromInventory(ctx, hero, slot, stack) {
-  const def = getItem(stack.itemId);
-  if (!def.armor) {
-    ctx.log("You can't wear that.");
-    return 1;
-  }
-  const oldId = hero.armorId;
-  hero.armor = { ...def.armor };
-  hero.armorId = def.id;
-  removeFromInventory(hero, slot, 1);
-  if (oldId)
-    addToInventory(hero, oldId, 1);
-  ctx.log(`You equip the ${def.name}.`);
-  return 1;
-}
-function useKey(ctx, hero, slot, stack) {
-  const level = ctx.level;
-  const w = level.w;
-  const x = hero.x;
-  const y = hero.y;
-  const lockedAround = [
-    [x + 1, y],
-    [x - 1, y],
-    [x, y + 1],
-    [x, y - 1]
-  ];
-  if (stack.itemId === "iron_key") {
-    for (const [nx, ny] of lockedAround) {
-      if (level.inBounds(nx, ny) && level.get(nx, ny) === 3 /* DOOR_LOCKED */) {
-        level.set(nx, ny, 2 /* DOOR */);
-        removeFromInventory(hero, slot, 1);
-        ctx.log("You unlock the door.");
-        return 1;
-      }
-    }
-    ctx.log("There is no locked door nearby.");
-    return 1;
-  }
-  if (stack.itemId === "skeleton_key") {
-    for (const [nx, ny] of lockedAround) {
-      if (level.inBounds(nx, ny) && level.get(nx, ny) === 5 /* EXIT_LOCKED */) {
-        level.set(nx, ny, 7 /* EXIT */);
-        removeFromInventory(hero, slot, 1);
-        ctx.log("You unlock the way down with the skeleton key.");
-        return 1;
-      }
-    }
-    ctx.log("There is no locked exit nearby.");
-    return 1;
-  }
-  ctx.log("You can't use that here.");
-  return 1;
-}
-function throwDart(ctx, hero, slot, targetPos) {
-  const stack = hero.inventory[slot];
-  if (!stack || stack.itemId !== "dart") {
-    ctx.log("You have no darts to throw.");
-    return 1;
-  }
-  const level = ctx.level;
-  const trace = dartTrace(level, hero.pos, targetPos);
-  removeFromInventory(hero, slot, 1);
-  syncDarts(hero);
-  for (const cell of trace.cells) {
-    const mob = ctx.mobs.find((m) => m.isAlive() && m.x === cell % level.w && m.y === Math.floor(cell / level.w));
-    if (mob) {
-      const ranged = { ...getItem("dart").weapon };
-      const dist = trace.distances.get(cell) ?? 1;
-      try {
-        hero.rangedWeapon = ranged;
-        strikeHeroVsMob(ctx, hero, mob, heroAttackSkill(hero, { ranged: true, adjacent: dist <= 1 }), (rng) => heroDamageRoll(rng, hero, { ranged: true }));
-      } finally {
-        hero.rangedWeapon = null;
-      }
-      return 1;
-    }
-  }
-  dropDartAt(level, trace.landCell);
-  ctx.log("The dart clatters to the floor.");
-  return 1;
-}
-function dropDartAt(level, pos) {
-  level.items.push({ pos, itemId: "dart", sprite: getItem("dart").sprite });
-}
-function equipSlot(ctx, hero, slot) {
-  if (slot === -1) {
-    if (!hero.weaponId) {
-      ctx.log("You wield nothing.");
-      return 1;
-    }
-    const def2 = getItem(hero.weaponId);
-    addToInventory(hero, hero.weaponId, 1);
-    hero.weapon = null;
-    hero.weaponId = null;
-    ctx.log(`You unwield the ${def2.name}.`);
-    return 1;
-  }
-  if (slot === -2) {
-    if (!hero.armorId) {
-      ctx.log("You wear nothing.");
-      return 1;
-    }
-    const def2 = getItem(hero.armorId);
-    addToInventory(hero, hero.armorId, 1);
-    hero.armor = null;
-    hero.armorId = null;
-    ctx.log(`You take off the ${def2.name}.`);
-    return 1;
-  }
-  const stack = hero.inventory[slot];
-  if (!stack) {
-    ctx.log("Nothing in that slot.");
-    return 1;
-  }
-  const def = getItem(stack.itemId);
-  if (def.type === "weapon")
-    return equipWeaponFromInventory(ctx, hero, slot, stack);
-  if (def.type === "armor")
-    return equipArmorFromInventory(ctx, hero, slot, stack);
-  ctx.log("You can't equip that.");
-  return 1;
-}
-function dropSlot(ctx, hero, slot) {
-  if (slot === -1 || slot === -2) {
-    const equippedId = slot === -1 ? hero.weaponId : hero.armorId;
-    if (!equippedId) {
-      ctx.log("Nothing in that slot.");
-      return 1;
-    }
-    if (slot === -1) {
-      hero.weapon = null;
-      hero.weaponId = null;
-    } else {
-      hero.armor = null;
-      hero.armorId = null;
-    }
-    const def2 = getItem(equippedId);
-    ctx.level.items.push({
-      pos: hero.pos,
-      itemId: equippedId,
-      sprite: def2.sprite
-    });
-    ctx.log(`You drop the ${def2.name}.`);
-    return 0.5;
-  }
-  const stack = hero.inventory[slot];
-  if (!stack) {
-    ctx.log("Nothing in that slot.");
-    return 1;
-  }
-  const removed = removeFromInventory(hero, slot, stack.qty);
-  const def = getItem(removed.itemId);
-  ctx.level.items.push({
-    pos: hero.pos,
-    itemId: removed.itemId,
-    sprite: def.sprite
-  });
-  ctx.log(`You drop the ${def.name}.`);
-  return 0.5;
-}
-var chasmArmed = null;
-function stepTowardChasm(ctx, hero, nx, ny) {
-  const level = ctx.level;
-  const from = hero.pos;
-  const to = ny * level.w + nx;
-  if (hero.flying) {
-    hero.pos = to;
-    passiveSearch(ctx, hero);
-    return 1;
-  }
-  if (chasmArmed !== null && chasmArmed.from === from && chasmArmed.to === to) {
-    chasmArmed = null;
-    return heroFall(ctx, hero);
-  }
-  chasmArmed = { from, to };
-  ctx.log("Do you really want to jump into the chasm? You can probably die.");
-  return 0;
-}
-function heroFall(ctx, hero) {
-  chasmArmed = null;
-  ctx.log("You fall into the chasm!");
-  hero.buffs.cripple = { kind: "cripple", left: CRIPPLE_DURATION };
-  const dmg = ctx.rng.intRange(Math.floor(hero.ht / 3), Math.floor(hero.ht / 2));
-  const applied = applyDamage(ctx.rng, hero, dmg);
-  hero.hp = applied.hp;
-  if (applied.paralysisBroken) {
-    hero.paralysed = false;
-    delete hero.buffs.paralysis;
-  }
-  if (!hero.isAlive()) {
-    ctx.log("You fell to death...");
-  }
-  return 1;
-}
-function doorEnter(ctx, x, y) {
-  ctx.level.set(x, y, 40 /* OPEN_DOOR */);
-}
-function doorLeave(ctx, x, y) {
-  const level = ctx.level;
-  if (!level.items.some((it) => it.pos === level.idx(x, y))) {
-    level.set(x, y, 2 /* DOOR */);
-  }
-}
-function trampleHighGrass(ctx, hero, x, y) {
-  const level = ctx.level;
-  level.set(x, y, 10 /* GRASS */);
-  const herbalismLevel = 0;
-  if (ctx.rng.int(0, 18) <= ctx.rng.int(0, herbalismLevel + 1)) {
-    dropAt(ctx, level.idx(x, y), "seed");
-  }
-  if (ctx.rng.int(0, 6) <= ctx.rng.int(0, herbalismLevel + 1)) {
-    dropAt(ctx, level.idx(x, y), "dewdrop");
-  }
-}
-function dropAt(ctx, pos, itemId) {
-  ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
-}
-function pickupDewdrop(ctx, hero, qty) {
-  const level = ctx.level;
-  const value = 1 + Math.floor((level.depth - 1) / 5);
-  const effect = Math.min(hero.ht - hero.hp, value * qty);
-  if (effect > 0) {
-    hero.hp += effect;
-    ctx.log(`+${effect}HP`);
-  }
-  return 1;
-}
-function openLockedChest(ctx, hero, item) {
-  const level = ctx.level;
-  const keySlot = hero.inventory.findIndex((s) => s.itemId === "golden_key");
-  if (keySlot === -1) {
-    ctx.log("This chest is locked and you don't have matching key");
-    return 0;
-  }
-  removeFromInventory(hero, keySlot, 1);
-  level.items = level.items.filter((it) => it !== item);
-  const { defId, qty } = parseItemId(item.itemId);
-  const def = getItem(defId);
-  const label = qty > 1 ? `${qty}x ${def.name}` : def.name;
-  if (def.type === "gold") {
-    hero.gold += qty;
-    ctx.log(`You unlock the chest and take ${qty} gold.`);
-  } else {
-    addToInventory(hero, defId, qty);
-    ctx.log(`You unlock the chest and take the ${label}.`);
-  }
-  return 1;
-}
-var SIGN_TIPS = [
-  "Wear the highest tier armor you can; do not rely on dodging alone.",
-  "Enchantments on weapons and armor are potent; identify items to find them.",
-  "Dewdrops heal a little; save potions of healing for emergencies.",
-  "Do not be afraid to run from a fight you cannot win.",
-  "Upgrade scrolls are precious; spend them on gear you will keep.",
-  "Mystery meat is risky; cook it at a stove if you can.",
-  "Strength potions let you wear heavier gear sooner.",
-  "Hidden traps and doors can be found by searching.",
-  "Blandfruit can be cooked with seeds for useful meals.",
-  "Flies are weak alone; do not let a swarm surround you.",
-  "Gnoll scouts hit hard; use doorways to fight them one at a time.",
-  "Crabs block a lot of damage; use wands or surprise attacks.",
-  "Goo is coming. Fire will keep it from healing.",
-  "Fire hurts Goo, but do not stand in it yourself.",
-  "Keep your distance from spinners and their webs.",
-  "Skeletons hit hard; blind or slow them first.",
-  "Thieves steal; kill them before they flee with your gear.",
-  "Shaman bolts hurt; break line of sight.",
-  "Brutes enrage when hurt; finish them quickly.",
-  "DM-300 is coming. Lightning hurts it most.",
-  "Lightning wands and surprise attacks bring DM-300 down.",
-  "The City awaits. Mind the monks and their disabling strikes."
-];
-var signCells = new WeakMap;
-function noteSignCells(level, cells) {
-  signCells.set(level, new Set(cells));
-}
-function readSign(ctx, hero) {
-  const cells = signCells.get(ctx.level);
-  if (!cells || !cells.has(hero.pos))
-    return 1;
-  const index = ctx.level.depth - 1;
-  if (index < SIGN_TIPS.length) {
-    ctx.log(SIGN_TIPS[index]);
-  } else {
-    cells.delete(hero.pos);
-    ctx.level.set(hero.x, hero.y, 38 /* EMBERS */);
-    ctx.log("As you try to read the sign it bursts into greenish flames.");
-  }
-  return 0;
-}
-function waitTurn(ctx, hero) {
-  return readSign(ctx, hero);
-}
-function moveHero(ctx, hero, dx, dy) {
-  const level = ctx.level;
-  let nx = hero.x + dx;
-  let ny = hero.y + dy;
-  if (!level.inBounds(nx, ny))
-    return 1;
-  const foe = ctx.mobs.find((m) => m.isAlive() && m.x === nx && m.y === ny);
-  if (foe) {
-    strikeHeroVsMob(ctx, hero, foe, heroAttackSkill(hero, { ranged: false, adjacent: false }), (r) => heroDamageRoll(r, hero, { ranged: false }));
-    return 1;
-  }
-  if (hasBuff(hero, "vertigo")) {
-    const step = vertigoRedirect(ctx.rng, hero.pos, level.w, (p) => {
-      const px = p % level.w;
-      const py = Math.floor(p / level.w);
-      return !level.inBounds(px, py) || !level.isPassable(px, py) || ctx.mobs.some((m) => m.isAlive() && m.x === px && m.y === py);
-    });
-    if (step === null) {
-      passiveSearch(ctx, hero);
-      return 1;
-    }
-    nx = step % level.w;
-    ny = Math.floor(step / level.w);
-  }
-  const tile = level.get(nx, ny);
-  if (tile === 8 /* CHASM */)
-    return stepTowardChasm(ctx, hero, nx, ny);
-  if (tile === 3 /* DOOR_LOCKED */) {
-    const keySlot = hero.inventory.findIndex((s) => s.itemId === "iron_key");
-    if (keySlot === -1) {
-      ctx.log("You don't have a matching key");
-      return 0;
-    }
-    level.set(nx, ny, 2 /* DOOR */);
-    removeFromInventory(hero, keySlot, 1);
-    ctx.log("You unlock the door.");
-    return 1;
-  }
-  if (!level.isPassable(nx, ny))
-    return 1;
-  if (level.get(hero.x, hero.y) === 40 /* OPEN_DOOR */) {
-    doorLeave(ctx, hero.x, hero.y);
-  }
-  hero.pos = ny * level.w + nx;
-  if (!hero.flying) {
-    pressTrapCell(ctx, hero.pos, hero, (mobId, pos) => {
-      const mob = buildMob(mobId, nextMobId(), pos, level.w);
-      mob.state = "wandering";
-      ctx.addMob(mob, 2);
-    });
-    pressArenaCell(ctx.level, ctx.rng, hero.pos, {
-      occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
-      spawn: (pos) => {
-        const tengu = buildMob("tengu", nextMobId(), pos, level.w);
-        tengu.state = "hunting";
-        ctx.addMob(tengu);
-        tengu.notice(ctx);
-      }
-    });
-    enterCell(ctx, hero, nx, ny);
-  } else if (tile === 2 /* DOOR */) {
-    doorEnter(ctx, nx, ny);
-  }
-  passiveSearch(ctx, hero);
-  return 1;
-}
-function enterCell(ctx, hero, x, y) {
-  const t = ctx.level.get(x, y);
-  if (t === 39 /* HIGH_GRASS */)
-    trampleHighGrass(ctx, hero, x, y);
-  else if (t === 2 /* DOOR */)
-    doorEnter(ctx, x, y);
-}
-function searchIntentional(ctx, hero) {
-  const level = ctx.level;
-  const distance = 1;
-  const level_ = intentionalSearchLevel(hero.awareness);
-  let found = false;
-  for (let dy = -distance;dy <= distance; dy++) {
-    for (let dx = -distance;dx <= distance; dx++) {
-      const nx = hero.x + dx;
-      const ny = hero.y + dy;
-      if (!level.inBounds(nx, ny))
-        continue;
-      if (level.visible[level.idx(nx, ny)] === 0)
-        continue;
-      const t = level.get(nx, ny);
-      if (t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) {
-        if (t === 4 /* DOOR_SECRET */) {
-          level.revealSecretDoor(nx, ny);
-        } else {
-          level.revealTrap(nx, ny);
-        }
-        found = true;
-      }
-    }
-  }
-  if (found) {
-    ctx.log("You noticed something");
-  }
-  return searchTimeCost(ctx.rng, found, level_);
-}
-function passiveSearch(ctx, hero) {
-  const level = ctx.level;
-  const chance = passiveSearchLevel(hero.awareness);
-  for (let dy = -1;dy <= 1; dy++) {
-    for (let dx = -1;dx <= 1; dx++) {
-      const nx = hero.x + dx;
-      const ny = hero.y + dy;
-      if (!level.inBounds(nx, ny))
-        continue;
-      if (level.visible[level.idx(nx, ny)] === 0)
-        continue;
-      const t = level.get(nx, ny);
-      if ((t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) && ctx.rng.float(0, 1) < chance) {
-        if (t === 4 /* DOOR_SECRET */) {
-          level.revealSecretDoor(nx, ny);
-        } else {
-          level.revealTrap(nx, ny);
-        }
-      }
-    }
-  }
-}
-function tickHeroClock(rng, ctx, hero, cost) {
-  hero.hungerClock += cost;
-  while (hero.hungerClock >= HUNGER_STEP) {
-    hero.hungerClock -= HUNGER_STEP;
-    const t = hungerTick(rng, {
-      level: hero.hungerLevel,
-      hp: hero.hp,
-      paralysed: hero.paralysed
-    });
-    hero.hungerLevel = t.level;
-    if (t.becameStarving)
-      ctx.log(MSG_STARVING);
-    else if (t.becameHungry)
-      ctx.log(MSG_HUNGRY);
-    if (t.damage > 0) {
-      ctx.log(MSG_STARVING);
-      hero.hp = Math.max(hero.hp - t.damage, 0);
-      if (!hero.isAlive())
-        ctx.log(MSG_STARVED_TO_DEATH);
-    }
-    if (hero.isAlive()) {
-      hero.hp = regenTick(hero.hp, hero.ht, isStarving(hero.hungerLevel));
-    }
-  }
-}
-function dartTrace(level, from, to) {
-  const w = level.w;
-  const x0 = from % w;
-  const y0 = Math.floor(from / w);
-  const x1 = to % w;
-  const y1 = Math.floor(to / w);
-  const cells = [];
-  const distances = new Map;
-  let dx = Math.abs(x1 - x0);
-  let dy = -Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1;
-  const sy = y0 < y1 ? 1 : -1;
-  let err = dx + dy;
-  let x = x0;
-  let y = y0;
-  let dist = 0;
-  for (;; ) {
-    if (dist > 0) {
-      if (!level.inBounds(x, y) || level.isOpaque(x, y))
-        break;
-      const pos = y * w + x;
-      cells.push(pos);
-      distances.set(pos, dist);
-    }
-    if (x === x1 && y === y1)
-      break;
-    const e2 = 2 * err;
-    if (e2 >= dy) {
-      err += dy;
-      x += sx;
-    }
-    if (e2 <= dx) {
-      err += dx;
-      y += sy;
-    }
-    dist++;
-    if (dist > 64)
-      break;
-  }
-  return {
-    cells,
-    distances,
-    landCell: cells.length > 0 ? cells[cells.length - 1] : from
-  };
-}
 
 // src/ui/inventory.ts
 function asHero(game) {
@@ -8452,6 +11740,8 @@ function readInventory(game) {
   return adapter(game);
 }
 function actionsFor(item) {
+  if (item.id === "pickaxe")
+    return ["mine", "equip", "drop"];
   switch (item.kind) {
     case "weapon":
     case "armor":
@@ -8459,6 +11749,7 @@ function actionsFor(item) {
     case "missile":
       return ["throw", "drop"];
     case "potion":
+      return ["use", "throw", "drop"];
     case "food":
     case "scroll":
       return ["use", "drop"];
@@ -8476,6 +11767,10 @@ function actionLabel(action, item) {
       return "Drop";
     case "throw":
       return "Throw";
+    case "shatter":
+      return "Shatter";
+    case "mine":
+      return "Mine";
   }
 }
 function doItemAction(game, item, action) {
@@ -8491,6 +11786,12 @@ function doItemAction(game, item, action) {
       return "done";
     case "throw":
       return "throw-targeting";
+    case "shatter":
+      game.queueIntent({ kind: "shatterItem", slot: item.slot });
+      return "done";
+    case "mine":
+      game.queueIntent({ kind: "mineItem", slot: item.slot });
+      return "done";
   }
 }
 var ROW_H = 56;
@@ -8805,9 +12106,9 @@ var TENGU_RESISTANCES = [
   "death",
   "psionic_blast"
 ];
-function tenguShouldJump(timeToJump, adjacent) {
+function tenguShouldJump(timeToJump, adjacent2) {
   const next = timeToJump - 1;
-  if (next <= 0 && adjacent) {
+  if (next <= 0 && adjacent2) {
     return { jump: true, nextTimeToJump: TENGU_JUMP_DELAY };
   }
   return { jump: false, nextTimeToJump: next };
@@ -8852,8 +12153,8 @@ class TenguMob extends ContentMob {
     return super.getCloser(ctx, target);
   }
   doAttack(ctx, hero) {
-    const adjacent = chebyshevPos(this.pos, hero.pos, this.w) <= 1;
-    const { jump, nextTimeToJump } = tenguShouldJump(this.timeToJump, adjacent);
+    const adjacent2 = chebyshevPos(this.pos, hero.pos, this.w) <= 1;
+    const { jump, nextTimeToJump } = tenguShouldJump(this.timeToJump, adjacent2);
     this.timeToJump = nextTimeToJump;
     if (jump) {
       this.jump(ctx, hero.pos);
@@ -8915,9 +12216,105 @@ class TenguMob extends ContentMob {
 }
 registerTengu(TenguMob);
 
+// src/mechanics/dm300.ts
+var DM300_HT = 200;
+var DM300_EXP = 30;
+var DM300_DEFENSE = 18;
+var DM300_DR = 10;
+var DM300_ATTACK = 28;
+var DM300_DMG_MIN = 18;
+var DM300_DMG_MAX = 24;
+var DM300_MAX_LVL = 30;
+var DM300_GAS_SEED = 30;
+var DM300_PARALYSIS_TURNS = 2;
+var DM300_RESISTANCES = ["death", "psionic_blast"];
+var DM300_IMMUNITIES = ["toxic_gas"];
+function dm300Repair(rng, hp, ht) {
+  return hp + rng.int(1, ht - hp);
+}
+function dm300MoveCell(rng, step, w, h) {
+  const sx = step % w;
+  const sy = Math.floor(step / w);
+  const dx = [-1, 1, 0, 0, -1, -1, 1, 1];
+  const dy = [0, 0, -1, 1, -1, 1, -1, 1];
+  const i = rng.int(0, 8);
+  const nx = sx + dx[i];
+  const ny = sy + dy[i];
+  if (nx < 0 || ny < 0 || nx >= w || ny >= h)
+    return -1;
+  return ny * w + nx;
+}
+
+// src/content/dm300-boss.ts
+var DM300_DEF = {
+  id: "dm300",
+  name: "DM-300",
+  sprite: "mob_dm300",
+  hp: DM300_HT,
+  atk: DM300_ATTACK,
+  def: DM300_DEFENSE,
+  dmgMin: DM300_DMG_MIN,
+  dmgMax: DM300_DMG_MAX,
+  triangular: true,
+  dr: DM300_DR,
+  exp: DM300_EXP,
+  maxLvl: DM300_MAX_LVL,
+  speed: 1,
+  flying: false,
+  ability: null,
+  attackDelay: 1,
+  immunities: [...DM300_IMMUNITIES],
+  resistances: [...DM300_RESISTANCES]
+};
+
+class DM300Mob extends ContentMob {
+  constructor(id, pos, w) {
+    super(id, DM300_DEF, pos, w);
+  }
+  takeTurn(ctx) {
+    const level = ctx.level;
+    seedBlob(level.blobs, "toxic", this.pos, DM300_GAS_SEED, level.w * level.h);
+    return super.takeTurn(ctx);
+  }
+  afterMove(ctx, oldPos) {
+    super.afterMove(ctx, oldPos);
+    const rng = ctx.rng;
+    const level = ctx.level;
+    if (level.getAt(this.pos) === 36 /* TRAP_INACTIVE */ && this.hp < this.ht) {
+      this.hp = dm300Repair(rng, this.hp, this.ht);
+      if (level.visible[this.pos] !== 0 && heroOf(ctx).isAlive()) {
+        ctx.log("DM-300 repairs itself!");
+      }
+    }
+    const cell = dm300MoveCell(rng, this.pos, level.w, level.h);
+    if (cell === -1)
+      return;
+    if (level.visible[cell] !== 0) {
+      if (level.getAt(cell) === 9 /* WATER */) {} else if (level.getAt(cell) === 1 /* FLOOR */) {}
+    }
+    const ch = charAtPos(ctx, cell, this);
+    if (ch && ch.isAlive()) {
+      const cur = ch.buffs.paralysis?.left ?? 0;
+      ch.buffs.paralysis = {
+        kind: "paralysis",
+        left: Math.max(cur, DM300_PARALYSIS_TURNS)
+      };
+      ch.paralysed = true;
+    }
+  }
+  onNotice(ctx) {
+    ctx.log("Unauthorised personnel detected.");
+  }
+  onDeath(ctx) {
+    dropItemAt(ctx, this.pos, "skeleton_key");
+    ctx.log("Mission failed. Shutting down.");
+  }
+}
+registerDM300(DM300Mob);
+
 // src/content/hooks.ts
-function catalogKind(def) {
-  switch (def.type) {
+function catalogKind(def3) {
+  switch (def3.type) {
     case "weapon":
       return "weapon";
     case "armor":
@@ -8937,31 +12334,36 @@ function catalogKind(def) {
     case "quest":
     case "bag":
     case "misc":
+    case "wand":
+    case "ring":
       return "misc";
   }
 }
 function contentInventoryAdapter(game) {
   const hero = game.hero;
   const items = hero.inventory.map((s, slot) => {
-    const def = getItem(s.itemId);
+    const def3 = getItem(s.itemId);
+    const potionInfo = potionUiInfo(s.itemId, def3.name, def3.sprite);
+    const scrollInfo = potionInfo ? null : scrollUiInfo(s.itemId, def3.name, def3.sprite);
+    const info = potionInfo ?? scrollInfo;
     return {
       slot,
       id: s.itemId,
-      name: def.name,
-      sprite: def.sprite,
+      name: info?.name ?? def3.name,
+      sprite: info?.sprite ?? def3.sprite,
       qty: s.qty,
-      kind: catalogKind(def),
+      kind: catalogKind(def3),
       equipped: false,
-      identified: true
+      identified: info?.identified ?? true
     };
   });
   if (hero.weaponId) {
-    const def = getItem(hero.weaponId);
+    const def3 = getItem(hero.weaponId);
     items.push({
       slot: -1,
       id: hero.weaponId,
-      name: def.name,
-      sprite: def.sprite,
+      name: def3.name,
+      sprite: def3.sprite,
       qty: 1,
       kind: "weapon",
       equipped: true,
@@ -8969,12 +12371,12 @@ function contentInventoryAdapter(game) {
     });
   }
   if (hero.armorId) {
-    const def = getItem(hero.armorId);
+    const def3 = getItem(hero.armorId);
     items.push({
       slot: -2,
       id: hero.armorId,
-      name: def.name,
-      sprite: def.sprite,
+      name: def3.name,
+      sprite: def3.sprite,
       qty: 1,
       kind: "armor",
       equipped: true,
@@ -8998,7 +12400,15 @@ function saveHeroEx(hero) {
     str: hero.str,
     weaponId: hero.weaponId,
     armorId: hero.armorId,
-    inventory: hero.inventory.map((s) => ({ ...s })),
+    weapon: hero.weapon ? { ...hero.weapon } : null,
+    armor: hero.armor ? { ...hero.armor } : null,
+    inventory: hero.inventory.map((s) => ({
+      ...s,
+      gear: s.gear ? {
+        weapon: s.gear.weapon ? { ...s.gear.weapon } : undefined,
+        armor: s.gear.armor ? { ...s.gear.armor } : undefined
+      } : undefined
+    })),
     gold: hero.gold,
     hungerLevel: hero.hungerLevel,
     hungerClock: hero.hungerClock,
@@ -9018,12 +12428,20 @@ function reviveHeroEx(save) {
   hero.weaponId = save.weaponId;
   hero.armorId = save.armorId;
   if (save.weaponId) {
-    const wdef = getItem(save.weaponId).weapon;
-    hero.weapon = wdef ? { ...wdef } : null;
+    hero.weapon = save.weapon ? { ...save.weapon } : (() => {
+      const wdef = getItem(save.weaponId).weapon;
+      return wdef ? { ...wdef } : null;
+    })();
+  } else {
+    hero.weapon = null;
   }
   if (save.armorId) {
-    const adef = getItem(save.armorId).armor;
-    hero.armor = adef ? { ...adef } : null;
+    hero.armor = save.armor ? { ...save.armor } : (() => {
+      const adef = getItem(save.armorId).armor;
+      return adef ? { ...adef } : null;
+    })();
+  } else {
+    hero.armor = null;
   }
   syncDarts(hero);
   hero.gold = save.gold;
@@ -9096,6 +12514,7 @@ var contentMechanics = {
     if (!result)
       return [];
     noteSignCells(level, result.markers.signs);
+    noteWallDecoCells(level, result.markers.wallDeco);
     const resolved = resolveMobSpawns(rng, result.level.depth, result.mobs, result.level);
     return buildMobs(resolved, result.level.w, result.level.depth);
   },
@@ -9148,7 +12567,25 @@ var contentMechanics = {
           cost = 1;
           break;
         }
-        cost = throwDart(ctx, hero, intent.slot, target.y * ctx.level.w + target.x);
+        const targetCell = target.y * ctx.level.w + target.x;
+        const thrownId = hero.inventory[intent.slot]?.itemId;
+        if (thrownId === HONEYPOT_ID) {
+          cost = throwHoneypot(ctx, hero, intent.slot, targetCell);
+          break;
+        }
+        if (thrownId !== undefined && isPotionId(thrownId)) {
+          cost = throwPotion(ctx, hero, intent.slot, targetCell);
+          break;
+        }
+        cost = throwDart(ctx, hero, intent.slot, targetCell);
+        break;
+      }
+      case "shatterItem": {
+        cost = shatterHoneypotInHands(ctx, hero, intent.slot);
+        break;
+      }
+      case "mineItem": {
+        cost = mineDarkGold(ctx, hero, intent.slot);
         break;
       }
       case "talk": {
@@ -10010,7 +13447,8 @@ function saveGame(game, mechanics, key = SAVE_KEY) {
     },
     hero: mechanics.saveHero(game.hero),
     mobs: game.mobs.map((m) => mechanics.saveMob(m)),
-    run: { ...game.run }
+    run: { ...game.run },
+    quests: saveQuestState()
   };
   try {
     localStorage.setItem(key, JSON.stringify(data));
@@ -10061,6 +13499,7 @@ function loadGame(mechanics, key = SAVE_KEY) {
   game.gameOver = data.gameOver;
   game.log = [...data.log];
   game.run = data.run ? { ...data.run } : newRunState();
+  restoreQuestState(data.quests);
   const hero = mechanics.reviveHero(rng, data.hero);
   game.hero = hero;
   game.mobs = data.mobs.map((md) => mechanics.reviveMob(rng, md));
@@ -11019,7 +14458,7 @@ class ShopPanel {
       if (!e)
         return;
       const r = sellToShop(game, e, id === "sell-one" ? "one" : "all");
-      this.notice = r.ok ? `Sold ${e.name} for ${r.price}g.` : "That item is gone.";
+      this.notice = r.ok ? `Sold ${e.name} for ${r.price}g.` : r.reason === "cursed" ? "You can't sell cursed gear while it's equipped!" : "That item is gone.";
       this.selected = 0;
     }
   }
