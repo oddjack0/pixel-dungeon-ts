@@ -30,6 +30,56 @@ function missingSpriteRows(): string[] {
 }
 
 /**
+ * Vanilla camera geometry (exact-copy port of noosa Camera.main behavior):
+ * GameScene.java:125 `Camera.main.zoom( defaultZoom + PixelDungeon.zoom() )`
+ * on a FULL-SCREEN camera (PixelScene resets Camera.main to a fullscreen
+ * PixelCamera; the HUD gets a separate fullscreen uiCamera), and
+ * GameScene.java:289 `Camera.main.target = hero`. noosa's Camera.update()
+ * centers exactly on the target every frame via focusOn — there is no
+ * fixed sub-rectangle viewport and no clamping to level bounds anywhere
+ * (verified: zero camera-bounds code in game source, no bounds fields in
+ * noosa Camera). Near map edges the original shows black void beyond the
+ * boundary, so camX/camY are NEVER clamped; only the tile INDEX range is
+ * clamped for array safety.
+ *
+ * Pure + exported so the geometry is unit-testable (regression: full-window
+ * camera coverage, exact hero centering, no clamping).
+ */
+export interface CameraRect {
+  /** Camera top-left in tile units (fractional for smooth centering). */
+  camX: number;
+  camY: number;
+  /** Tile indices the renderer draws (level-clamped for array safety). */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export function cameraTileRect(
+  heroX: number,
+  heroY: number,
+  vw: number,
+  vh: number,
+  levelW: number,
+  levelH: number,
+  tilePx: number = TILE_PX,
+): CameraRect {
+  const viewTilesW = vw / tilePx;
+  const viewTilesH = vh / tilePx;
+  const camX = heroX + 0.5 - viewTilesW / 2;
+  const camY = heroY + 0.5 - viewTilesH / 2;
+  return {
+    camX,
+    camY,
+    x0: Math.max(0, Math.floor(camX)),
+    y0: Math.max(0, Math.floor(camY)),
+    x1: Math.min(levelW - 1, Math.ceil(camX + viewTilesW)),
+    y1: Math.min(levelH - 1, Math.ceil(camY + viewTilesH)),
+  };
+}
+
+/**
  * Canvas 2D renderer + camera. Draws tiles from the sprite atlas
  * (SPEC contract §2 format), entities, FOV/explored dimming.
  * UI screens (HUD, inventory, minimap) are the UI designer's; this only
@@ -120,15 +170,14 @@ export class Renderer {
     ctx.imageSmoothingEnabled = false;
 
     const level = game.level;
-    this.updateCamera(game, vw, vh);
+    const cam = cameraTileRect(game.hero.x, game.hero.y, vw, vh, level.w, level.h);
+    this.camX = cam.camX;
+    this.camY = cam.camY;
 
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, vw, vh);
 
-    const x0 = Math.max(0, Math.floor(this.camX));
-    const y0 = Math.max(0, Math.floor(this.camY));
-    const x1 = Math.min(level.w - 1, Math.ceil(this.camX + vw / TILE_PX));
-    const y1 = Math.min(level.h - 1, Math.ceil(this.camY + vh / TILE_PX));
+    const { x0, y0, x1, y1 } = cam;
 
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
@@ -195,20 +244,6 @@ export class Renderer {
     const hx = (game.hero.x - this.camX) * TILE_PX;
     const hy = (game.hero.y - this.camY) * TILE_PX;
     ctx.drawImage(this.entitySprite(game.hero.sprite), hx, hy, TILE_PX, TILE_PX);
-  }
-
-  /**
-   * Vanilla camera: Camera.main.target = hero (GameScene.java:289); noosa's
-   * Camera.update() centers exactly on the target every frame via focusOn —
-   * no clamping to level bounds anywhere (verified: zero camera-bounds code
-   * in game source, no bounds fields in noosa Camera). Near map edges the
-   * original shows black void beyond the boundary.
-   */
-  private updateCamera(game: Game, vw: number, vh: number): void {
-    const viewTilesW = vw / TILE_PX;
-    const viewTilesH = vh / TILE_PX;
-    this.camX = game.hero.x + 0.5 - viewTilesW / 2;
-    this.camY = game.hero.y + 0.5 - viewTilesH / 2;
   }
 
   /** Sprite for a terrain cell (hidden traps/doors render as their cover). */
