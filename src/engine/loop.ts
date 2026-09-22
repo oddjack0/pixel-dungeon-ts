@@ -117,6 +117,8 @@ export class Game {
       // Engine owns the buff-tick call site; mechanics owns the tick logic.
       // Buffs tick on EVERY hero turn, including depth transitions.
       this.deps.mechanics.tickActorBuffs(this.hero, this.ctx());
+      // Trap-seeded blobs evolve once per hero turn (vanilla Blob.act).
+      this.deps.mechanics.evolveBlobs(this.ctx());
       // Level transitions are engine-owned; everything else is mechanics.
       let cost: number;
       let transitioned = false;

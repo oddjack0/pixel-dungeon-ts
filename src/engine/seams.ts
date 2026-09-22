@@ -91,6 +91,12 @@ export interface MechanicsHooks {
   /** Tick buffs on an actor at the start of its turn (engine owns the call site). */
   tickActorBuffs(actor: HeroActor | MobActor, ctx: ActionContext): void;
   /**
+   * Evolve trap-seeded blobs one round (vanilla Blob.act -> evolve()).
+   * Engine owns the call site (once per hero turn — the round beat);
+   * mechanics owns the tick logic.
+   */
+  evolveBlobs(ctx: ActionContext): void;
+  /**
    * Tick the hero's hunger/regen clock by `cost` time units at the end of the
    * hero's turn (engine owns the call site; mechanics owns the tick logic).
    * The engine calls this for every hero turn, including depth transitions.

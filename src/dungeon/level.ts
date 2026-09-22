@@ -1,6 +1,7 @@
 import { Grid, Terrain, Region, Feeling, regionForDepth, isHiddenTrap, revealTrapTile, trapName } from '../core/grid.js';
 import { computeFov } from '../core/fov.js';
 import type { RNG } from '../core/rng.js';
+import type { Blob } from '../mechanics/blobs.js';
 
 export { regionForDepth };
 
@@ -24,6 +25,13 @@ export interface PlacedItem {
   itemId: string;
   /** Sprite key for the renderer. */
   sprite: string;
+  /**
+   * The item sits in a LOCKED_CHEST/CRYSTAL_CHEST heap (vanilla Heap.Type).
+   * Stage 0 (exact copy): heaps are otherwise simplified to floor items,
+   * but locked chests need a GoldenKey to open (Hero.actOpenChest,
+   * Hero.java:615-648) — see openLockedChest in actions.ts.
+   */
+  lockedChest?: boolean;
 }
 
 /**
@@ -102,6 +110,12 @@ export class Level extends Grid {
   doors: number[] = [];
   /** Trap cells (hidden or revealed). */
   traps: number[] = [];
+  /**
+   * Live trap-seeded blobs (Stage 0: fire, toxic, paralytic). Vanilla
+   * `Dungeon.level.blobs` (Map<Class, Blob>); the mechanics layer owns the
+   * Blob schema (mechanics/blobs.ts), the engine ticks them once per turn.
+   */
+  blobs: Blob[] = [];
 
   items: PlacedItem[] = [];
   mobs: PlacedMob[] = [];
@@ -149,6 +163,7 @@ export class Level extends Grid {
     switch (t) {
       case Terrain.FLOOR:
       case Terrain.DOOR:
+      case Terrain.OPEN_DOOR: // Door.enter (Door.java:14-21): open doors stay passable
       case Terrain.ENTRANCE:
       case Terrain.EXIT:
       case Terrain.WATER:
@@ -169,6 +184,24 @@ export class Level extends Grid {
     if (!isHiddenTrap(t)) return null;
     this.set(x, y, revealTrapTile(t));
     return trapName(t);
+  }
+
+  /**
+   * Vanilla Level.avoid (Terrain.AVOID flag, Terrain.java): tiles mobs may
+   * stand on but pathing avoids — revealed traps, chasm, wells. Used with
+   * isPassable for SummoningTrap spawn candidates
+   * (passable[p] || avoid[p], SummoningTrap.java).
+   */
+  isAvoid(x: number, y: number): boolean {
+    const t = this.get(x, y);
+    return (
+      t === Terrain.CHASM ||
+      t === Terrain.WELL ||
+      (t >= Terrain.TRAP_TOXIC &&
+        t <= Terrain.TRAP_SUMMONING &&
+        t % 2 === 0 &&
+        !isHiddenTrap(t))
+    );
   }
 
   /** Reveal a secret door; returns true when one was revealed. */

@@ -156,7 +156,7 @@ export function resolveItemTag(
     case 'iron-key':
       return 'iron_key';
     case 'golden-key':
-      return 'iron_key'; // M1: no golden-key mechanics; opens M1 locks
+      return 'golden_key'; // Stage 0: opens LOCKED_CHEST/CRYSTAL_CHEST (Hero.actOpenChest)
     // Prize rooms (prize(...) in painters.ts).
     case 'prize-armor':
       return 'cloth_armor'; // M1: only armor in the catalog
@@ -190,8 +190,11 @@ export function resolveItemTag(
 
 /**
  * Resolve generator item spawns. 'gold:<n>' passes through (parseItemId);
- * an undefined tag means 'random'. Heap kinds are M1-ignored:
- * chests/bones/mimics place their item directly (documented simplification).
+ * an undefined tag means 'random'. Heap kinds are M1-ignored EXCEPT
+ * LOCKED_CHEST/CRYSTAL_CHEST, whose locked state rides on the PlacedItem
+ * (vanilla Heap.Type; Hero.actOpenChest needs a GoldenKey — actions.ts).
+ * Other chests/bones/mimics place their item directly (documented
+ * simplification).
  */
 export function resolveItemSpawns(
   rng: RNG,
@@ -207,7 +210,14 @@ export function resolveItemSpawns(
           ? tag
           : resolveItemTag(rng, depth, tag);
     const { defId } = parseItemId(itemId);
-    return { pos: s.pos, itemId, sprite: getItem(defId).sprite };
+    const lockedChest =
+      s.heap === 'LOCKED_CHEST' || s.heap === 'CRYSTAL_CHEST';
+    return {
+      pos: s.pos,
+      itemId,
+      sprite: getItem(defId).sprite,
+      ...(lockedChest ? { lockedChest: true as const } : {}),
+    };
   });
 }
 

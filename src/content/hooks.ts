@@ -24,15 +24,23 @@ import {
   heroDamageRoll,
 } from '../mechanics/hero.js';
 import { isStarving, satisfy, STARVING } from '../mechanics/hunger.js';
+import { tickBlobs } from '../mechanics/blobs.js';
+import {
+  makeBlobWorld,
+  type TrapHero,
+  type TrapMob,
+} from '../mechanics/traps.js';
 import {
   dropSlot,
   equipSlot,
   moveHero,
+  noteSignCells,
   pickupAt,
   searchIntentional,
   throwDart,
   tickHeroClock,
   useInventorySlot,
+  waitTurn,
 } from './actions.js';
 import {
   createStarterHero,
@@ -286,6 +294,9 @@ export const contentMechanics: MechanicsHooks = {
     // stashed); its mobs come from reviveMob right after, so [] is correct.
     const result = takeGenResult(level);
     if (!result) return [];
+    // Stage 0 (exact copy): register the painter's sign markers so the
+    // 'wait' intent can read signs (Sign.java).
+    noteSignCells(level, result.markers.signs);
     const resolved = resolveMobSpawns(rng, result.level.depth, result.mobs);
     return buildMobs(resolved, result.level.w);
   },
@@ -310,7 +321,7 @@ export const contentMechanics: MechanicsHooks = {
         cost = searchIntentional(ctx, hero);
         break;
       case 'wait':
-        cost = 1;
+        cost = waitTurn(ctx, hero);
         break;
       case 'pickup':
         cost = pickupAt(ctx, hero);
@@ -378,6 +389,14 @@ export const contentMechanics: MechanicsHooks = {
   tickActorBuffs(actor: HeroActor | MobActor, ctx: ActionContext): void {
     // Mechanics owns the tick logic; the engine owns the call site (loop.ts).
     tickBuffs(ctx.rng, ctx.level, actor as ContentHero & ContentMob, ctx.log);
+  },
+
+  evolveBlobs(ctx: ActionContext): void {
+    // Vanilla Blob.act -> evolve() once per round (engine owns the call site).
+    const hero = heroOf(ctx) as unknown as TrapHero;
+    const mobs = ctx.mobs as unknown as TrapMob[];
+    // Logging flows through makeBlobWorld's log (ctx.log).
+    tickBlobs(ctx.rng, makeBlobWorld(ctx, hero, mobs), ctx.level.blobs);
   },
 
   tickHeroClock(actor: HeroActor, ctx: ActionContext, cost: number): void {

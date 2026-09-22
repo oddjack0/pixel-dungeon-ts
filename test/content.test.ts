@@ -925,19 +925,33 @@ describe('interactions', () => {
     expect(level.items.some((it) => it.pos === c.hero.pos && it.itemId === 'ration')).toBe(true);
   });
 
-  test('locked door: without a key it stays shut; with a key it opens', () => {
+  test('locked door: no key warns for free; key unlocks (no step); next move opens it', () => {
+    // Exact vanilla (Hero.actUnlock, Hero.java:664-692; Key.TIME_TO_UNLOCK):
+    // without a key the bump warns and spends no time; with a key the door
+    // becomes a plain DOOR (the hero does NOT step in); the following move
+    // steps through and Door.enter opens it.
     const level = makeLevel();
     const c = makeCtx(level, 71);
     const hx = c.hero.x;
     const hy = c.hero.y;
+    const doorPos = hy * level.w + hx + 1;
     level.set(hx + 1, hy, Terrain.DOOR_LOCKED);
-    moveHero(c.ctx, c.hero, 1, 0);
+    const costNoKey = moveHero(c.ctx, c.hero, 1, 0);
     expect(level.get(hx + 1, hy)).toBe(Terrain.DOOR_LOCKED);
-    expect(c.logs.some((l) => l.includes('locked'))).toBe(true);
+    expect(c.logs.some((l) => l.includes("You don't have a matching key"))).toBe(true);
+    expect(costNoKey).toBe(0);
+    expect(c.hero.pos).not.toBe(doorPos);
     addToInventory(c.hero, 'iron_key', 1);
-    moveHero(c.ctx, c.hero, 1, 0);
+    const costUnlock = moveHero(c.ctx, c.hero, 1, 0);
+    expect(costUnlock).toBe(1); // Key.TIME_TO_UNLOCK
     expect(level.get(hx + 1, hy)).toBe(Terrain.DOOR);
-    expect(c.hero.pos).toBe(hy * level.w + hx + 1);
+    expect(c.hero.inventory.some((s) => s.itemId === 'iron_key')).toBe(false);
+    expect(c.hero.pos).not.toBe(doorPos); // unlock does not move the hero in
+    moveHero(c.ctx, c.hero, 1, 0);
+    expect(c.hero.pos).toBe(doorPos);
+    expect(level.get(hx + 1, hy)).toBe(Terrain.OPEN_DOOR); // Door.enter
+    moveHero(c.ctx, c.hero, -1, 0);
+    expect(level.get(hx + 1, hy)).toBe(Terrain.DOOR); // Door.leave closes it
   });
 
   test('throwing a dart consumes one and can hit (Hero.shoot)', () => {

@@ -181,7 +181,8 @@ function buffTarget(ch: Buffable): {
  * Tick one char's buffs (mechanics logic; the engine owns the call site —
  * this runs at the start of the owner's turn). Ports Burning.act
  * (Burning.java:64-107), Poison.act (Poison.java:64-78), Ooze.act
- * (Ooze.java:39-50), and Paralysis countdown (Paralysis.java:26).
+ * (Ooze.java:39-50), the Paralysis countdown (Paralysis.java:26), and the
+ * Cripple countdown (Cripple.java, DURATION = 10).
  *
  * M1 simplification (flagged in ENGINE-REPORT): vanilla ticks each buff as
  * its own scheduler actor every 1.0 time units; here buffs tick once per
@@ -267,12 +268,38 @@ export function tickBuffs(
       delete b.paralysis;
     }
   }
+  // STAGE0-TRAP (worker 2/5): Bleeding.act (Bleeding.java:58-81) —
+  // GrippingTrap applier. Level re-rolled every tick; detach at 0.
+  if (b.bleeding && ch.isAlive()) {
+    const t = bleedingTick(rng, b.bleeding.level ?? 0);
+    if (t.detached) {
+      delete b.bleeding;
+    } else {
+      b.bleeding.level = t.level;
+      const applied = applyDamage(rng, buffTarget(ch), t.level, 'bleeding');
+      ch.hp = applied.hp;
+      logBuffDeath('bleeding'); // "You bled to death...", Bleeding.java:70
+      if (applied.paralysisBroken) {
+        ch.paralysed = false;
+        delete b.paralysis;
+      }
+    }
+  } else if (b.bleeding) {
+    delete b.bleeding;
+  }
   if (b.paralysis) {
     b.paralysis.left -= 1;
     if (b.paralysis.left <= 0) {
       delete b.paralysis;
       ch.paralysed = false;
     }
+  }
+  // Cripple (Cripple.java): FlavourBuff countdown, DURATION = 10
+  // (Cripple.java:24). Halves speed while attached via crippleFactor
+  // (Char.speed, Char.java:247-249). Stage 0 applier: Chasm.heroLand.
+  if (b.cripple) {
+    b.cripple.left -= 1;
+    if (b.cripple.left <= 0) delete b.cripple;
   }
 }
 
@@ -570,8 +597,25 @@ export class ContentMob extends Actor implements MobActor {
   }
 
   /** Hook after any successful move (Goo seals the arena). */
-  protected afterMove(_ctx: ActionContext, _oldPos: number): void {
-    // mobPress (trap triggering) is a later milestone
+  protected afterMove(ctx: ActionContext, oldPos: number): void {
+    // Doors for mobs (Char.move, Char.java:484-492; Mob.move -> mobPress,
+    // Mob.java:258-264; Level.mobPress): leaving an open door closes it
+    // unless a heap lies on it (Door.leave, Door.java:23-29); stepping onto
+    // a closed door opens it (Door.enter, Door.java:14-21). Port heaps =
+    // placed items. (Mob trap triggering via mobPress is the trap worker's
+    // call site — see enterCell in actions.ts. Kept inline here rather than
+    // importing actions.ts to avoid a content import cycle.)
+    const level = ctx.level;
+    const ox = oldPos % level.w;
+    const oy = Math.floor(oldPos / level.w);
+    if (level.get(ox, oy) === Terrain.OPEN_DOOR) {
+      if (!level.items.some((it) => it.pos === oldPos)) {
+        level.set(ox, oy, Terrain.DOOR);
+      }
+    }
+    if (level.get(this.x, this.y) === Terrain.DOOR) {
+      level.set(this.x, this.y, Terrain.OPEN_DOOR);
+    }
   }
 
   /** Hook on death, after EXP/loot (Goo unseals + drops the skeleton key). */

@@ -197,20 +197,18 @@ export class Renderer {
     ctx.drawImage(this.entitySprite(game.hero.sprite), hx, hy, TILE_PX, TILE_PX);
   }
 
+  /**
+   * Vanilla camera: Camera.main.target = hero (GameScene.java:289); noosa's
+   * Camera.update() centers exactly on the target every frame via focusOn —
+   * no clamping to level bounds anywhere (verified: zero camera-bounds code
+   * in game source, no bounds fields in noosa Camera). Near map edges the
+   * original shows black void beyond the boundary.
+   */
   private updateCamera(game: Game, vw: number, vh: number): void {
-    const level = game.level;
     const viewTilesW = vw / TILE_PX;
     const viewTilesH = vh / TILE_PX;
-    if (level.w <= viewTilesW) {
-      this.camX = (level.w - viewTilesW) / 2; // center small levels
-    } else {
-      this.camX = Math.min(Math.max(game.hero.x + 0.5 - viewTilesW / 2, 0), level.w - viewTilesW);
-    }
-    if (level.h <= viewTilesH) {
-      this.camY = (level.h - viewTilesH) / 2;
-    } else {
-      this.camY = Math.min(Math.max(game.hero.y + 0.5 - viewTilesH / 2, 0), level.h - viewTilesH);
-    }
+    this.camX = game.hero.x + 0.5 - viewTilesW / 2;
+    this.camY = game.hero.y + 0.5 - viewTilesH / 2;
   }
 
   /** Sprite for a terrain cell (hidden traps/doors render as their cover). */

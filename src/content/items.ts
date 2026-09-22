@@ -180,6 +180,50 @@ const SKELETON_KEY: ItemDef = {
   desc: 'A key carved from bone. It must open the way down.',
 };
 
+/** GoldenKey: opens LOCKED_CHEST and CRYSTAL_CHEST heaps (Hero.actOpenChest,
+ *  Hero.java:615-648). name "golden key" (GoldenKey.java:32). Like vanilla,
+ *  keys are depth-specific (Key.depth); the port does not track key depth
+ *  yet — a golden key opens any locked chest (same gap as iron keys). */
+const GOLDEN_KEY: ItemDef = {
+  id: 'golden_key',
+  name: 'golden key',
+  sprite: 'key_gold',
+  type: 'key',
+  stackable: true,
+  desc: 'The notches on this golden key are tiny and intricate. Maybe it can open some chest lock?',
+};
+
+/** Dewdrop: dropped by trampling high grass (HighGrass.trample,
+ *  HighGrass.java:44-47). name "dewdrop" (Dewdrop.java:33); stackable
+ *  (Dewdrop.java:36). Never sits in the backpack: doPickUp heals the hero
+ *  immediately (Dewdrop.java:41-64) — see pickupDewdrop in actions.ts.
+ *  STAGE 0 SCOPE: the DewVial is not ported, so the vial branch of
+ *  doPickUp (vial.collectDew) cannot fire; with no vial the drop always
+ *  takes the direct-heal branch (Dewdrop.java:45). */
+const DEWDROP: ItemDef = {
+  id: 'dewdrop',
+  name: 'dewdrop',
+  sprite: 'dewdrop',
+  type: 'dewdrop',
+  stackable: true,
+  desc: 'A crystal clear dewdrop.',
+};
+
+/** Seed: dropped by trampling high grass (HighGrass.trample,
+ *  HighGrass.java:40-42). Vanilla drops a random plant Seed subtype
+ *  (Generator.Category.SEED); the plant/seed system is not ported yet, so
+ *  this is a single generic stackable seed item — it can be picked up and
+ *  dropped, but planting/throwing effects arrive with the plant system.
+ *  The trample drop probabilities are exact (HighGrass.java). */
+const SEED: ItemDef = {
+  id: 'seed',
+  name: 'seed',
+  sprite: 'seed',
+  type: 'seed',
+  stackable: true,
+  desc: 'A strange seed. Perhaps it can be planted.',
+};
+
 export const ITEMS: Readonly<Record<string, ItemDef>> = {
   shortsword: SHORT_SWORD,
   dart: DART,
@@ -192,6 +236,9 @@ export const ITEMS: Readonly<Record<string, ItemDef>> = {
   gold: GOLD,
   iron_key: IRON_KEY,
   skeleton_key: SKELETON_KEY,
+  golden_key: GOLDEN_KEY,
+  dewdrop: DEWDROP,
+  seed: SEED,
 };
 
 export function getItem(id: string): ItemDef {

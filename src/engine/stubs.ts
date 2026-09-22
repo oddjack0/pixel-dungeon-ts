@@ -179,6 +179,9 @@ export const stubMechanics: MechanicsHooks = {
   tickActorBuffs(_actor: HeroActor | MobActor, _ctx: ActionContext): void {
     // stub: no buffs
   },
+  evolveBlobs(_ctx: ActionContext): void {
+    // stub: no blobs
+  },
 
   tickHeroClock(_actor: HeroActor, _ctx: ActionContext, _cost: number): void {
     // stub: no hunger/regen

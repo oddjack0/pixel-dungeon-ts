@@ -48,6 +48,11 @@ export enum Terrain {
   BARRICADE = 37, // solid; storage-room door (vanilla BARRICADE)
   EMBERS = 38, // burned-room floor (passable)
   HIGH_GRASS = 39, // striped-room tufts (passable, blocks sight)
+  // Stage 0 (exact copy): vanilla Terrain.OPEN_DOOR. Appended — ids are NEVER
+  // renumbered. A DOOR becomes OPEN_DOOR when any char steps onto it
+  // (Door.enter, Door.java:14-21); leaving it closes it again (Door.leave,
+  // Door.java:23-29) unless a heap lies on it.
+  OPEN_DOOR = 40,
 }
 
 /** The 8 trap types, in vanilla `levels/traps/` order. */

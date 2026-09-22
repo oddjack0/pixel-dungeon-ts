@@ -15,6 +15,11 @@ export interface BuffState {
   kind: BuffKind;
   /** Remaining duration in time units (1 turn = 1.0). Used by Burning/Poison/Ooze etc. */
   left: number;
+  /**
+   * Buff-specific level (Bleeding.level, Bleeding.java): the bleed severity
+   * re-rolled every tick. Only meaningful for kind 'bleeding'.
+   */
+  level?: number;
 }
 
 /** Base entity. Ports Char.java fields: pos (Char.java:58), HT/HP (63-64),

@@ -12,9 +12,11 @@
  * Java behavior in its comments.
  */
 import { isHiddenTrap, Terrain } from '../core/grid.js';
-import { type Level } from '../dungeon/level.js';
+import { type Level, type PlacedItem } from '../dungeon/level.js';
 import type { ActionContext } from '../engine/seams.js';
 import type { MechanicsRng } from '../mechanics/rng.js';
+import { CRIPPLE_DURATION } from '../mechanics/buffs.js';
+import { applyDamage } from '../mechanics/combat.js';
 import {
   gearDisplayName,
   heroAttackSkill,
@@ -39,6 +41,7 @@ import {
   regenTick,
   satisfy,
 } from '../mechanics/hunger.js';
+import { pressTrapCell } from '../mechanics/traps.js';
 import { getItem, parseItemId } from './items.js';
 import {
   addToInventory,
@@ -48,7 +51,7 @@ import {
   type ContentHero,
   type ItemStack,
 } from './hero.js';
-import { heroOf, strikeHeroVsMob, type ContentMob } from './mobs.js';
+import { heroOf, strikeHeroVsMob, buildMob, nextMobId, type ContentMob } from './mobs.js';
 
 /**
  * Hero.actPickUp (Hero.java:1038-1054): one heap per action, takes 1 turn
@@ -64,6 +67,11 @@ export function pickupAt(ctx: ActionContext, hero: ContentHero): number {
   }
   level.items = level.items.filter((it) => it !== item);
   const { defId, qty } = parseItemId(item.itemId);
+  // Dewdrops never enter the backpack: doPickUp consumes them for healing
+  // (Dewdrop.java:41-64).
+  if (defId === 'dewdrop') return pickupDewdrop(ctx, hero, qty);
+  // Locked chests need a golden key (Hero.actOpenChest, Hero.java:615-648).
+  if (item.lockedChest) return openLockedChest(ctx, hero, item);
   const def = getItem(defId);
   if (def.type === 'gold') {
     hero.gold += qty;
@@ -445,6 +453,329 @@ export function dropSlot(
   return 0.5;
 }
 
+/**
+ * Chasm jump confirmation (Chasm.heroJump, Chasm.java:30-54).
+ *
+ * Vanilla shows a modal WndOptions: "Do you really want to jump into the
+ * chasm? You can probably die." (TXT_JUMP, Chasm.java:35-36) with
+ * "Yes, I know what I'm doing" / "No, I changed my mind" (TXT_YES/TXT_NO).
+ * Yes sets jumpConfirmed=true and resumes the interrupted move; No (or
+ * tapping elsewhere) dismisses. The port has no modal dialogs, so the
+ * confirmation is two taps: the first step toward a chasm cell arms it and
+ * logs the warning (the hero does not move — the move is interrupted for
+ * free, Hero.getCloser → Chasm.heroJump → interrupt(), Hero.java:919-925);
+ * repeating the exact same step confirms the jump ("Yes"). Any other step
+ * disarms it ("No"). A flying hero steps over chasms freely — vanilla
+ * skips press() while flying (Hero.move, Hero.java:1229-1239), so no fall.
+ */
+let chasmArmed: { from: number; to: number } | null = null;
+
+/** Test hook: clear the chasm confirmation between runs. */
+export function resetChasmState(): void {
+  chasmArmed = null;
+}
+
+/**
+ * Step toward a chasm cell (Hero.getCloser, Hero.java:919-925).
+ * Returns the turn cost of the intent: 0 for the warning (vanilla's modal
+ * dialog passes no time — interrupt() + ready() spend nothing), the fall
+ * cost (1) once confirmed.
+ */
+function stepTowardChasm(
+  ctx: ActionContext,
+  hero: ContentHero,
+  nx: number,
+  ny: number,
+): number {
+  const level = ctx.level;
+  const from = hero.pos;
+  const to = ny * level.w + nx;
+  if (hero.flying) {
+    hero.pos = to;
+    passiveSearch(ctx, hero);
+    return 1; // TIME_TO_MOVE (Hero.java:36)
+  }
+  if (chasmArmed !== null && chasmArmed.from === from && chasmArmed.to === to) {
+    chasmArmed = null;
+    return heroFall(ctx, hero);
+  }
+  chasmArmed = { from, to };
+  ctx.log('Do you really want to jump into the chasm? You can probably die.'); // TXT_JUMP (Chasm.java:35-36)
+  return 0; // interrupted for free (Hero.getCloser, Hero.java:921-924)
+}
+
+/**
+ * Chasm.heroFall (Chasm.java:52-72) + landing (Chasm.heroLand,
+ * Chasm.java:74-87).
+ *
+ * Vanilla: jumpConfirmed=false; SND_FALLING; interrupt(); then
+ * InterlevelScene FALL → the next depth, landing either at the pit cell of
+ * a weak-floor room (fallIntoPit, InterlevelScene.java:243) or a random
+ * respawn cell. On landing: blood burst + camera shake, Cripple prolonged
+ * to DURATION (10), then damage Random.IntRange(HT/3, HT/2) via Hero.Doom,
+ * whose onDeath logs "You fell to death..." (Chasm.java:79-86) — no armor
+ * DR applies (Char.damage, not attack()).
+ *
+ * PORT SCOPE: ActionContext has no depth-transition seam (no
+ * InterlevelScene equivalent — the engine worker owns level transitions),
+ * so the fall resolves on the current depth: the hero does not move (chasm
+ * cells are impassable), takes the exact landing damage + Cripple, and the
+ * fall is logged. Wire the real transition when the engine seam exists.
+ */
+export function heroFall(ctx: ActionContext, hero: ContentHero): number {
+  chasmArmed = null; // jumpConfirmed = false (Chasm.java:55)
+  // SND_FALLING + InterlevelScene.Mode.FALL: engine seam needed (see above).
+  ctx.log('You fall into the chasm!');
+  // Chasm.heroLand (Chasm.java:74-87): Buff.prolong(hero, Cripple.class,
+  // Cripple.DURATION) — prolong sets the remaining duration to DURATION.
+  hero.buffs.cripple = { kind: 'cripple', left: CRIPPLE_DURATION };
+  // hero.damage(Random.IntRange(hero.HT/3, hero.HT/2), Doom) — Java integer
+  // division floors both endpoints; IntRange is inclusive (Chasm.java:79).
+  const dmg = ctx.rng.intRange(
+    Math.floor(hero.ht / 3),
+    Math.floor(hero.ht / 2),
+  );
+  const applied = applyDamage(ctx.rng, hero, dmg);
+  hero.hp = applied.hp;
+  if (applied.paralysisBroken) {
+    hero.paralysed = false;
+    delete hero.buffs.paralysis;
+  }
+  if (!hero.isAlive()) {
+    // Hero.Doom.onDeath (Chasm.java:80-86): Badges.validateDeathFromFalling
+    // + Dungeon.fail(FALL) are Stage 6 (badges/rankings); the player-facing
+    // message is GLog.n("You fell to death...").
+    ctx.log('You fell to death...');
+  }
+  return 1; // TIME_TO_MOVE (Hero.java:36)
+}
+
+/**
+ * Chasm.mobFall (Chasm.java:89-92): a mob that ends up over a pit is
+ * destroyed outright (no EXP, no loot — destroy(), not die()). Vanilla
+ * trigger: Level.mobPress (Level.java:729-732). Currently unreachable in
+ * the port (mobs path only through passable tiles and CHASM is not
+ * passable); kept exact for future knockback/teleport work.
+ */
+export function mobFall(ctx: ActionContext, mob: ContentMob): void {
+  mob.hp = 0;
+  ctx.killMob(mob); // engine removal; exp/loot intentionally skipped (destroy)
+}
+
+/**
+ * Door.enter (Door.java:14-21): stepping onto a closed door swings it open
+ * (DOOR → OPEN_DOOR) and refreshes the map/FOV (GameScene.updateMap +
+ * Dungeon.observe — the engine recomputes FOV afterAction). No extra time:
+ * opening is part of the move step (vanilla spends 1/speed() for the step;
+ * Door.enter itself spends nothing).
+ */
+export function doorEnter(ctx: ActionContext, x: number, y: number): void {
+  ctx.level.set(x, y, Terrain.OPEN_DOOR);
+}
+
+/**
+ * Door.leave (Door.java:23-29): leaving an open door swings it shut
+ * (OPEN_DOOR → DOOR) unless a heap lies on it. Port heaps = placed items.
+ * (Mob equivalent lives in mobs.ts afterMove; kept separate to avoid a
+ * content cycle — see the note there.)
+ */
+export function doorLeave(ctx: ActionContext, x: number, y: number): void {
+  const level = ctx.level;
+  if (!level.items.some((it) => it.pos === level.idx(x, y))) {
+    level.set(x, y, Terrain.DOOR);
+  }
+}
+
+/**
+ * HighGrass.trample (HighGrass.java:33-71): stepping on high grass flattens
+ * it to GRASS and may shake loose a seed or a dewdrop. Placed in
+ * enterCell() in vanilla Level.press order: traps → grass → well →
+ * alchemy → door (Level.java:622-704).
+ *
+ * Vanilla details:
+ * - Level.set(pos, GRASS) + GameScene.updateMap (HighGrass.java:35-36).
+ * - The seed/dew rolls are skipped under the NO_HERBALISM challenge
+ *   (HighGrass.java:38); challenges are Stage 6, so rolls always happen.
+ * - herbalismLevel = the trampler's RingOfHerbalism buff level, default 0
+ *   (HighGrass.java:39-45); the ring is not ported → always 0.
+ * - Seed: Random.Int(18) <= Random.Int(herbalismLevel+1) → 1/18 at level 0
+ *   (HighGrass.java:47-49). Dew: Random.Int(6) <= Random.Int(herbalismLevel+1)
+ *   → 1/6 at level 0 (HighGrass.java:52-54).
+ * - Warden subclass: Barkskin at HT/3 + 8 leaves (HighGrass.java:60-64);
+ *   hero subclasses are Stage 5 — warrior-only port, branch inert.
+ * - LeafParticle burst 4/8 + Dungeon.observe() (HighGrass.java:66-68):
+ *   visuals; the engine recomputes FOV afterAction.
+ */
+export function trampleHighGrass(
+  ctx: ActionContext,
+  hero: ContentHero,
+  x: number,
+  y: number,
+): void {
+  const level = ctx.level;
+  level.set(x, y, Terrain.GRASS);
+  const herbalismLevel = 0; // no RingOfHerbalism in the port (see above)
+  if (ctx.rng.int(0, 18) <= ctx.rng.int(0, herbalismLevel + 1)) {
+    dropAt(ctx, level.idx(x, y), 'seed');
+  }
+  if (ctx.rng.int(0, 6) <= ctx.rng.int(0, herbalismLevel + 1)) {
+    dropAt(ctx, level.idx(x, y), 'dewdrop');
+  }
+}
+
+/** Place an item on the floor (vanilla Level.drop(item, pos)). */
+function dropAt(ctx: ActionContext, pos: number, itemId: string): void {
+  ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
+}
+
+/**
+ * Dewdrop.doPickUp (Dewdrop.java:41-64): the drop never sits in the
+ * backpack — it is consumed on pickup. healValue = 1 + (depth-1)/5, Java
+ * integer division (Dewdrop.java:47); +1 for the huntress (Dewdrop.java:48-50)
+ * — the port is warrior-only, so no bonus. effect = min(HT-HP, value*quantity);
+ * heals for that (showStatus "%+dHP", Dewdrop.java:31).
+ *
+ * STAGE 0 SCOPE: the DewVial is not ported, so the vial branch
+ * (vial.collectDew, Dewdrop.java:57-61) cannot fire; with vial == null the
+ * drop always takes the direct-heal branch (Dewdrop.java:45). At full HP the
+ * drop is still consumed for no healing — exactly like vanilla.
+ */
+export function pickupDewdrop(
+  ctx: ActionContext,
+  hero: ContentHero,
+  qty: number,
+): number {
+  // (pickupAt already lifted the drop off the floor.)
+  const level = ctx.level;
+  const value = 1 + Math.floor((level.depth - 1) / 5); // (Dungeon.depth-1)/5
+  const effect = Math.min(hero.ht - hero.hp, value * qty);
+  if (effect > 0) {
+    hero.hp += effect;
+    ctx.log(`+${effect}HP`); // TXT_VALUE "%+dHP" (Dewdrop.java:31)
+  }
+  // SND_DEWDROP: no audio in the port.
+  return 1; // TIME_TO_PICK_UP (Hero.java:40)
+}
+
+/**
+ * Locked chest (Hero.actOpenChest, Hero.java:615-648 + onOperateComplete,
+ * Hero.java:1277-1288). A LOCKED_CHEST/CRYSTAL_CHEST heap needs a
+ * depth-matching GoldenKey. Without it: GLog.w("This chest is locked and
+ * you don't have matching key") (TXT_LOCKED_CHEST, Hero.java:124) and no
+ * time is spent (ready()). With it: spend Key.TIME_TO_UNLOCK (1)
+ * (Key.java:26), the key is consumed, and the heap opens — unlocking and
+ * opening are a single action (heap.open in onOperateComplete).
+ *
+ * Port: heaps are simplified to floor items (spawns.ts); the pickup intent
+ * stands in for OpenChest (vanilla allows adjacent or same-cell; the port
+ * has no adjacent-interact intent, so the hero steps onto the chest cell).
+ * Like vanilla keys, GoldenKeys are depth-specific (Key.depth) — the port
+ * does not track key depth, so any golden key opens any locked chest (same
+ * documented gap as iron keys).
+ */
+export function openLockedChest(
+  ctx: ActionContext,
+  hero: ContentHero,
+  item: PlacedItem,
+): number {
+  const level = ctx.level;
+  const keySlot = hero.inventory.findIndex((s) => s.itemId === 'golden_key');
+  if (keySlot === -1) {
+    ctx.log("This chest is locked and you don't have matching key"); // TXT_LOCKED_CHEST (Hero.java:124)
+    return 0; // ready(), no time spent (Hero.java:631-633)
+  }
+  removeFromInventory(hero, keySlot, 1); // theKey.detach (Hero.java:1280-1283)
+  // heap.open(hero): the chest opens and the loot is taken. The port places
+  // chest loot directly on the floor, so taking it now IS the open.
+  level.items = level.items.filter((it) => it !== item);
+  const { defId, qty } = parseItemId(item.itemId);
+  const def = getItem(defId);
+  const label = qty > 1 ? `${qty}x ${def.name}` : def.name;
+  if (def.type === 'gold') {
+    hero.gold += qty; // Gold.doPickUp adds to the purse (Gold.java:65-75)
+    ctx.log(`You unlock the chest and take ${qty} gold.`);
+  } else {
+    addToInventory(hero, defId, qty);
+    ctx.log(`You unlock the chest and take the ${label}.`); // SND_UNLOCK in vanilla; no audio here
+  }
+  return 1; // Key.TIME_TO_UNLOCK (Key.java:26)
+}
+
+/**
+ * Sign tips (Sign.java:28-68). Depth d (1-based) reads TIPS[d-1]. Depths
+ * past the tip list burn the sign instead (Sign.read, Sign.java:84-101);
+ * the DeadEndLevel branch (Sign.java:74-78) has no port equivalent (no
+ * DeadEndLevel in the Sewers). Sign cells come from the generator's
+ * PainterMarkers.signs (one in the entrance room per sewer depth, never on
+ * the entrance cell — SewerLevel.java:93-103, SewerBossLevel.java:160-170).
+ */
+const SIGN_TIPS = [
+  'Wear the highest tier armor you can; do not rely on dodging alone.',
+  'Enchantments on weapons and armor are potent; identify items to find them.',
+  'Dewdrops heal a little; save potions of healing for emergencies.',
+  'Do not be afraid to run from a fight you cannot win.',
+  'Upgrade scrolls are precious; spend them on gear you will keep.',
+  'Mystery meat is risky; cook it at a stove if you can.',
+  'Strength potions let you wear heavier gear sooner.',
+  'Hidden traps and doors can be found by searching.',
+  'Blandfruit can be cooked with seeds for useful meals.',
+  'Flies are weak alone; do not let a swarm surround you.',
+  'Gnoll scouts hit hard; use doorways to fight them one at a time.',
+  'Crabs block a lot of damage; use wands or surprise attacks.',
+  'Goo is coming. Fire will keep it from healing.',
+  'Fire hurts Goo, but do not stand in it yourself.',
+  'Keep your distance from spinners and their webs.',
+  'Skeletons hit hard; blind or slow them first.',
+  'Thieves steal; kill them before they flee with your gear.',
+  'Shaman bolts hurt; break line of sight.',
+  'Brutes enrage when hurt; finish them quickly.',
+  'DM-300 is coming. Lightning hurts it most.',
+  'Lightning wands and surprise attacks bring DM-300 down.',
+  'The City awaits. Mind the monks and their disabling strikes.',
+] as const;
+
+/** Cells carrying a painted sign, per generated level. */
+const signCells = new WeakMap<object, Set<number>>();
+
+/**
+ * Register the generator's sign markers for a level. Called by the engine's
+ * level-setup path (hooks.ts spawnMobs) from PainterMarkers.signs.
+ */
+export function noteSignCells(level: object, cells: number[]): void {
+  signCells.set(level, new Set(cells));
+}
+
+/**
+ * Sign.read (Sign.java:72-102). Vanilla trigger: a Move action that cannot
+ * move while standing on a SIGN (Hero.actMove, Hero.java:485-498) — reading
+ * spends no time (ready(), not spend()). The port has no tap-self move, so
+ * the 'wait' intent reads a sign when standing on one (see waitTurn).
+ */
+export function readSign(ctx: ActionContext, hero: ContentHero): number {
+  const cells = signCells.get(ctx.level);
+  if (!cells || !cells.has(hero.pos)) return 1; // not on a sign: plain wait
+  const index = ctx.level.depth - 1;
+  if (index < SIGN_TIPS.length) {
+    ctx.log(SIGN_TIPS[index]); // WndMessage(TIPS[index]) (Sign.java:84-88)
+  } else {
+    // Burn branch (Sign.read, Sign.java:89-101): the sign is destroyed
+    // (Level.destroy → EMBERS, Level.java:475-479); green flames + burn
+    // sound in vanilla — the port logs the message (TXT_BURN, Sign.java:70-71).
+    cells.delete(hero.pos);
+    ctx.level.set(hero.x, hero.y, Terrain.EMBERS);
+    ctx.log('As you try to read the sign it bursts into greenish flames.'); // TXT_BURN
+  }
+  return 0; // reading costs no time (Hero.actMove → ready(), Hero.java:493-497)
+}
+
+/**
+ * 'wait' intent. Vanilla tap-self while standing on a SIGN reads the sign
+ * for free (Hero.actMove, Hero.java:485-498); otherwise a plain wait (1 turn).
+ */
+export function waitTurn(ctx: ActionContext, hero: ContentHero): number {
+  return readSign(ctx, hero);
+}
+
 /** Move (or unlock) toward a locked door, bump-attack a mob, or step. */
 export function moveHero(
   ctx: ActionContext,
@@ -494,25 +825,65 @@ export function moveHero(
     ny = Math.floor(step / level.w);
   }
   const tile = level.get(nx, ny);
+  // Chasm (Hero.getCloser, Hero.java:919-925): never step in unprompted —
+  // first tap warns, the repeat confirms, flying steps over freely.
+  if (tile === Terrain.CHASM) return stepTowardChasm(ctx, hero, nx, ny);
   if (tile === Terrain.DOOR_LOCKED) {
     const keySlot = hero.inventory.findIndex((s) => s.itemId === 'iron_key');
     if (keySlot === -1) {
-      ctx.log('The door is locked.'); // Hero.actUnlock: no key (Hero.java:1010)
-      return 1;
+      // actUnlock without a matching key: warning, no time spent
+      // (GLog.w + ready(), Hero.java:688-691).
+      ctx.log("You don't have a matching key"); // TXT_LOCKED_DOOR (Hero.java:125)
+      return 0;
     }
+    // Vanilla HeroAction.Unlock with the key (Hero.java:680-687, 1264-1277):
+    // spend Key.TIME_TO_UNLOCK = 1 (Key.java:26); the door becomes a plain
+    // DOOR and the hero does NOT step in — the next move opens it
+    // (Door.enter via press, Level.java:695-706).
     level.set(nx, ny, Terrain.DOOR);
     removeFromInventory(hero, keySlot, 1);
-    ctx.log('You unlock the door.');
-    hero.pos = ny * level.w + nx;
-    // Vanilla Hero.onMotionComplete -> search(false) (Hero.java:1241-1246).
-    passiveSearch(ctx, hero);
-    return 1;
+    ctx.log('You unlock the door.'); // SND_UNLOCK in vanilla; no audio here
+    return 1; // TIME_TO_UNLOCK (Key.java:26)
   }
   if (!level.isPassable(nx, ny)) return 1;
+  // Char.move (Char.java:484-486): an open door swings shut behind any char
+  // unless a heap lies on it.
+  if (level.get(hero.x, hero.y) === Terrain.OPEN_DOOR) {
+    doorLeave(ctx, hero.x, hero.y);
+  }
   hero.pos = ny * level.w + nx;
+  // STAGE0-TRAP (worker 2/5): vanilla Hero.move -> if (!flying) Dungeon.level.press(pos, this) (Hero.java:1230-1238).
+  if (!hero.flying) {
+    pressTrapCell(ctx, hero.pos, hero, (mobId, pos) => {
+      // SummoningTrap: Bestiary.mob(depth), state = WANDERING,
+      // GameScene.add(mob, DELAY = 2) (SummoningTrap.java).
+      const mob = buildMob(mobId, nextMobId(), pos, level.w);
+      mob.state = 'wandering';
+      ctx.addMob(mob, 2);
+    });
+    // Vanilla Level.press continues after traps: HIGH_GRASS trample, then
+    // WELL, ALCHEMY, then DOOR enter (Level.java:622-704). Wells and the
+    // alchemy pot are later milestones; grass and doors are handled here.
+    enterCell(ctx, hero, nx, ny);
+  } else if (tile === Terrain.DOOR) {
+    // Char.move: a flying char opens a closed door on entry even though
+    // press() is skipped while flying (Char.java:488-490).
+    doorEnter(ctx, nx, ny);
+  }
   // Vanilla Hero.onMotionComplete -> search(false) (Hero.java:1241-1246).
   passiveSearch(ctx, hero);
   return 1; // TIME_TO_MOVE (Hero.java:36)
+}
+
+/**
+ * The Level.press cell effects for hero movement after the trap stage:
+ * high grass tramples, closed doors swing open (Door.enter,
+ * Level.java:688-706).
+ */
+function enterCell(ctx: ActionContext, hero: ContentHero, x: number, y: number): void {
+  const t = ctx.level.get(x, y);
+  if (t === Terrain.HIGH_GRASS) trampleHighGrass(ctx, hero, x, y);
+  else if (t === Terrain.DOOR) doorEnter(ctx, x, y);
 }
 
 /** Intentional search costs TIME_TO_SEARCH = 2 (Hero.java:134). */
