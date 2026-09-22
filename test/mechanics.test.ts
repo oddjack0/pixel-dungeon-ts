@@ -232,7 +232,7 @@ describe('EXP (Hero.java:1019-1063, Mob.java:353-355)', () => {
     expect(maxExp(4)).toBe(25);
   });
   test('earnExp: level-up gains +5 HT/HP, +1 atk, +1 def', () => {
-    const s = { lvl: 1, exp: 0, ht: 20, hp: 20, attackSkill: 10, defenseSkill: 5 };
+    const s = { lvl: 1, exp: 0, ht: 20, hp: 20, attackSkill: 10, defenseSkill: 5, awareness: 0.1 };
     const gained = earnExp(s, 10);
     expect(gained).toBe(1);
     expect(s.lvl).toBe(2);
@@ -243,7 +243,7 @@ describe('EXP (Hero.java:1019-1063, Mob.java:353-355)', () => {
     expect(s.defenseSkill).toBe(6);
   });
   test('earnExp: overflow carries, multiple levels', () => {
-    const s = { lvl: 1, exp: 0, ht: 20, hp: 20, attackSkill: 10, defenseSkill: 5 };
+    const s = { lvl: 1, exp: 0, ht: 20, hp: 20, attackSkill: 10, defenseSkill: 5, awareness: 0.1 };
     earnExp(s, 26); // 10 -> lvl2 (16 left), 15 -> lvl3 (1 left)
     expect(s.lvl).toBe(3);
     expect(s.exp).toBe(1);

@@ -138,3 +138,54 @@ export function strEff(hero: Hero): number {
 export function isAlive(ch: Char): boolean {
   return ch.hp > 0;
 }
+
+/**
+ * Tempo/movement buff kinds from Char.java that sit outside the M1
+ * BuffKind set in buffs.ts (Slow/Speed in Char.spend, Char.java:303-314;
+ * Cripple in Char.speed, Char.java:247-249; Vertigo in Char.move,
+ * Char.java:474-482). Kept as string keys here so char.ts never has to
+ * widen the buffs.ts union; hasBuff() reads them via a string-key cast.
+ */
+export type TempoBuffKind = 'slow' | 'speed' | 'cripple' | 'vertigo';
+
+/** True when the char carries the named buff (string-key read; see above). */
+export function hasBuff(ch: Char, kind: TempoBuffKind | BuffKind): boolean {
+  return (
+    (ch.buffs as Partial<Record<string, BuffState>>)[kind] !== undefined
+  );
+}
+
+/**
+ * Time scale for spend() (Char.spend, Char.java:303-314):
+ *   timeScale = 1; Slow -> x0.5; Speed -> x2.0; spend(time / timeScale).
+ * So a slowed char is charged 2x time, a hasted char half. Both buffs at
+ * once cancel out (0.5 * 2.0 = 1).
+ */
+export function charTimeScale(ch: Char): number {
+  let timeScale = 1;
+  if (hasBuff(ch, 'slow')) {
+    timeScale *= 0.5;
+  }
+  if (hasBuff(ch, 'speed')) {
+    timeScale *= 2.0;
+  }
+  return timeScale;
+}
+
+/**
+ * Cripple factor (Char.speed, Char.java:247-249):
+ *   speed() = cripple ? baseSpeed * 0.5 : baseSpeed.
+ * M1 baseSpeed is 1 for the hero (Char.java:83); mobs multiply their own
+ * def speed by this factor.
+ */
+export function crippleFactor(ch: Char): number {
+  return hasBuff(ch, 'cripple') ? 0.5 : 1;
+}
+
+/**
+ * Base char speed before hero armor encumbrance (Char.speed,
+ * Char.java:247-249): baseSpeed (1) halved by Cripple.
+ */
+export function charSpeed(ch: Char): number {
+  return crippleFactor(ch);
+}

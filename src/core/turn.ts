@@ -13,6 +13,11 @@ export interface TurnTaker {
   time: number;
   /** Acts per TICK; >1 means more frequent turns. */
   getSpeed(): number;
+  /**
+   * Char.spend time scale (Char.java:303-314): Slow x0.5, Speed x2.0.
+   * Optional so plain TurnTakers default to 1.
+   */
+  getTimeScale?(): number;
 }
 
 /**
@@ -25,6 +30,11 @@ export abstract class Actor implements TurnTaker {
   time = 0;
 
   getSpeed(): number {
+    return 1;
+  }
+
+  /** Char.spend time scale (Char.java:303-314); 1 when no Slow/Speed buff. */
+  getTimeScale(): number {
     return 1;
   }
 
@@ -100,9 +110,17 @@ export class Scheduler {
     return m;
   }
 
-  /** Charge `taker` for acting; its next turn comes after cost/speed time units. */
+  /**
+   * Charge `taker` for acting; its next turn comes after
+   * cost / (speed * timeScale) time units. The timeScale is vanilla
+   * Char.spend (Char.java:303-314): Slow halves it (charged 2x), Speed
+   * doubles it (charged half) -- separate from speed(), which callers
+   * already fold into cost (e.g. vanilla spend(1 / speed())).
+   */
   spend(taker: TurnTaker, cost: number): void {
-    taker.time = this.now + cost / Math.max(0.01, taker.getSpeed());
+    const timeScale = taker.getTimeScale?.() ?? 1;
+    taker.time =
+      this.now + cost / Math.max(0.01, taker.getSpeed()) / timeScale;
     this.add(taker);
   }
 

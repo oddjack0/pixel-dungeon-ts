@@ -11,7 +11,7 @@
  * per-class Java files — except where the catalog explicitly quotes the
  * Java behavior in its comments.
  */
-import { Terrain } from '../core/grid.js';
+import { isHiddenTrap, Terrain } from '../core/grid.js';
 import { type Level } from '../dungeon/level.js';
 import type { ActionContext } from '../engine/seams.js';
 import type { MechanicsRng } from '../mechanics/rng.js';
@@ -19,9 +19,14 @@ import {
   gearDisplayName,
   heroAttackSkill,
   heroDamageRoll,
+  intentionalSearchLevel,
+  passiveSearchLevel,
+  searchTimeCost,
   upgradeArmor,
   upgradeWeapon,
+  vertigoRedirect,
 } from '../mechanics/hero.js';
+import { hasBuff } from '../mechanics/char.js';
 import {
   HUNGER_STEP,
   hungerTick,
@@ -438,10 +443,11 @@ export function moveHero(
   dy: number,
 ): number {
   const level = ctx.level;
-  const nx = hero.x + dx;
-  const ny = hero.y + dy;
+  let nx = hero.x + dx;
+  let ny = hero.y + dy;
   if (!level.inBounds(nx, ny)) return 1;
   // Vanilla Hero.handle: walking into a mob attacks it instead of moving.
+  // (Attacks never go through Char.move, so Vertigo does not redirect them.)
   const foe = ctx.mobs.find(
     (m) => m.isAlive() && m.x === nx && m.y === ny,
   ) as ContentMob | undefined;
@@ -454,6 +460,28 @@ export function moveHero(
       (r) => heroDamageRoll(r, hero, { ranged: false }),
     );
     return 1; // TIME_TO_ATTACK (Hero.java:38)
+  }
+  // Vertigo (Char.move, Char.java:474-482): an adjacent step is replaced by
+  // a random one of the 8 neighbors. A blocked redirect cancels the move,
+  // but the turn is still spent (Hero.act still calls spend(1 / speed()),
+  // Hero.java:949) and the post-move search still runs (onMotionComplete).
+  if (hasBuff(hero, 'vertigo')) {
+    const step = vertigoRedirect(ctx.rng, hero.pos, level.w, (p) => {
+      const px = p % level.w;
+      const py = Math.floor(p / level.w);
+      return (
+        !level.inBounds(px, py) ||
+        !level.isPassable(px, py) ||
+        ctx.mobs.some((m) => m.isAlive() && m.x === px && m.y === py)
+      );
+    });
+    if (step === null) {
+      // Vanilla Hero.onMotionComplete -> search(false) (Hero.java:1241-1246).
+      passiveSearch(ctx, hero);
+      return 1; // TIME_TO_MOVE (Hero.java:36)
+    }
+    nx = step % level.w;
+    ny = Math.floor(step / level.w);
   }
   const tile = level.get(nx, ny);
   if (tile === Terrain.DOOR_LOCKED) {
@@ -481,51 +509,78 @@ export function moveHero(
 export const TIME_TO_SEARCH = 2;
 
 /**
- * Intentional search (Hero.search(true), Hero.java:1295-1382): every secret
- * door in a visible cell within radius 1 (chebyshev) is ALWAYS revealed —
- * the `intentional ||` branch fires unconditionally. M1 has no
- * RingOfDetection, so the radius is exactly 1 (Hero.java:1308).
- * (M1: hidden traps are not covered yet — doors only.)
+ * Intentional search (Hero.search(true), Hero.java:1295-1388): every SECRET
+ * tile (secret doors AND hidden traps -- Level.secret[p], Hero.java:1344;
+ * Terrain.discover maps both, Terrain.java:143-166) in a visible cell
+ * within the radius is ALWAYS revealed (the `intentional ||` branch fires
+ * unconditionally). Hidden heaps are also opened (Hero.java:1361-1366) --
+ * M1 has no hidden-heap model (vanilla creates them only for the Wandmaker
+ * quest, Wandmaker.java:382), so that branch is a documented no-op.
+ * Time: TIME_TO_SEARCH (2) when nothing found; when something is found,
+ * 2 or 4 depending on Random.Float() < discovery level (Hero.java:1376).
+ * M1 has no RingOfDetection, so the radius is exactly 1 (Hero.java:1308).
  */
 export function searchIntentional(
   ctx: ActionContext,
   hero: ContentHero,
 ): number {
   const level = ctx.level;
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
+  const distance = 1;
+  const level_ = intentionalSearchLevel(hero.awareness); // Hero.java:1311
+  let found = false;
+  for (let dy = -distance; dy <= distance; dy++) {
+    for (let dx = -distance; dx <= distance; dx++) {
       const nx = hero.x + dx;
       const ny = hero.y + dy;
       if (!level.inBounds(nx, ny)) continue;
       if (level.visible[level.idx(nx, ny)] === 0) continue; // Dungeon.visible[p]
-      level.revealSecretDoor(nx, ny); // no-op unless DOOR_SECRET
+      const t = level.get(nx, ny);
+      if (t === Terrain.DOOR_SECRET || isHiddenTrap(t)) {
+        if (t === Terrain.DOOR_SECRET) {
+          level.revealSecretDoor(nx, ny);
+        } else {
+          level.revealTrap(nx, ny);
+        }
+        found = true;
+      }
     }
   }
-  return TIME_TO_SEARCH;
+  if (found) {
+    ctx.log('You noticed something'); // TXT_NOTICED_SMTH (Hero.java:126)
+    // Hero.interrupt() (Hero.java:1386) is a no-op in the target: intents
+    // are discrete single actions, so there is no continued action to cancel.
+  }
+  return searchTimeCost(ctx.rng, found, level_); // Hero.java:1373-1379
 }
 
 /**
  * Passive search after movement (Hero.onMotionComplete -> search(false),
- * Hero.java:1241-1246): each secret door within radius 1 is discovered with
- * probability hero.awareness (~0.1 for the warrior, Hero.java:175).
+ * Hero.java:1241-1246): each SECRET tile (secret door or hidden trap) in a
+ * visible cell within radius 1 is discovered with probability
+ * hero.awareness (Hero.java:1311, 1344).
  * NOTE: level.visible is the FOV from the previous action (the engine
  * recomputes it in afterAction, after this runs) — adjacent cells are
  * visible in all but pathological corner cases.
- * (M1: hidden traps are not passively discovered — doors only.)
  */
 export function passiveSearch(ctx: ActionContext, hero: ContentHero): void {
   const level = ctx.level;
+  const chance = passiveSearchLevel(hero.awareness); // Hero.java:1311
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
       const nx = hero.x + dx;
       const ny = hero.y + dy;
       if (!level.inBounds(nx, ny)) continue;
       if (level.visible[level.idx(nx, ny)] === 0) continue; // Dungeon.visible[p]
+      const t = level.get(nx, ny);
       if (
-        level.get(nx, ny) === Terrain.DOOR_SECRET &&
-        ctx.rng.float(0, 1) < hero.awareness
+        (t === Terrain.DOOR_SECRET || isHiddenTrap(t)) &&
+        ctx.rng.float(0, 1) < chance
       ) {
-        level.revealSecretDoor(nx, ny);
+        if (t === Terrain.DOOR_SECRET) {
+          level.revealSecretDoor(nx, ny);
+        } else {
+          level.revealTrap(nx, ny);
+        }
       }
     }
   }

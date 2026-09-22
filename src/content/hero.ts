@@ -21,6 +21,8 @@ import type {
 } from '../mechanics/char.js';
 import type { BuffKind } from '../mechanics/buffs.js';
 import type { BuffState } from '../mechanics/char.js';
+import { charTimeScale } from '../mechanics/char.js';
+import { heroSpeed } from '../mechanics/hero.js';
 import { getItem } from './items.js';
 
 /** One inventory slot: catalog id + count (stacks merge for stackables). */
@@ -60,9 +62,9 @@ export class ContentHero extends Actor implements HeroActor, Hero {
   attackSkill = 10; // Hero.ATTACK (Hero.java:50)
   defenseSkill = 5; // Hero.DEFENSE (Hero.java:50)
   /**
-   * Secret-discovery chance for passive search (Hero.awareness, Hero.java:162;
-   * 0.1 for the warrior, Hero.java:175). M1: flat 0.1 — vanilla's
-   * updateAwareness() level scaling (Hero.java:1064-1069) is not ported.
+   * Secret-discovery chance (Hero.awareness, Hero.java:162; 0.1 for a fresh
+   * warrior, Hero.java:175). Recomputed on level-up via updateAwareness()
+   * (Hero.java:1064-1069) by earnExp (Hero.java:1032-1034).
    */
   awareness = 0.1;
 
@@ -99,8 +101,14 @@ export class ContentHero extends Actor implements HeroActor, Hero {
     this.pos = v * this.w + this.x;
   }
 
+  /** Hero.speed (Hero.java:328-341): cripple x0.5, armor encumbrance 1.3^-aEnc. */
   getSpeed(): number {
-    return 1; // Char.speed() (Hero.java:306)
+    return heroSpeed(this);
+  }
+
+  /** Char.spend time scale (Char.java:303-314): Slow x0.5, Speed x2.0. */
+  getTimeScale(): number {
+    return charTimeScale(this);
   }
 
   isAlive(): boolean {

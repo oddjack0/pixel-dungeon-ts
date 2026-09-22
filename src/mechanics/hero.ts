@@ -12,7 +12,7 @@
  * later milestones); attackProc subclass cases are omitted by design.
  */
 import type { ArmorDef, Hero, WeaponDef } from './char';
-import { strEff } from './char';
+import { charSpeed, strEff } from './char';
 import type { MechanicsRng } from './rng';
 
 /** ShortSword: tier 1 (super(1, 1f, 1f), ShortSword.java:54-55), STR 11
@@ -230,4 +230,81 @@ export function gearDisplayName(
   def: Pick<WeaponDef, 'name' | 'level'>,
 ): string {
   return def.level > 0 ? `${def.name} +${def.level}` : def.name;
+}
+
+/**
+ * Awareness recompute (Hero.updateAwareness, Hero.java:1064-1069):
+ *   awareness = 1 - (rogue ? 0.85 : 0.90) ^ ((1 + min(lvl, 9)) * 0.5)
+ * NOT +1/lvl: it is a diminishing curve (0.1 at lvl 1 -> ~0.41 by lvl 9).
+ * Called from Hero.earnExp whenever lvl < 10 (Hero.java:1032-1034) and from
+ * restoreFromBundle (Hero.java:221). M1 is warrior-only (rogue = false).
+ */
+export function updateAwareness(lvl: number, rogue: boolean): number {
+  return (
+    1 - Math.pow(rogue ? 0.85 : 0.9, (1 + Math.min(lvl, 9)) * 0.5)
+  );
+}
+
+/**
+ * Hero speed (Hero.speed, Hero.java:328-341):
+ *   aEnc = armor.STR - STR(); aEnc > 0 -> super.speed() * 1.3^-aEnc.
+ * super.speed() is Char.speed (cripple x0.5). M1: no Freerunner subclass
+ * sprint (that branch is subclass-gated in vanilla); warrior base is 1.
+ */
+export function heroSpeed(hero: Hero): number {
+  const base = charSpeed(hero);
+  const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
+  return aEnc > 0 ? base * Math.pow(1.3, -aEnc) : base;
+}
+
+/** Intentional-search discovery chance (Hero.search, Hero.java:1311). */
+export function intentionalSearchLevel(awareness: number): number {
+  return 2 * awareness - awareness * awareness;
+}
+
+/** Passive-search discovery chance (Hero.search, Hero.java:1311). */
+export function passiveSearchLevel(awareness: number): number {
+  return awareness;
+}
+
+/**
+ * Intentional-search time cost (Hero.search, Hero.java:1373-1379;
+ * TIME_TO_SEARCH = 2, Hero.java:134): nothing found -> 2; something found
+ * -> 2, or 4 when Random.Float() >= discovery level.
+ */
+export function searchTimeCost(
+  rng: MechanicsRng,
+  found: boolean,
+  level: number,
+): number {
+  if (!found) {
+    return 2;
+  }
+  return rng.float(0, 1) < level ? 2 : 4;
+}
+
+/**
+ * Vertigo step redirect (Char.move, Char.java:474-482): when the char has
+ * Vertigo and the intended step is adjacent, the step is replaced by a
+ * random one of the 8 neighbors (step = pos + NEIGHBOURS8[Random.Int(8)]).
+ * Returns null when the redirected cell is not (passable or avoid) or is
+ * occupied -- the move is then cancelled but the turn is still spent
+ * (Hero.act still calls spend(1 / speed()), Hero.java:949).
+ * M1: no `avoid` tiles (no blobs yet), so `blocked` covers passable +
+ * occupancy exactly as vanilla's combined check.
+ */
+export function vertigoRedirect(
+  rng: MechanicsRng,
+  pos: number,
+  width: number,
+  blocked: (pos: number) => boolean,
+): number | null {
+  const dx = [1, -1, 0, 0, 1, 1, -1, -1]; // Level.NEIGHBOURS8 order
+  const dy = [0, 0, 1, -1, 1, -1, 1, -1]; // (Level.java:89): +1,-1,+W,-W,+1+W,+1-W,-1+W,-1-W
+  const i = rng.int(0, 8);
+  const step = pos + dx[i]! + dy[i]! * width;
+  if (step < 0 || blocked(step)) {
+    return null;
+  }
+  return step;
 }

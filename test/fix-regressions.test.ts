@@ -63,7 +63,7 @@ function openLevel(w = 12, h = 12): Level {
 // --- 1. search ---
 
 describe('search (Hero.search, Hero.java:1295)', () => {
-  test('intentional search reveals an adjacent secret door, costs 2 turns', () => {
+  test('intentional search reveals an adjacent secret door; found -> 2 or 4 turns (Hero.java:1376)', () => {
     const g = new Game(42, contentStubDeps);
     const hero = g.hero as unknown as ContentHero;
     // Hero starts at (2,2); plant a secret door east of them.
@@ -74,8 +74,28 @@ describe('search (Hero.search, Hero.java:1295)', () => {
     expect(g.pump()).toBe('acted');
     expect(g.level.get(3, 2)).toBe(Terrain.DOOR);
     expect(g.scheduler.now).toBe(nowBefore); // clock advanced on pop...
-    expect(hero.time - g.scheduler.now).toBe(TIME_TO_SEARCH);
+    // Vanilla: smthFound -> Random.Float() < level ? TIME_TO_SEARCH : TIME_TO_SEARCH * 2
+    const cost = hero.time - g.scheduler.now;
+    expect(cost === TIME_TO_SEARCH || cost === TIME_TO_SEARCH * 2).toBe(true);
     expect(TIME_TO_SEARCH).toBe(2); // Hero.java:134
+  });
+
+  test('intentional search with nothing found costs exactly TIME_TO_SEARCH (Hero.java:1378)', () => {
+    const g = new Game(42, contentStubDeps);
+    const hero = g.hero as unknown as ContentHero;
+    const nowBefore = g.scheduler.now;
+    g.queueIntent({ kind: 'search' });
+    expect(g.pump()).toBe('acted');
+    expect(hero.time - g.scheduler.now).toBe(TIME_TO_SEARCH);
+  });
+
+  test('intentional search reveals an adjacent hidden trap (Hero.java:1344; Terrain.discover)', () => {
+    const g = new Game(42, contentStubDeps);
+    g.level.set(3, 2, Terrain.TRAP_FIRE_HIDDEN);
+    g.level.visible[g.level.idx(3, 2)] = 1;
+    g.queueIntent({ kind: 'search' });
+    g.pump();
+    expect(g.level.get(3, 2)).toBe(Terrain.TRAP_FIRE);
   });
 
   test('search does not reveal doors beyond radius 1', () => {

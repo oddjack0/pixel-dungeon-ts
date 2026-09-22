@@ -35,6 +35,7 @@ import {
 import { earnExp, expForKill, MOB_EXP } from '../mechanics/exp.js';
 import { heroDefenseSkill, heroDR } from '../mechanics/hero.js';
 import type { BuffState } from '../mechanics/char.js';
+import { charTimeScale, crippleFactor } from '../mechanics/char.js';
 import type { ContentHero, ItemStack } from './hero.js';
 import { getItem } from './items.js';
 
@@ -432,8 +433,14 @@ export class ContentMob extends Actor implements MobActor {
     this.pos = v * this.w + this.x;
   }
 
+  /** Char.speed (Char.java:247-249): base speed halved by Cripple. */
   getSpeed(): number {
-    return this.def.speed;
+    return this.def.speed * crippleFactor(this);
+  }
+
+  /** Char.spend time scale (Char.java:303-314): Slow x0.5, Speed x2.0. */
+  getTimeScale(): number {
+    return charTimeScale(this);
   }
 
   isAlive(): boolean {

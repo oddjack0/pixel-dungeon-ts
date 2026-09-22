@@ -6,12 +6,15 @@
  *
  * Level-up (Hero.earnExp, Hero.java:1019-1045):
  *   while (exp >= maxExp()) { exp -= maxExp(); lvl++; HT += 5; HP += 5;
- *                             attackSkill++; defenseSkill++; }
- * M1: no subclass extras (Warlock's post-level heal is a later milestone).
+ *                             attackSkill++; defenseSkill++;
+ *                             if (lvl < 10) updateAwareness(); }
+ * M1: warrior only (rogue = false); no subclass extras (Warlock's
+ * post-level heal is a later milestone).
  *
  * Mob EXP (Mob.java:68-69, 353-355): exp() = hero.lvl <= maxLvl ? EXP : 0.
  */
 import { GOO_EXP, GOO_MAX_LVL } from './goo.js';
+import { updateAwareness } from './hero.js';
 
 export interface LevelState {
   lvl: number;
@@ -20,6 +23,8 @@ export interface LevelState {
   hp: number;
   attackSkill: number;
   defenseSkill: number;
+  /** Hero.awareness (Hero.java:162); recomputed on level-up (Hero.java:1034). */
+  awareness: number;
 }
 
 /** EXP needed to go from `lvl` to `lvl + 1` (Hero.maxExp, Hero.java:1061-1063). */
@@ -41,6 +46,9 @@ export function earnExp(state: LevelState, amount: number): number {
     state.hp += 5;
     state.attackSkill++;
     state.defenseSkill++;
+    if (state.lvl < 10) {
+      state.awareness = updateAwareness(state.lvl, false); // Hero.java:1032-1034
+    }
     gained++;
   }
   return gained;
