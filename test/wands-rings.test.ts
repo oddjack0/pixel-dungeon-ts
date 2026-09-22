@@ -329,14 +329,24 @@ describe('wand instances (create/upgrade/identify)', () => {
     expect(wandDisplayName('magic_missile')).toBe('Wand of Magic Missile');
   });
 
-  test('wand price = level * 20 (Wand.price)', () => {
+  test('wand price = considerState(50) (Wand.price)', () => {
     freshItemState();
     const rng = new RNG(7);
     const id = createWand(rng, 'firebolt');
-    expect(wandPrice(getWandState(id)!)).toBe(0);
+    // Unidentified: base 50 (levelKnown false).
+    expect(wandPrice(getWandState(id)!)).toBe(50);
+    // Identified at level 0: still 50 (level not > 0).
+    getWandState(id)!.levelKnown = true;
+    expect(wandPrice(getWandState(id)!)).toBe(50);
+    // +2 upgrades while known: 50 * (2 + 1).
     upgradeWand(id);
     upgradeWand(id);
-    expect(wandPrice(getWandState(id)!)).toBe(40);
+    expect(wandPrice(getWandState(id)!)).toBe(150);
+    // Cursed and known: halved.
+    const st = getWandState(id)!;
+    st.cursed = true;
+    st.cursedKnown = true;
+    expect(wandPrice(st)).toBe(75);
   });
 
   test('normalizeWandPickup mints an instance for bare base ids', () => {
@@ -613,9 +623,13 @@ describe('per-wand zap effects', () => {
     expect(amokDuration(2)).toBe(5);
     // Slow.duration (Slow.java:28-30): factor * 10.
     expect(slownessDuration(null)).toBe(10);
-    // Flock (WandOfFlock.java:64-66): n = power+2, lifespan = power+3.
+    // Flock (WandOfFlock.java:64-66,70,130): n = power+2,
+    // lifespan = power+3 + Random.Float(2).
     expect(flockSheepCount(2)).toBe(4);
-    expect(flockLifespan(2)).toBe(5);
+    const flockRng = new RNG(7);
+    const life = flockLifespan(2, flockRng);
+    expect(life).toBeGreaterThanOrEqual(5);
+    expect(life).toBeLessThan(7);
     // Regrowth (WandOfRegrowth.java): seed amount (power+2)*20.
     expect(regrowthSeedAmount(2)).toBe(80);
     // Blink (WandOfBlink.java:72-77): trace[distance-1] when in range.

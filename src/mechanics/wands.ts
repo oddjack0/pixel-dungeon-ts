@@ -307,8 +307,10 @@ export function flockSheepCount(power: number): number {
   return power + 2;
 }
 
-export function flockLifespan(power: number): number {
-  return power + 3;
+export function flockLifespan(power: number, rng: MechanicsRng): number {
+  // WandOfFlock.java:70: lifespan = level + 3; Sheep.act spends
+  // lifespan + Random.Float(2).
+  return power + 3 + rng.float(0, 2);
 }
 
 /**

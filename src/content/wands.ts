@@ -125,6 +125,12 @@ export interface WandState {
   wandId: string;
   /** Upgrade level (Item.level). */
   level: number;
+  /** Item.levelKnown — set by identify(). */
+  levelKnown: boolean;
+  /** Item.cursed. */
+  cursed: boolean;
+  /** Item.cursedKnown. */
+  cursedKnown: boolean;
   curCharges: number;
   maxCharges: number;
   /** Counts DOWN from 40; at 0 the wand type is identified (Wand.java:56). */
@@ -213,6 +219,9 @@ export function createWand(
     instanceId,
     wandId,
     level,
+    levelKnown: false,
+    cursed: false,
+    cursedKnown: false,
     curCharges: maxCharges,
     maxCharges,
     usagesToKnow: USAGES_TO_KNOW,
@@ -318,9 +327,22 @@ export function wandDisplaySprite(wandId: string): string {
   return idWandImage(spec.className);
 }
 
-/** Wand price (Item.price -> Wand.price: level * 20; base price 0). */
+/**
+ * Wand price (Wand.price: considerState(50); Item.java:448-464).
+ * Wands never lose durability in vanilla (no durability loss on zap),
+ * so the isBroken() branch never applies.
+ */
 export function wandPrice(state: WandState): number {
-  return Math.max(0, state.level * 20);
+  let price = 50;
+  if (state.cursed && state.cursedKnown) price = Math.floor(price / 2);
+  if (state.levelKnown) {
+    if (state.level > 0) {
+      price *= state.level + 1;
+    } else if (state.level < 0) {
+      price = Math.floor(price / (1 - state.level));
+    }
+  }
+  return Math.max(1, price);
 }
 
 /**
@@ -946,17 +968,23 @@ function effectTeleportation(
   const target = charAtPos(ctx, ball.cell);
   if (target && isZapCharAlive(target)) {
     if (target instanceof ContentHero) {
-      // setKnown() then teleport self (ScrollOfTeleportation.teleportHero).
+      // setKnown() then teleport self (ScrollOfTeleportation.teleportHero:
+      // do-while, up to 11 randomRespawnCell calls).
       identifyWandType('teleportation', ctx.log);
-      const cell = randomRespawnCell(ctx, hero);
+      let cell = -1;
+      for (let count = 11; count > 0; count--) {
+        cell = randomRespawnCell(ctx, hero);
+        if (cell !== -1) break;
+      }
       if (cell !== -1) {
         hero.pos = cell;
       } else {
         ctx.log('There is nowhere to teleport to!');
       }
     } else {
+      // WandOfTeleportation.onZap: do-while, up to 11 calls total.
       let pos = -1;
-      for (let count = 10; count > 0; count--) {
+      for (let count = 11; count > 0; count--) {
         pos = randomRespawnCell(ctx, hero);
         if (pos !== -1) break;
       }
@@ -997,7 +1025,7 @@ function effectFlock(
     (pos) => occupied.has(pos),
     n,
   );
-  const lifespan = flockLifespan(power);
+  const lifespan = flockLifespan(power, ctx.rng);
   for (const pos of positions) {
     spawnFlockSheep(ctx, pos, lifespan);
   }
@@ -1209,7 +1237,7 @@ const SHEEP_DEF: MobDef = {
   id: 'sheep',
   name: 'sheep',
   sprite: 'mob_sheep',
-  hp: 10,
+  hp: 1, // NPC default HP (invulnerable; damage is a no-op)
   atk: 0,
   def: 0,
   dmgMin: 0,
