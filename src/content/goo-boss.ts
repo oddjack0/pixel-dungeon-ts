@@ -42,6 +42,7 @@ import {
   gooDecide,
   gooOozeRoll,
   gooWaterRegen,
+  type GooAction,
   GOO_ATTACK,
   GOO_DEFENSE,
   GOO_DMG_MAX,
@@ -92,8 +93,8 @@ export const GOO_DEF: MobDef = {
 };
 
 export class GooMob extends ContentMob {
-  pumpedUp = false; // Goo.pumpedUp (Goo.java:32)
-  jumped = false; // Goo.jumpTurns
+  pumpedUp = false; // Goo.pumpedUp (Goo.java:60)
+  jumped = false; // Goo.jumped (Goo.java:61)
 
   constructor(id: number, pos: number, w: number) {
     super(id, GOO_DEF, pos, w);
@@ -140,7 +141,21 @@ export class GooMob extends ContentMob {
   }
 
   /**
-   * Goo.doAttack (Goo.java:119-182): pumped strike, jump strike, pump-up,
+   * Post-strike state via the pure mirror (src/mechanics/goo.ts). The
+   * pre-strike `jumped` writes happen inline in doAttack, exactly where
+   * Goo.java writes them (Goo.java:115, 121).
+   */
+  private applyGooAfter(action: GooAction): void {
+    const s = gooAfterAttack(
+      { hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped },
+      action,
+    );
+    this.pumpedUp = s.pumpedUp;
+    this.jumped = s.jumped;
+  }
+
+  /**
+   * Goo.doAttack (Goo.java:104-170): pumped strike, jump strike, pump-up,
    * or the 1/3 pump fizzle that spends the turn.
    */
   override doAttack(ctx: ActionContext, hero: ContentHero): number {
@@ -153,40 +168,39 @@ export class GooMob extends ContentMob {
     );
     switch (action.kind) {
       case 'pump': {
-        this.pumpedUp = true;
-        ctx.log('Goo is pumping itself up!'); // Goo.java:164, GLog.n
-        const s = gooAfterAttack(
-          { hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped },
-          action,
-        );
-        this.pumpedUp = s.pumpedUp;
-        this.jumped = s.jumped;
-        return PUMP_UP_DELAY * this.getSpeed(); // spend(2) (Goo.java:169)
+        // Goo.java:158-167: pumpedUp = true (jumped untouched), spend(2).
+        ctx.log('Goo is pumping itself up!'); // GLog.n, Goo.java:164
+        this.applyGooAfter(action);
+        return PUMP_UP_DELAY * this.getSpeed(); // spend(PUMP_UP_DELAY), Goo.java:159
       }
       case 'pumpFizzle':
-        // Goo.java:144-148: pump fails, nothing happens this turn.
-        this.pumpedUp = false;
+        // Goo.java:144-148: pumpedUp = false (jumped untouched), turn spent.
+        this.applyGooAfter(action);
         return this.waitCost();
+      case 'pumpedAttack': {
+        // Goo.java:112-118: jumped = false BEFORE the strike — pumped attack
+        // WITHOUT accuracy penalty (attackSkill 30).
+        this.jumped = false;
+        this.gooStrike(ctx, hero, gooAttackSkill(true, this.jumped), true);
+        this.applyGooAfter(action);
+        return 1 * this.getSpeed(); // spend(attackDelay())
+      }
       case 'attack': {
-        const pumped = this.pumpedUp; // capture before afterAttack clears it
-        const jumped = this.jumped;
-        this.gooStrike(ctx, hero, gooAttackSkill(pumped, jumped), pumped);
-        const s = gooAfterAttack(
-          { hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped },
-          action,
-        );
-        this.pumpedUp = s.pumpedUp;
-        this.jumped = s.jumped;
+        // Goo.java:150-156: normal attack (attackSkill 15); jumped untouched.
+        // The attack() wrapper then clears pumpedUp only (Goo.java:176-180).
+        this.gooStrike(ctx, hero, gooAttackSkill(false, this.jumped), false);
+        this.applyGooAfter(action);
         return 1 * this.getSpeed(); // spend(attackDelay())
       }
       case 'jumpAttack': {
-        // Leap to the cell adjacent to the hero on the far side, then
-        // strike with the pumped attack at jump accuracy (Goo.java:97-111).
+        // Goo.java:119-143: jumped = true BEFORE the strike — pumped attack
+        // WITH accuracy penalty (attackSkill 15). The leap lands in the cell
+        // before the hero along the jump trace (Ballistica.trace[distance-2]).
+        this.jumped = true;
         this.pos = this.jumpDest(ctx, hero);
         ctx.log('Goo jumps!');
-        this.gooStrike(ctx, hero, gooAttackSkill(true, true), true);
-        this.pumpedUp = false;
-        this.jumped = true;
+        this.gooStrike(ctx, hero, gooAttackSkill(true, this.jumped), true);
+        this.applyGooAfter(action);
         return 1 * this.getSpeed(); // spend(attackDelay())
       }
     }
@@ -207,9 +221,10 @@ export class GooMob extends ContentMob {
       (rng) => gooDamageRoll(rng, pumped),
       (rng, damage) => {
         // Goo.attackProc: 1/3 chance to apply Ooze (Goo.java:174-180).
+        // The warning text is Hero.add's Ooze branch (Hero.java:1091).
         if (gooOozeRoll(rng)) {
           hero.buffs.ooze = { kind: 'ooze', left: 0 }; // duration-less (Ooze.java)
-          ctx.log('Caustic ooze covers you!');
+          ctx.log('Caustic ooze eats your flesh. Wash away it!');
         }
         return damage;
       },

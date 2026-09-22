@@ -43,6 +43,7 @@ import { charTimeScale, crippleFactor } from '../mechanics/char.js';
 import type { ContentHero, ItemStack } from './hero.js';
 import { addToInventory, removeFromInventory } from './hero.js';
 import { getItem, ITEMS } from './items.js';
+import { itemGenerator, skeletonWeaponDrop } from './itemgen.js';
 
 /** Mob AI states (Mob.SLEEPEING/WANDERING/HUNTING/FLEEING/PASSIVE, Mob.java:70-76). */
 export type MobAiState = 'sleeping' | 'wandering' | 'hunting' | 'fleeing' | 'passive';
@@ -792,14 +793,17 @@ export function mobDefenseProc(
     if (cell !== -1) {
       const clone = new ContentMob(nextMobId(), mob.def, cell, ctx.level.w);
       clone.hp = Math.floor((mob.hp - damage) / 2); // (HP - damage) / 2, Swarm.java:94
-      clone.state = 'hunting'; // Swarm.java:95
+      clone.state = 'hunting'; // Swarm.java:95 — no enemy/target/enemySeen set:
+      // the clone's first actHunting (Mob.java:479-513) then behaves exactly
+      // like vanilla: hero in FOV and adjacent -> attacks; hero in FOV but
+      // distant -> target = hero.pos, moves toward the hero; hero not in FOV
+      // (target stays -1) -> drops to WANDERING. enemySeen is assigned by
+      // that first act (Mob.java:509); vanilla logs nothing here.
       clone.generation = mob.generation + 1; // Swarm.split, Swarm.java:112-121
-      clone.enemySeen = true;
-      if (mob.buffs.burning) clone.buffs.burning = { kind: 'burning', left: 8 };
-      if (mob.buffs.poison) clone.buffs.poison = { kind: 'poison', left: 2 };
+      if (mob.buffs.burning) clone.buffs.burning = { kind: 'burning', left: 8 }; // reignite, Swarm.java:114-116
+      if (mob.buffs.poison) clone.buffs.poison = { kind: 'poison', left: 2 }; // set(2), Swarm.java:117-119
       mob.hp -= clone.hp; // Swarm.java:101
       ctx.addMob(clone, 1); // GameScene.add(clone, SPLIT_DELAY=1), Swarm.java:101
-      ctx.log('The swarm splits!');
     }
   }
   if (mob.def.ability === 'thief' && mob.state === 'fleeing') {
@@ -953,14 +957,22 @@ function rollMobLoot(ctx: ActionContext, mob: ContentMob): void {
         dropItemAt(ctx, mob.pos, 'potion_healing');
       }
       break;
-    case 'skeleton':
-      // Random.Int(5) == 0 -> random weapon, best of 3 (Skeleton.java:78-88);
-      // M1: the only weapon is the short sword.
+    case 'skeleton': {
+      // Skeleton.dropLoot (Skeleton.java:78-88): Random.Int(5) == 0 -> three
+      // Generator.random(WEAPON) draws, keeping the lowest-level weapon.
+      // The draws share the run's Generator bag (halving per draw).
       if (rng.int(0, 5) === 0) {
-        dropItemAt(ctx, mob.pos, 'shortsword');
+        dropItemAt(ctx, mob.pos, skeletonWeaponDrop(rng, depth, itemGenerator));
       }
       break;
-    // crab: MysteryMeat 0.167 (Crab.java:40-41) — no M1 mechanics; skipped.
+    }
+    case 'crab':
+      // loot = MysteryMeat, lootChance 0.167 (Crab.java:39-41); M1's only
+      // food is the ration.
+      if (rng.float(0, 1) < 0.167) {
+        dropItemAt(ctx, mob.pos, 'ration');
+      }
+      break;
     // thief: RingOfHaggler 0.01 (Thief.java:52-53) — no M1 rings; skipped.
     // goo: LloydsBeacon 0.333 (Goo.java:58-59) — no M1 beacons; skipped.
     default:

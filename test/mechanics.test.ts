@@ -405,9 +405,9 @@ describe('Goo (Goo.java)', () => {
     expect(gooCanAttack(true, 2)).toBe(true);
     expect(gooCanAttack(true, 3)).toBe(false);
   });
-  test('decide: pumped + adjacent -> attack', () => {
+  test('decide: pumped + adjacent -> pumpedAttack (jumped=false pre-strike)', () => {
     const a = gooDecide(new ScriptRng(), { hp: 80, pumpedUp: true, jumped: false }, { dist: 1, jumpPathClear: true });
-    expect(a).toEqual({ kind: 'attack' });
+    expect(a).toEqual({ kind: 'pumpedAttack' });
   });
   test('decide: pumped + dist 2 + clear path -> jumpAttack', () => {
     const a = gooDecide(new ScriptRng(), { hp: 80, pumpedUp: true, jumped: false }, { dist: 2, jumpPathClear: true });
@@ -423,13 +423,34 @@ describe('Goo (Goo.java)', () => {
     const pump = gooDecide(new ScriptRng([], [0]), { hp: 80, pumpedUp: false, jumped: false }, { dist: 1, jumpPathClear: false });
     expect(pump).toEqual({ kind: 'pump' });
   });
-  test('pumpedUp clears after attack and after moving', () => {
-    const s = { hp: 80, pumpedUp: true, jumped: false };
-    expect(gooAfterAttack(s, { kind: 'attack' }).pumpedUp).toBe(false);
-    expect(gooAfterAttack(s, { kind: 'jumpAttack' }).jumped).toBe(true);
-    expect(gooAfterAttack(s, { kind: 'pump' }).pumpedUp).toBe(true);
-    expect(gooAfterAttack(s, { kind: 'pumpFizzle' }).pumpedUp).toBe(false);
-    expect(gooAfterMove(s).pumpedUp).toBe(false);
+  test('jumped is written only by the pumped branches (Goo.java:115, 121)', () => {
+    // Normal attack: jumped untouched (Goo.java:150-156; the attack() wrapper
+    // clears ONLY pumpedUp, Goo.java:176-180).
+    expect(
+      gooAfterAttack({ hp: 80, pumpedUp: false, jumped: true }, { kind: 'attack' }),
+    ).toEqual({ hp: 80, pumpedUp: false, jumped: true });
+    // Pump-up: jumped untouched (Goo.java:158-167).
+    expect(
+      gooAfterAttack({ hp: 80, pumpedUp: false, jumped: true }, { kind: 'pump' }),
+    ).toEqual({ hp: 80, pumpedUp: true, jumped: true });
+    // Pump fizzle: jumped untouched (Goo.java:144-148).
+    expect(
+      gooAfterAttack({ hp: 80, pumpedUp: true, jumped: true }, { kind: 'pumpFizzle' }),
+    ).toEqual({ hp: 80, pumpedUp: false, jumped: true });
+    // Pumped + adjacent: jumped = false before the strike (Goo.java:115).
+    expect(
+      gooAfterAttack({ hp: 80, pumpedUp: true, jumped: true }, { kind: 'pumpedAttack' }),
+    ).toEqual({ hp: 80, pumpedUp: false, jumped: false });
+    // Jump attack: jumped = true before the strike (Goo.java:121).
+    expect(
+      gooAfterAttack({ hp: 80, pumpedUp: true, jumped: false }, { kind: 'jumpAttack' }),
+    ).toEqual({ hp: 80, pumpedUp: false, jumped: true });
+    // Moving clears pumpedUp only (Goo.getCloser, Goo.java:182-185).
+    expect(gooAfterMove({ hp: 80, pumpedUp: true, jumped: true })).toEqual({
+      hp: 80,
+      pumpedUp: false,
+      jumped: true,
+    });
   });
   test('ooze applied on Int(3)==0 (1/3)', () => {
     expect(gooOozeRoll(new ScriptRng([], [0]))).toBe(true);

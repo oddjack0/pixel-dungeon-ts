@@ -27,6 +27,7 @@ import type {
   PlacedItem,
 } from '../dungeon/level.js';
 import { getItem, parseItemId } from './items.js';
+import { itemGenerator, resetItemGenerator } from './itemgen.js';
 import { buildMob, nextMobId, type ContentMob } from './mobs.js';
 
 /**
@@ -114,46 +115,15 @@ export function buildMobs(resolved: ResolvedMob[], w: number): ContentMob[] {
 }
 
 /**
- * M1 random-item table for the 'random' tag and generator heaps.
- * (Vanilla Generator.random() draws from weighted item categories
- * (Generator.java:38-87); M1 collapses every category onto the seven-item
- * catalog + gold. Documented adaptation.)
+ * M1 random-item draw for the 'random' tag and generator heaps
+ * (RegularLevel.java:609: drop(Generator.random(), randomDropCell())).
+ * Exact vanilla Generator (src/content/itemgen.ts): category weights
+ * WEAPON 15 / ARMOR 10 / POTION 50 / SCROLL 40 / WAND 4 / RING 2 / SEED 5 /
+ * GOLD 50 / MISC 5 (Generator.java:38-48) with per-draw halving, reset once
+ * per depth (InterlevelScene.java:116).
  */
-const RANDOM_TABLE: ReadonlyArray<{ id: string; weight: number }> = [
-  { id: 'gold', weight: 3 },
-  { id: 'dart', weight: 2 },
-  { id: 'ration', weight: 2 },
-  { id: 'potion_healing', weight: 2 },
-  { id: 'scroll', weight: 1.5 },
-  { id: 'potion_strength', weight: 0.5 },
-  { id: 'cloth_armor', weight: 0.5 },
-  { id: 'shortsword', weight: 0.5 },
-];
-
 function pickRandomItemId(rng: MechanicsRng, depth: number): string {
-  let total = 0;
-  for (const e of RANDOM_TABLE) total += e.weight;
-  const roll = rng.float(0, total);
-  let acc = 0;
-  for (const e of RANDOM_TABLE) {
-    acc += e.weight;
-    if (roll < acc) return sizedItemId(rng, depth, e.id);
-  }
-  return sizedItemId(rng, depth, RANDOM_TABLE[RANDOM_TABLE.length - 1]!.id);
-}
-
-/**
- * Sized drops: Gold.random() = 20 + depth*10 .. 40 + depth*20
- * (Gold.java:100-103); Dart.random() = 5..15 (Dart.java:51).
- */
-function sizedItemId(rng: MechanicsRng, depth: number, baseId: string): string {
-  if (baseId === 'gold') {
-    return `gold:${rng.intRange(20 + depth * 10, 40 + depth * 20)}`;
-  }
-  if (baseId === 'dart') {
-    return `dart:${rng.intRange(5, 15)}`;
-  }
-  return baseId;
+  return itemGenerator.random(rng, depth);
 }
 
 /**
@@ -199,7 +169,7 @@ export function resolveItemTag(
     case 'prize-food':
       return 'ration';
     case 'prize-bomb':
-      return `dart:${rng.intRange(5, 15)}`; // M1: no bombs; darts preserve a throwable
+      return `dart:${rng.int(5, 15)}`; // M1: no bombs; darts preserve a throwable (Dart.java:59)
     case 'prize-wand':
     case 'prize-ring':
       return 'scroll'; // M1: no wands/rings
@@ -232,7 +202,7 @@ export function resolveItemSpawns(
     const tag = s.tag ?? 'random';
     const itemId =
       tag === 'gold'
-        ? sizedItemId(rng, depth, 'gold')
+        ? itemGenerator.randomFrom(rng, 'gold', depth) // exact Gold.random() bounds
         : tag.startsWith('gold:')
           ? tag
           : resolveItemTag(rng, depth, tag);
@@ -264,6 +234,9 @@ export function takeGenResult(level: object): GenResult | null {
  */
 export const contentLevelGen: LevelGen = {
   generate(rng: RNG, depth: number) {
+    // Generator.reset() on depth entry (InterlevelScene.java:116): the
+    // per-depth category weights start fresh before any draw.
+    resetItemGenerator();
     const result = generateLevel(rng, depth, newRunState());
     const items = resolveItemSpawns(rng, depth, result.items);
     for (const it of items) result.level.items.push(it);

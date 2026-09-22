@@ -58,6 +58,12 @@ import {
   resolveItemTag,
   resolveMobSpawns,
 } from '../src/content/spawns.js';
+import {
+  GEN_CATEGORY_WEIGHTS,
+  GeneratorBag,
+  skeletonWeaponDrop,
+} from '../src/content/itemgen.js';
+import type { MechanicsRng } from '../src/mechanics/rng.js';
 import { contentMechanics } from '../src/content/hooks.js';
 import { GooMob, GOO_DEF } from '../src/content/goo-boss.js';
 import {
@@ -306,7 +312,7 @@ describe('item spawn resolution', () => {
     ['scroll-of-enchantment', 'scroll'],
     ['dew-vial', 'potion_healing'],
     ['iron-key', 'iron_key'],
-    ['golden-key', 'iron_key'],
+    ['golden-key', 'golden_key'],
     ['prize-armor', 'cloth_armor'],
     ['prize-weapon', 'shortsword'],
     ['prize-potion', 'potion_healing'],
@@ -332,7 +338,7 @@ describe('item spawn resolution', () => {
     const { defId, qty } = parseItemId(id);
     expect(defId).toBe('dart');
     expect(qty).toBeGreaterThanOrEqual(5);
-    expect(qty).toBeLessThanOrEqual(15);
+    expect(qty).toBeLessThan(15); // Dart.random(): Random.Int(5, 15), Dart.java:59
   });
 
   test('random tag resolves into the catalog', () => {
@@ -360,6 +366,165 @@ describe('item spawn resolution', () => {
     ]);
     expect(ITEMS[parseItemId(it!.itemId).defId]).toBeDefined();
   });
+
+  test('prize-bomb dart stack uses the exact Dart quantity range [5, 15)', () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const id = resolveItemTag(new RNG(seed), 1, 'prize-bomb');
+      const { qty } = parseItemId(id);
+      expect(qty).toBeGreaterThanOrEqual(5);
+      expect(qty).toBeLessThan(15); // Dart.random(): Random.Int(5, 15), Dart.java:59
+    }
+  });
+});
+
+// --- vanilla item generator (items/Generator.java) ---
+
+/** Scripted MechanicsRng for deterministic Generator tests. */
+class StubRng implements MechanicsRng {
+  private floats: number[];
+  private ints: number[];
+  constructor(floats: number[] = [], ints: number[] = []) {
+    this.floats = [...floats];
+    this.ints = [...ints];
+  }
+  float(min: number, max: number): number {
+    const f = this.floats.length ? this.floats.shift()! : 0;
+    return min + f * (max - min);
+  }
+  int(min: number, max: number): number {
+    const v = this.ints.length ? this.ints.shift()! : min;
+    return Math.min(Math.max(v, min), max - 1);
+  }
+  intRange(min: number, max: number): number {
+    const v = this.ints.length ? this.ints.shift()! : min;
+    return Math.min(Math.max(v, min), max);
+  }
+  normalIntRange(min: number, _max: number): number {
+    return min;
+  }
+  pick<T>(arr: readonly T[]): T {
+    return arr[0]!;
+  }
+}
+
+describe('vanilla item generator (Generator.java)', () => {
+  test('category base weights match Generator.java:38-48', () => {
+    expect(GEN_CATEGORY_WEIGHTS).toEqual([
+      { cat: 'weapon', weight: 15 },
+      { cat: 'armor', weight: 10 },
+      { cat: 'potion', weight: 50 },
+      { cat: 'scroll', weight: 40 },
+      { cat: 'wand', weight: 4 },
+      { cat: 'ring', weight: 2 },
+      { cat: 'seed', weight: 5 },
+      { cat: 'food', weight: 0 },
+      { cat: 'gold', weight: 50 },
+      { cat: 'misc', weight: 5 },
+    ]);
+  });
+
+  test('random() picks by current weights and halves the drawn category', () => {
+    const bag = new GeneratorBag();
+    // Category roll 0 of 181 -> WEAPON (first entry); class roll 0 -> Dagger.
+    const id = bag.random(new StubRng([0, 0]), 1);
+    expect(id).toBe('shortsword');
+    expect(bag.weightOf('weapon')).toBe(7.5); // 15 / 2 (Generator.java:113)
+    expect(bag.weightOf('gold')).toBe(50); // untouched
+  });
+
+  test('gold draw uses the exact Gold.random() bounds [20+10d, 40+20d)', () => {
+    const bag = new GeneratorBag();
+    // randomFrom('gold'): halves GOLD, class roll 0 -> Gold, qty int -> min.
+    expect(bag.randomFrom(new StubRng([0], []), 'gold', 2)).toBe('gold:40');
+    expect(bag.weightOf('gold')).toBe(25);
+  });
+
+  test('missile classes map to darts with their exact quantity ranges', () => {
+    const bag = new GeneratorBag();
+    // WEAPON class probs: 10 melee (1 each), then Javelin [10,11),
+    // IncendiaryDart [11,12), CurareDart [12,13), Shuriken [13,14),
+    // Tamahawk [14,15) of total 15.
+    expect(bag.randomFrom(new StubRng([11.5 / 15], [4]), 'weapon', 1)).toBe(
+      'dart:4', // IncendiaryDart Random.Int(3, 6)
+    );
+    expect(bag.randomFrom(new StubRng([12.5 / 15], [2]), 'weapon', 1)).toBe(
+      'dart:2', // CurareDart Random.Int(2, 5)
+    );
+    expect(bag.randomFrom(new StubRng([14.5 / 15], [11]), 'weapon', 1)).toBe(
+      'dart:11', // Tamahawk Random.Int(5, 12)
+    );
+  });
+
+  test('reset() restores base weights (Generator.reset)', () => {
+    const bag = new GeneratorBag();
+    bag.random(new StubRng([0, 0]), 1);
+    expect(bag.weightOf('weapon')).toBe(7.5);
+    bag.reset();
+    expect(bag.weightOf('weapon')).toBe(15);
+    expect(bag.weightOf('potion')).toBe(50);
+  });
+
+  test('skeletonWeaponDrop draws 3 weapons, keeps the first (M1: all lvl 0)', () => {
+    const bag = new GeneratorBag();
+    // Class rolls: Dagger -> shortsword, then Javelin -> dart, then Sword.
+    const id = skeletonWeaponDrop(new StubRng([0, 10.5 / 15, 5.5 / 15]), 3, bag);
+    expect(id).toBe('shortsword');
+    expect(bag.weightOf('weapon')).toBe(15 / 8); // halved once per draw
+  });
+
+  test('scroll/wand/ring/seeds collapse onto M1 catalog items', () => {
+    const bag = new GeneratorBag();
+    expect(bag.randomFrom(new StubRng([0], []), 'scroll', 1)).toBe('scroll');
+    expect(bag.randomFrom(new StubRng([0], []), 'wand', 1)).toBe('scroll');
+    expect(bag.randomFrom(new StubRng([0], []), 'ring', 1)).toBe('scroll');
+    expect(bag.randomFrom(new StubRng([0], []), 'seed', 1)).toBe('ration');
+    expect(bag.randomFrom(new StubRng([0], []), 'potion', 1)).toBe('potion_healing');
+    expect(bag.randomFrom(new StubRng([0], []), 'armor', 1)).toBe('cloth_armor');
+    expect(bag.randomFrom(new StubRng([0], []), 'misc', 1)).toBe('dart:5'); // Bomb [0,2)
+    expect(bag.randomFrom(new StubRng([2.5 / 3], []), 'misc', 1)).toBe('potion_healing'); // Honeypot [2,3)
+  });
+});
+
+// --- mob loot tables (depths 1-5) ---
+
+describe('M1 mob loot', () => {
+  test('crab drops mystery meat (ration) ~16.7% (Crab.java:39-41)', () => {
+    const level = makeLevel(12, 12, 3);
+    const c = makeCtx(level, 777);
+    let drops = 0;
+    const N = 2000;
+    for (let i = 0; i < N; i++) {
+      killMob(c.ctx, buildMob('crab', 1000 + i, 6 * 12 + 6, 12), {});
+      if (level.items.some((it) => it.itemId === 'ration')) drops++;
+      level.items.length = 0;
+    }
+    expect(drops).toBeGreaterThan(200);
+    expect(drops).toBeLessThan(500);
+  });
+
+  test('skeleton drops a weapon ~20% via best-of-3 Generator draws (Skeleton.java:78-88)', () => {
+    const level = makeLevel(12, 12, 4);
+    const c = makeCtx(level, 4242);
+    c.hero.pos = 0; // keep the hero clear of the death burst
+    const drops: string[] = [];
+    const N = 2000;
+    for (let i = 0; i < N; i++) {
+      killMob(c.ctx, buildMob('skeleton', 2000 + i, 6 * 12 + 6, 12), {});
+      for (const it of level.items) drops.push(it.itemId);
+      level.items.length = 0;
+    }
+    expect(drops.length).toBeGreaterThan(250);
+    expect(drops.length).toBeLessThan(550);
+    for (const id of drops) {
+      const { defId, qty } = parseItemId(id);
+      expect(['shortsword', 'dart']).toContain(defId);
+      if (defId === 'dart') {
+        // Missile classes: CurareDart Int(2,5) .. Tamahawk Int(5,12)
+        expect(qty).toBeGreaterThanOrEqual(2);
+        expect(qty).toBeLessThan(15);
+      }
+    }
+  });
 });
 
 // --- swarm split ---
@@ -377,7 +542,10 @@ describe('swarm split (Swarm.defenseProc)', () => {
     expect(clone.state).toBe('hunting');
     expect(clone.generation).toBe(1);
     expect(chebyshevPos(clone.pos, swarm.pos, 12)).toBe(1);
-    expect(c.logs).toContain('The swarm splits!');
+    // Vanilla sets no enemySeen and logs nothing at split (Swarm.java:76-107;
+    // enemySeen is assigned by the clone's first Hunting.act, Mob.java:509).
+    expect(clone.enemySeen).toBe(false);
+    expect(c.logs.some((l) => l.includes('splits'))).toBe(false);
   });
 
   test('no split when HP < damage + 2', () => {
@@ -628,6 +796,24 @@ describe('goo (Goo.java)', () => {
     expect(
       c.logs.some((l) => l.includes('hits you') || l.includes('misses you')),
     ).toBe(true);
+  });
+
+  test('ooze warning uses the exact vanilla string (Hero.java:1091)', () => {
+    const seen: string[] = [];
+    for (let seed = 0; seed < 80; seed++) {
+      const level = makeLevel();
+      const c = makeCtx(level, 1000 + seed);
+      const goo = addMob(c, buildMob('goo', 1, 6 * 12 + 6, 12)) as GooMob;
+      goo.pumpedUp = true;
+      goo.state = 'hunting';
+      c.hero.pos = 6 * 12 + 7;
+      goo.takeTurn(c.ctx);
+      for (const l of c.logs) if (l.includes('ooze')) seen.push(l);
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    for (const l of seen) {
+      expect(l).toBe('Caustic ooze eats your flesh. Wash away it!');
+    }
   });
 
   test('moving clears the pump (Goo.getCloser)', () => {
