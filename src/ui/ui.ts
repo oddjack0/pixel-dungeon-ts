@@ -24,6 +24,11 @@ import { Screens, type RunSummary } from './screens.js';
 import { ShopPanel, type ShopTab } from './shop.js';
 import { Effects } from './effects.js';
 import { inRect, roundRect, UI, type View } from './palette.js';
+import {
+  Dialogs,
+  dialogOpen,
+  uiBridge,
+} from './dialog.js';
 
 const HERO_MS = 110; // at most one hero-visible action per 110ms
 
@@ -36,6 +41,7 @@ export class UiManager {
   private readonly hud = new Hud();
   private readonly inventory = new InventoryPanel();
   private readonly shop = new ShopPanel();
+  private readonly dialogs = new Dialogs();
   private readonly minimap = new Minimap();
   private readonly screens = new Screens();
   private readonly effects = new Effects();
@@ -67,6 +73,10 @@ export class UiManager {
     this.effects.onMobDeath = () => {
       this.kills++;
     };
+
+    // Quest dialogs: the uiBridge carries openShop for the shopkeeper's
+    // onTalk path (src/content/npcs.ts ShopkeeperMob).
+    uiBridge.current = { openShop: (mode) => this.openShop(mode) };
 
     // Screens lifecycle.
     this.screens.onStartRun = (seed) => this.startRun(seed);
@@ -201,6 +211,15 @@ export class UiManager {
       }
       return;
     }
+    // Quest dialog modal: captures all keys while open (vanilla windows are
+    // blocking — the game cannot be controlled behind them).
+    if (dialogOpen()) {
+      if (this.dialogs.handleKey(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
     const k = e.key;
     if (this.throwMode && (k === 'Escape' || k.toLowerCase() === 'p')) {
       this.throwMode = null;
@@ -256,6 +275,15 @@ export class UiManager {
     }
     const g = this.game;
     if (!g || g.gameOver) return;
+
+    // Quest dialog modal: captures all taps while open.
+    if (dialogOpen()) {
+      if (this.dialogs.handleTap(x, y)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
 
     // Inventory modal consumes everything.
     if (this.inventory.open) {
@@ -321,8 +349,10 @@ export class UiManager {
     const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const g = this.game;
 
-    if (g && this.screens.state === 'playing' && !g.gameOver) {
+    if (g && this.screens.state === 'playing' && !g.gameOver && !dialogOpen()) {
       // Turn pacing: at most one hero-visible action per 110ms; mobs drain.
+      // A quest dialog pauses the simulation (vanilla modal windows block
+      // the game loop).
       let guard = 500;
       for (;;) {
         const next = g.scheduler.peek();
@@ -358,6 +388,8 @@ export class UiManager {
       this.minimap.draw(ctx, g, this.view, nowMs);
       this.inventory.draw(ctx, g, this.renderer, this.view);
       this.shop.draw(ctx, g, this.renderer, this.view);
+      // Quest dialogs render above every other overlay.
+      if (dialogOpen()) this.dialogs.draw(ctx, this.renderer, this.view);
       if (this.throwMode) this.drawThrowHint(ctx);
     } else {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

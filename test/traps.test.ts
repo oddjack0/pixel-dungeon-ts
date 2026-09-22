@@ -81,6 +81,10 @@ function makeCtx(level: Level, seed = 1234): Ctx {
       const i = mobs.indexOf(m as ContentMob);
       if (i >= 0) mobs.splice(i, 1);
     },
+    removeMob: (m: MobActor) => {
+      const i = mobs.indexOf(m as ContentMob);
+      if (i >= 0) mobs.splice(i, 1);
+    },
     addMob: (m: MobActor, _delay?: number) => {
       added.push(m as ContentMob);
       mobs.push(m as ContentMob);

@@ -123,6 +123,14 @@ export function useInventorySlot(
       // Dewdrops auto-heal on pickup (never used from inventory); seed
       // planting/throwing arrives with the plant system. No-op for now.
       return 1;
+    case 'bag':
+    case 'misc':
+    case 'quest':
+      // Bags are containers (WndBag, not ported); torch/ankh/weightstone
+      // have no use action in vanilla (passive or applied via other UI).
+      // Quest items are handed to NPCs via dialog, not used from inventory.
+      // The inventory UI only offers 'drop' for these (actionsFor default).
+      return 1;
   }
 }
 
@@ -866,7 +874,7 @@ export function moveHero(
     // step inside the Tengu arena spawns Tengu (HUNTING) at a free arena cell
     // and re-locks the arena door. No-op on levels without an arena.
     pressArenaCell(ctx.level, ctx.rng, hero.pos, {
-      occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.pos === pos),
+      occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
       spawn: (pos) => {
         // Bestiary.mob(depth) at depth 10 -> Tengu (Bestiary.java:107-110);
         // boss.state = boss.HUNTING; GameScene.add( boss ) (PrisonBossLevel.java:316-319).

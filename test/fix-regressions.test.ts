@@ -46,6 +46,7 @@ function makeCtx(level: Level, hero: ContentHero, seed = 99): ActionContext {
     mobs: mobs as unknown as MobActor[],
     log: (m: string) => logs.push(m),
     killMob: () => {},
+    removeMob: () => {},
     addMob: () => {},
     syncMobs: () => {},
   };
@@ -255,7 +256,7 @@ describe('Goo jump landing (Goo.java:117)', () => {
     (ctx.mobs as unknown as ContentMob[]).push(blocker);
     lvl.mobs.push({
       id: 2, x: 5, y: 6, hp: 8, ht: 8,
-      name: 'rat', sprite: 'mob_rat', hostile: true,
+      name: 'rat', sprite: 'mob_rat', hostile: true, talkable: false,
     });
     goo.doAttack(ctx, hero);
     expect(goo.pos).toBe(5 * lvl.w + 5); // stayed put, still struck

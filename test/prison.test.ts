@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { RNG } from '../src/core/rng.js';
-import { Terrain } from '../src/core/grid.js';
+import { Terrain, Region } from '../src/core/grid.js';
 import {
   generateLevel,
   newRunState,
@@ -178,7 +178,7 @@ describe('prison regular depths: tunnels become passages (PrisonLevel.java:58-66
     test(`depth ${depth}: region is prison`, () => {
       for (const seed of SEEDS.slice(0, 3)) {
         const { results } = runDepths(seed, depth);
-        expect(results.get(depth)!.level.region).toBe('prison');
+        expect(results.get(depth)!.level.region).toBe(Region.PRISON);
       }
     });
 
@@ -263,7 +263,7 @@ describe('depth 10: prison boss arena (PrisonBossLevel.java)', () => {
       const { results } = runDepths(seed, 10);
       const g = results.get(10)!;
       const level = g.level;
-      expect(level.region).toBe('prison');
+      expect(level.region).toBe(Region.PRISON);
       expect(level.bossLevel).toBe(true);
 
       // build() selection: entrance >= 4x4, arena distinct, >= 7x7, arena
@@ -546,7 +546,7 @@ describe('run state across transitions and save/load', () => {
     });
     for (let d = 2; d <= 10; d++) game.descend();
     expect(game.level.depth).toBe(10);
-    expect(game.level.region).toBe('prison');
+    expect(game.level.region).toBe(Region.PRISON);
     expect(game.level.bossLevel).toBe(true);
     expect(game.level.bossArena).not.toBeNull();
     expect(game.level.arenaDoorCell).toBeGreaterThanOrEqual(0);

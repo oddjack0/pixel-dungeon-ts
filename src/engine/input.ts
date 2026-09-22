@@ -10,7 +10,8 @@ import type { HeroIntent } from './seams.js';
  *
  * Keys: arrows / WASD / QEZC = 8-dir move, Space or . = wait, G = pickup,
  * F = search for secrets, M = minimap, I = inventory, > = descend, < = ascend.
- * Tap/click: adjacent enemy = attack, stairs underfoot = use, else A* path.
+ * Tap/click: adjacent enemy = attack, adjacent NPC = talk, stairs underfoot
+ * = use, else A* path.
  */
 export class InputHandler {
   onToggleMinimap: () => void = () => {};
@@ -114,11 +115,18 @@ export class InputHandler {
       return;
     }
 
-    // Tapping an adjacent mob attacks it directly.
+    // Tapping an adjacent mob attacks it — or talks to it when it is an NPC
+    // (vanilla Hero.actInteract: adjacent taps on talkable NPCs talk).
     const mob = level.mobAt(tx, ty);
     if (mob && Grid.chebyshev(tx, ty, hero.x, hero.y) === 1) {
       const live = game.mobs.find((m) => m.id === mob.id);
-      if (live) game.queueIntent({ kind: 'attack', targetId: live.id } satisfies HeroIntent);
+      if (live) {
+        if (typeof live.onTalk === 'function') {
+          game.queueIntent({ kind: 'talk', targetId: live.id } satisfies HeroIntent);
+        } else {
+          game.queueIntent({ kind: 'attack', targetId: live.id } satisfies HeroIntent);
+        }
+      }
       return;
     }
 

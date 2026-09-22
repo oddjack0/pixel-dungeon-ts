@@ -25,7 +25,15 @@ export type HeroIntent =
   // UiItem slot index (see src/ui/inventory.ts).
   | { kind: 'equip'; slot: number }
   | { kind: 'drop'; slot: number }
-  | { kind: 'throwItem'; slot: number; targetId: number };
+  | { kind: 'throwItem'; slot: number; targetId: number }
+  /**
+   * Talk to an NPC (Sad Ghost / Wandmaker / shopkeeper). Produced by
+   * src/engine/input.ts when the tapped tile holds a talkable mob and by
+   * Game's path-bump routing when the path ends on one. Vanilla
+   * Hero.actInteract: talking to an adjacent NPC costs no turn
+   * (Hero.java:498-516).
+   */
+  | { kind: 'talk'; targetId: number };
 
 /**
  * Structural view of the hero the engine needs. The real Hero class
@@ -58,6 +66,13 @@ export interface MobActor extends TurnTaker {
   hostile: boolean;
   isAlive(): boolean;
   act(): number;
+  /**
+   * Shared NPC contract (quests/NPC worker): talkable NPCs (sad ghost,
+   * wandmaker, shopkeeper) expose `onTalk`; engine routing invokes it for
+   * the NPC on the clicked cell when the hero talks to it. Hostile mobs
+   * leave this undefined (taps attack them instead).
+   */
+  onTalk?(ctx: ActionContext): void;
 }
 
 /** Everything a turn action may touch. Passed to every mechanics callback. */
@@ -69,6 +84,13 @@ export interface ActionContext {
   log(msg: string): void;
   /** Remove a dead mob from the level + scheduler. Engine-provided. */
   killMob(mob: MobActor): void;
+  /**
+   * Remove a mob silently (no death pipeline: no EXP, loot, or death log).
+   * Vanilla `Char.destroy()` (Char.java:326-330) as opposed to `die()`:
+   * used for NPC transformations (ghost -> curse personification, quest
+   * completion handoff) where the NPC vanishes rather than dies.
+   */
+  removeMob(mob: MobActor): void;
   /**
    * Add a mob mid-turn (e.g. the swarm split, Swarm.java:101).
    * The engine wires it into the scheduler with the given delay.
@@ -139,5 +161,7 @@ export function mobsToPlaced(mobs: MobActor[]): PlacedMob[] {
     name: m.name,
     sprite: m.sprite,
     hostile: m.hostile,
+    /** Structural talkability for the tap router (seams.ts MobActor.onTalk). */
+    talkable: typeof m.onTalk === 'function',
   }));
 }

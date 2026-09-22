@@ -42,6 +42,8 @@ export interface BlobChar {
   buffs: Partial<Record<BuffKind, BuffState>>;
   immunities: string[];
   resistances: string[];
+  /** NPC.add(Buff) is a no-op (NPC.java:41-43): blobs can't buff NPCs. */
+  invulnerable?: boolean;
   isAlive(): boolean;
 }
 

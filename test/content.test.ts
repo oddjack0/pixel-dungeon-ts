@@ -17,6 +17,7 @@ import type {
   MobActor,
 } from '../src/engine/seams.js';
 import { SPRITES } from '../src/assets/sprites.js';
+import { ORIGINAL_SPRITES } from '../src/assets/original_sprites.js';
 import {
   ITEMS,
   MISSING_SPRITES,
@@ -65,6 +66,7 @@ import {
 } from '../src/content/itemgen.js';
 import type { MechanicsRng } from '../src/mechanics/rng.js';
 import { contentMechanics } from '../src/content/hooks.js';
+import { resetQuestState } from '../src/content/npcs.js';
 import { GooMob, GOO_DEF } from '../src/content/goo-boss.js';
 import {
   heroAttackSkill,
@@ -104,6 +106,10 @@ function makeCtx(level: Level, seed = 1234): Ctx {
     mobs: mobs as unknown as MobActor[],
     log: (m: string) => logs.push(m),
     killMob: (m: MobActor) => {
+      const i = mobs.indexOf(m as ContentMob);
+      if (i >= 0) mobs.splice(i, 1);
+    },
+    removeMob: (m: MobActor) => {
       const i = mobs.indexOf(m as ContentMob);
       if (i >= 0) mobs.splice(i, 1);
     },
@@ -148,7 +154,11 @@ describe('item catalog', () => {
     const flagged = new Set(MISSING_SPRITES);
     for (const id of Object.keys(ITEMS)) {
       const sprite = ITEMS[id]!.sprite;
-      const inAtlas = (SPRITES as Record<string, unknown>)[sprite] !== undefined;
+      // The renderer prefers ORIGINAL_SPRITES (exact-copy pipeline) and
+      // falls back to the ASCII atlas — both count as present.
+      const inAtlas =
+        (SPRITES as Record<string, unknown>)[sprite] !== undefined ||
+        (ORIGINAL_SPRITES as Record<string, unknown>)[sprite] !== undefined;
       expect(
         inAtlas || flagged.has(sprite),
         `${id} sprite ${sprite}`,
@@ -273,6 +283,7 @@ describe('spawn tables (Bestiary.mobClass)', () => {
 
   test('resolveMobSpawns maps kinds; skips M1-unimplemented kinds', () => {
     const rng = new RNG(9);
+    resetQuestState(); // ghost/wandmaker spawn guards are run-global
     const out = resolveMobSpawns(
       rng,
       1,
@@ -286,6 +297,7 @@ describe('spawn tables (Bestiary.mobClass)', () => {
     expect(out).toEqual([
       { pos: 10, mobId: 'rat' },
       { pos: 20, mobId: 'goo' },
+      { pos: 30, mobId: 'ghost' },
     ]);
   });
 

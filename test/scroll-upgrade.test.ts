@@ -68,6 +68,7 @@ function makeCtx(level: Level, seed = 1234): Ctx {
     mobs: [],
     log: (m: string) => logs.push(m),
     killMob: (_m: MobActor) => {},
+    removeMob: (_m: MobActor) => {},
     addMob: (_m: MobActor, _d?: number) => {},
     syncMobs: () => {},
   };
