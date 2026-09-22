@@ -116,6 +116,9 @@ export function regionForDepth(depth: number): Region {
   if (depth <= 5) return Region.SEWERS;
   if (depth <= 10) return Region.PRISON;
   if (depth <= 15) return Region.CAVES;
+  // Depth 21 is LastShopLevel in vanilla, but LastShopLevel.tilesTex()
+  // returns Assets.TILES_CITY — the city tileset is correct here. The shop
+  // *generation* (not the tileset) is what Stage 1 still needs to port.
   if (depth <= 21) return Region.CITY;
   return Region.HALLS;
 }

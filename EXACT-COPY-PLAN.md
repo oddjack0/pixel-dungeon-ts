@@ -60,14 +60,25 @@ Site: https://oddjack0.github.io/pixel-dungeon-ts/ (gh-pages deploy = parent's j
 ## 2. WHAT'S MISSING (full game scope)
 
 ### 2.1 Levels / depths / terrain / traps
-- Chapters: Prison (6–10), Caves (11–15), City (16–20), Demon Halls (21–25),
-  LastLevel (26, Amulet). Boss levels: SewerBoss (exists, M1), PrisonBoss,
-  CavesBoss, CityBoss, HallsBoss. DeadEndLevel, LastShopLevel.
+- Chapters: Prison (6–10), Caves (11–15), City (16–20), LastShopLevel (21,
+  shop; uses the city tileset per `LastShopLevel.tilesTex()`), Halls (22–24),
+  Yog-Dzewa (25), LastLevel (26, Amulet), DeadEndLevel (27+).
+  Boss levels: SewerBoss (exists, M1), PrisonBoss, CavesBoss, CityBoss,
+  HallsBoss.
 - Terrain tilesets per chapter (original `Terrain.java` tile flags; port renders
   canvas tiles — original tile PNGs should be extracted via the sprite pipeline).
 - Traps (8, all trigger systems missing): Alarm, Fire, Gripping, Lightning,
-  Paralytic, Poison, Summoning, Toxic. Plus chasm (falling), high grass
-  (dew/seeds), alchemy pot (cooking), signs, locked doors/chests.
+  Paralytic, Poison, Summoning, Toxic. Vanilla placement (`placeTraps`): 0 on
+  depth 1, else `Int(1, rooms+depth)` attempts, uniform over all 8 on every
+  depth ≥ 2, hidden (SECRET_*) on EMPTY cells. Trigger: hero steps on SECRET_*
+  → "A hidden pressure plate clicks!" + effect; revealed traps also trigger
+  for the hero; **mobs trigger only revealed traps**; every trigger is
+  single-use → INACTIVE_TRAP. Effects: Toxic = ToxicGas blob (300+20·depth);
+  Fire = Fire blob 2; Paralytic = ParalyticGas (80+5·depth);
+  Poison = (4+depth/2)·durationFactor; Alarm = beckons all mobs;
+  Lightning = HP/3–2HP/3 + discharges a wand charge;
+  Gripping = (depth+3)−DR/2 bleeding + Cripple; Summoning = 1–3 mobs (never on
+  boss levels).
 - Room system: standard rooms + special rooms (shops, alchemy, armory, treasury,
   library, statue, pool, garden, well rooms incl. WaterOfAwareness/Health/
   Transmutation wells, sacrificial fire, summoning, ritual site, weak floor).
@@ -146,8 +157,9 @@ Site: https://oddjack0.github.io/pixel-dungeon-ts/ (gh-pages deploy = parent's j
   Awareness, GasesImmunity, Bleeding, Combo, Fury, SnipersMark, Weakness,
   SacrificialFire.Marked, RingOfElements.Resistance.
 - Blob system: ENTIRELY absent — Fire, Freezing, ToxicGas, ParalyticGas,
-  ConfusionGas, Regrowth, Web, SacrificialFire (+ evolve ticks, seeding,
-  rendering, Light blob).
+  ConfusionGas, Regrowth, Web, SacrificialFire, **Alchemy** (potion cooking —
+  confirmed present in vanilla via `AlchemyPot.java` + `actors/blobs/Alchemy.java`)
+  (+ evolve ticks, seeding, rendering, Light blob).
 - Wells: WaterOfAwareness/Health/Transmutation; Sacrificial Fire room;
   AlchemyPot cooking (potion combining → e.g. PotionOfMight).
 - UI: title screen (exact: logo, play/rankings/badges buttons), class select,
@@ -203,10 +215,12 @@ dark gold quest (DwarfToken?), blacksmith reforge (upgrade combine +
 **Stage 3 — City (depths 16–20).** CityLevel, Dwarf King + CityBossLevel,
 imp quest (DwarfToken → ImpShop?), all remaining items (class armors via
   Armor Kit, Tome of Mastery → subclasses at 10+), full buff set, blob system
-  complete, alchemy pot cooking.
+  complete, alchemy pot cooking (confirmed in vanilla: `AlchemyPot.java` +
+  `actors/blobs/Alchemy.java` + POTIONS_COOKED badges).
 
-**Stage 4 — Demon Halls (depths 21–25).** HallsLevel, Yog-Dzewa +
-  HallsBossLevel + fists/larvae, amulet drop (depth 26 = LastLevel),
+**Stage 4 — Demon Halls (depths 21–25).** LastShopLevel (21, shop generation;
+  city tileset), HallsLevel (22–24), Yog-Dzewa + HallsBossLevel (25) +
+  fists/larvae, amulet drop (depth 26 = LastLevel),
   ascent phase mechanics, victory screen, rankings/badges.
 
 **Stage 5 — Heroes complete.** Mage/Rogue/Huntress + all class systems,
