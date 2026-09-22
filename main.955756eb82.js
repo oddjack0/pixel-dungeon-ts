@@ -7806,6 +7806,9 @@ function createWand(rng, wandId, opts = {}) {
     instanceId,
     wandId,
     level,
+    levelKnown: false,
+    cursed: false,
+    cursedKnown: false,
     curCharges: maxCharges,
     maxCharges,
     usagesToKnow: USAGES_TO_KNOW,
@@ -7851,7 +7854,17 @@ function wandDisplaySprite(wandId) {
   return wandImage(spec.className);
 }
 function wandPrice(state) {
-  return Math.max(0, state.level * 20);
+  let price = 50;
+  if (state.cursed && state.cursedKnown)
+    price = Math.floor(price / 2);
+  if (state.levelKnown) {
+    if (state.level > 0) {
+      price *= state.level + 1;
+    } else if (state.level < 0) {
+      price = Math.floor(price / (1 - state.level));
+    }
+  }
+  return Math.max(1, price);
 }
 function wandItemDef(instanceId) {
   const parsed = parseWandId(instanceId);
