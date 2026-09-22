@@ -212,11 +212,15 @@ export function resolveItemSpawns(
     const { defId } = parseItemId(itemId);
     const lockedChest =
       s.heap === 'LOCKED_CHEST' || s.heap === 'CRYSTAL_CHEST';
+    // Vanilla Heap.Type.FOR_SALE (ShopPainter.java:81): shop stock is sold by
+    // the shopkeeper, never picked up for free — the shop UI reads this flag.
+    const forSale = s.heap === 'FOR_SALE';
     return {
       pos: s.pos,
       itemId,
       sprite: getItem(defId).sprite,
       ...(lockedChest ? { lockedChest: true as const } : {}),
+      ...(forSale ? { forSale: true as const } : {}),
     };
   });
 }

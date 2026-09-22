@@ -32,6 +32,12 @@ export interface PlacedItem {
    * Hero.java:615-648) — see openLockedChest in actions.ts.
    */
   lockedChest?: boolean;
+  /**
+   * The item is shop stock (vanilla Heap.Type.FOR_SALE, ShopPainter.java:81):
+   * it is sold by the shopkeeper, not picked up for free. Set by the content
+   * designer when resolving a 'FOR_SALE' ItemSpawn.
+   */
+  forSale?: boolean;
 }
 
 /**
@@ -59,7 +65,8 @@ export type HeapKind =
   | 'SKELETON'
   | 'TOMB'
   | 'LOCKED_CHEST'
-  | 'CRYSTAL_CHEST';
+  | 'CRYSTAL_CHEST'
+  | 'FOR_SALE'; // vanilla Heap.Type.FOR_SALE: shop stock (ShopPainter.java:81)
 
 /**
  * An item spawn point produced by the generator, for the content designer.
@@ -74,7 +81,7 @@ export interface ItemSpawn {
 }
 
 /** Mob spawn kinds produced by the generator, for the content designer. */
-export type MobKind = 'mob' | 'boss' | 'ratking' | 'statue' | 'piranha' | 'ghost';
+export type MobKind = 'mob' | 'boss' | 'ratking' | 'statue' | 'piranha' | 'ghost' | 'shopkeeper';
 
 /** A mob spawn point produced by the generator, for the content designer. */
 export interface MobSpawn {

@@ -21,6 +21,7 @@ import { Hud } from './hud.js';
 import { doItemAction, InventoryPanel, readInventory } from './inventory.js';
 import { Minimap } from './minimap.js';
 import { Screens, type RunSummary } from './screens.js';
+import { ShopPanel, type ShopTab } from './shop.js';
 import { Effects } from './effects.js';
 import { inRect, roundRect, UI, type View } from './palette.js';
 
@@ -34,6 +35,7 @@ export class UiManager {
 
   private readonly hud = new Hud();
   private readonly inventory = new InventoryPanel();
+  private readonly shop = new ShopPanel();
   private readonly minimap = new Minimap();
   private readonly screens = new Screens();
   private readonly effects = new Effects();
@@ -102,6 +104,23 @@ export class UiManager {
     requestAnimationFrame(frame);
   }
 
+  /**
+   * Opens the shop trade screen. This is the `openShop` half of the
+   * ShopTalkCtx contract (src/content/shopkeeper.ts): the quest worker wires
+   * NPC click/tap to `new Shopkeeper().onTalk({ game, openShop: (m) =>
+   * ui.openShop(m) })`.
+   */
+  openShop(mode: ShopTab = 'buy'): void {
+    if (this.screens.state === 'playing' && this.game && !this.game.gameOver) {
+      this.shop.openShop(mode);
+    }
+  }
+
+  /** True while the shop trade screen is open (for the NPC talk router). */
+  get shopOpen(): boolean {
+    return this.shop.open;
+  }
+
   // --- run lifecycle ---
 
   private startRun(seed: number): void {
@@ -112,6 +131,7 @@ export class UiManager {
     this.hud.logBuffer.reset();
     this.effects.reset();
     this.inventory.close();
+    this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
     this.screens.show('playing');
@@ -127,6 +147,7 @@ export class UiManager {
     this.hud.logBuffer.sync(g.log);
     this.effects.reset();
     this.inventory.close();
+    this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
     this.screens.show('playing');
@@ -137,6 +158,7 @@ export class UiManager {
     this.input.detach();
     this.game = null;
     this.inventory.close();
+    this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
     this.screens.show('title');
@@ -200,6 +222,19 @@ export class UiManager {
       }
       return;
     }
+    if (this.shop.open) {
+      if (k === 'Escape') {
+        this.shop.close();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (isGameKey(k)) {
+        e.preventDefault();
+        e.stopPropagation(); // modal: don't walk while trading
+      }
+      return;
+    }
     if (k === 'Escape' || k.toLowerCase() === 'p') {
       this.screens.show('paused');
       e.preventDefault();
@@ -225,6 +260,14 @@ export class UiManager {
     // Inventory modal consumes everything.
     if (this.inventory.open) {
       this.inventory.handleTap(x, y, g);
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    // Shop modal consumes everything.
+    if (this.shop.open) {
+      this.shop.handleTap(x, y, g);
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -314,6 +357,7 @@ export class UiManager {
       this.hud.draw(ctx, g, this.renderer, this.view, { throwMode: this.throwMode !== null });
       this.minimap.draw(ctx, g, this.view, nowMs);
       this.inventory.draw(ctx, g, this.renderer, this.view);
+      this.shop.draw(ctx, g, this.renderer, this.view);
       if (this.throwMode) this.drawThrowHint(ctx);
     } else {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

@@ -177,6 +177,16 @@ const SLICES: Slice[] = [
   { key: 'mob_skeleton', file: 'skeleton.png', x: 0, y: 0, w: 12, h: 15, pad: true, note: 'SkeletonSprite: TextureFilm 12x15, idle frame 0' },
   { key: 'mob_thief', file: 'thief.png', x: 0, y: 0, w: 12, h: 13, pad: true, note: 'ThiefSprite: TextureFilm 12x13, idle frame 0' },
   { key: 'mob_goo', file: 'goo.png', x: 0, y: 0, w: 20, h: 14, pad: true, note: 'GooSprite: TextureFilm 20x14, idle frame 0' },
+  // --- Stage 1 (Prison): Shaman/Bat/Brute/Tengu + rare mutations ---
+  { key: 'mob_shaman', file: 'shaman.png', x: 0, y: 0, w: 12, h: 15, pad: true, note: 'ShamanSprite: TextureFilm 12x15, idle frame 0' },
+  { key: 'mob_bat', file: 'bat.png', x: 0, y: 0, w: 15, h: 15, pad: true, note: 'BatSprite: TextureFilm 15x15, idle frame 0' },
+  { key: 'mob_brute', file: 'brute.png', x: 0, y: 0, w: 12, h: 16, pad: true, note: 'BruteSprite: TextureFilm 12x16, idle frame 0' },
+  { key: 'mob_tengu', file: 'tengu.png', x: 0, y: 0, w: 14, h: 16, pad: true, note: 'TenguSprite: TextureFilm 14x16, idle frame 0' },
+  // Rare mutations (Bestiary.mutable, 1/30): recolor/row variants, no dedicated PNGs.
+  { key: 'mob_albino', file: 'rat.png', x: 0, y: 15, w: 16, h: 15, pad: true, note: 'AlbinoSprite: texture Assets.RAT (rat.png), TextureFilm 16x15, idle frames 16,16,16,17 -> frame 16 @ row 1 (cols 256/16=16)' },
+  { key: 'mob_bandit', file: 'thief.png', x: 0, y: 13, w: 12, h: 13, pad: true, note: 'BanditSprite: texture Assets.THIEF (thief.png), TextureFilm 12x13, idle frames 21.. -> frame 21 @ row 1 (cols 256/12=21)' },
+  { key: 'mob_shielded', file: 'brute.png', x: 0, y: 16, w: 12, h: 16, pad: true, note: 'ShieldedSprite: texture Assets.BRUTE (brute.png), TextureFilm 12x16, idle frames 21.. -> frame 21 @ row 1 (cols 256/12=21)' },
+  { key: 'mob_shopkeeper', file: 'shopkeeper.png', x: 0, y: 0, w: 14, h: 14, pad: true, note: 'ShopkeeperSprite: TextureFilm 14x14, idle frame 0 (ShopkeeperSprite.java:32-35)' },
   // --- items ---
   I('shortsword', 2, 'ItemSpriteSheet.SHORT_SWORD'),
   I('dart', 31, 'ItemSpriteSheet.DART'),

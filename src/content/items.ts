@@ -42,6 +42,12 @@ export interface ItemDef {
   armor?: ArmorDef;
   /** Hunger energy restored (type 'food'; Food.energy, Food.java:41). */
   energy?: number;
+  /**
+   * Shop price in gold (Item.price() in vanilla; STAGE 1: populated for the
+   * shop system — the hero SELLS at price() and BUYS shop stock at
+   * price()*5*(depth/5+1) per WndTradeItem.java:168-199.
+   */
+  price?: number;
 }
 
 /** ShortSword: tier 1 (super(1, 1f, 1f), ShortSword.java:54-55), STR 11
