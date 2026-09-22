@@ -62,9 +62,35 @@ export class Renderer {
     this.canvas.height = Math.round(h * this.dpr);
   }
 
-  /** CSS-pixel size of the drawing surface. */
-  private viewSize(): { w: number; h: number } {
+  /**
+   * Reconcile the canvas backing store with its CSS size.
+   * Called every frame by the UI loop (public so screens/HUD share it).
+   * Sizing established once (constructor / window resize) can go stale:
+   * construction before first layout, DPR changes without a resize event
+   * (dragging the window across monitors, some browser zooms), or CSS
+   * changes. A stale backing store makes the dungeon paint a small region
+   * while UI laid out in CSS pixels spans the full window — so re-derive
+   * it here, the single source of truth for canvas geometry.
+   */
+  syncSize(): void {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round((this.canvas.clientWidth || window.innerWidth) * dpr);
+    const h = Math.round((this.canvas.clientHeight || window.innerHeight) * dpr);
+    if (w !== this.canvas.width || h !== this.canvas.height || dpr !== this.dpr) {
+      this.dpr = dpr;
+      this.canvas.width = w;
+      this.canvas.height = h;
+    }
+  }
+
+  /** CSS-pixel size of the drawing surface (single source for UI layout). */
+  viewSize(): { w: number; h: number } {
     return { w: this.canvas.width / this.dpr, h: this.canvas.height / this.dpr };
+  }
+
+  /** Current device pixel ratio applied to the canvas transform. */
+  pixelRatio(): number {
+    return this.dpr;
   }
 
   /** Convert a CSS-pixel screen point to a tile coordinate. */
@@ -88,6 +114,7 @@ export class Renderer {
 
   render(game: Game): void {
     const { ctx } = this;
+    this.syncSize();
     const { w: vw, h: vh } = this.viewSize();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.imageSmoothingEnabled = false;

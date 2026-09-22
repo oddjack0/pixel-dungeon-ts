@@ -273,10 +273,6 @@ export class UiManager {
 
   private tick(t: number): void {
     const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    this.view = {
-      w: this.canvas.clientWidth || window.innerWidth,
-      h: this.canvas.clientHeight || window.innerHeight,
-    };
     const g = this.game;
 
     if (g && this.screens.state === 'playing' && !g.gameOver) {
@@ -298,7 +294,13 @@ export class UiManager {
     }
 
     const { ctx } = this;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    // Single source of truth for canvas geometry: the renderer's per-frame
+    // sync (backing store = CSS size x dpr). UI layout and the dungeon view
+    // must use the same numbers or they can disagree (dungeon small in a
+    // corner while the HUD spans the window).
+    this.renderer.syncSize();
+    this.view = this.renderer.viewSize();
+    const dpr = this.renderer.pixelRatio();
     if (g) {
       this.renderer.render(g);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
