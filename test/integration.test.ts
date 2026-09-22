@@ -215,9 +215,47 @@ describe('Milestone 1 integration', () => {
     expect(goo!.isAlive()).toBe(true);
     // wake Goo and trigger seal (Goo seals on its first move)
     const h = hero();
-    h.pos = goo!.y * game.level.w + goo!.x + 1;
+    const setHeroPos = (p: number): void => {
+      h.pos = p;
+      h.x = p % game.level.w;
+      h.y = Math.floor(p / game.level.w);
+    };
+    setHeroPos(goo!.y * game.level.w + goo!.x + 1);
     bot.doIntent({ kind: 'attack', targetId: goo!.id });
-    h.pos = goo!.y * game.level.w + goo!.x + 3;
+    // The arena layout varies with the run's RNG stream (quest spawns
+    // consume RNG during generation, as in vanilla), so the +3 cell is not
+    // guaranteed open: scan for a walkable cell near Goo instead.
+    const gw = game.level.w;
+    const walkablePos = (p: number): boolean => {
+      const t = game.level.getAt(p);
+      return t !== Terrain.WALL && t !== Terrain.CHASM;
+    };
+    let dest = goo!.y * gw + goo!.x + 3;
+    // Goo must have room to MOVE (the seal fires in afterMove): the
+    // destination needs to be walkable and non-adjacent (distance >= 2).
+    const farEnough = (p: number): boolean => {
+      const dx = Math.abs((p % gw) - goo!.x);
+      const dy = Math.abs(Math.floor(p / gw) - goo!.y);
+      return Math.max(dx, dy) >= 2;
+    };
+    if (!walkablePos(dest) || !farEnough(dest)) {
+      dest = goo!.y * gw + goo!.x;
+      outer: for (let r = 2; r < 8; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+            const p = (goo!.y + dy) * gw + (goo!.x + dx);
+            // Goo must SEE the hero to hunt it; the arena is open so a
+            // walkable cell at distance >= 2 is visible in practice.
+            if (walkablePos(p)) {
+              dest = p;
+              break outer;
+            }
+          }
+        }
+      }
+    }
+    setHeroPos(dest);
     for (let i = 0; i < 20 && !game.level.sealed; i++) bot.doIntent({ kind: 'wait' });
     expect(game.level.sealed).toBe(true);
     // stairs-up tile became water while sealed

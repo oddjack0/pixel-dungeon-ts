@@ -14,11 +14,13 @@
  * moves a spawn.
  */
 import type { RNG } from '../core/rng.js';
+import { Terrain } from '../core/grid.js';
 import type { MechanicsRng } from '../mechanics/rng.js';
 import {
   generateLevel,
   newRunState,
   type GenResult,
+  type RunState,
 } from '../dungeon/generator.js';
 import type {
   ItemSpawn,
@@ -29,6 +31,12 @@ import type {
 import { getItem, parseItemId } from './items.js';
 import { itemGenerator, resetItemGenerator } from './itemgen.js';
 import { buildMob, nextMobId, type ContentMob } from './mobs.js';
+import {
+  ghostQuest,
+  initGhostQuest,
+  initWandmakerQuest,
+  wandmakerQuest,
+} from './npcs.js';
 
 /**
  * Depth -> weighted mob table. Weights are Bestiary.mobClass chances
@@ -38,6 +46,13 @@ import { buildMob, nextMobId, type ContentMob } from './mobs.js';
  *   depth 3: Rat 1, Gnoll 2, Crab 1, Swarm 0.02
  *   depth 4: Rat 1, Gnoll 2, Crab 3, Swarm 0.02, Skeleton 0.01, Thief 0.01
  *   depth 5: Goo only (SewerBossLevel; handled by the boss flag, not this table)
+ *   depth 6: Skeleton 4, Thief 2, Swarm 1, Shaman 0.2 (Bestiary.java:90-93)
+ *   depth 7: Skeleton 3, Shaman 1, Thief 1, Swarm 1 (Bestiary.java:94-97)
+ *   depth 8: Skeleton 3, Shaman 2, Gnoll 1, Thief 1, Swarm 1, Bat 0.02
+ *     (Bestiary.java:98-101)
+ *   depth 9: Skeleton 3, Shaman 3, Thief 1, Swarm 1, Bat 0.02, Brute 0.01
+ *     (Bestiary.java:102-105)
+ *   depth 10: Tengu only (PrisonBossLevel; handled by the boss flag, not this table)
  */
 export const SEWER_MOB_TABLE: Readonly<
   Record<number, ReadonlyArray<{ id: string; weight: number }>>
@@ -61,7 +76,61 @@ export const SEWER_MOB_TABLE: Readonly<
     { id: 'skeleton', weight: 0.01 },
     { id: 'thief', weight: 0.01 },
   ],
+  6: [
+    { id: 'skeleton', weight: 4 },
+    { id: 'thief', weight: 2 },
+    { id: 'swarm', weight: 1 },
+    { id: 'shaman', weight: 0.2 },
+  ],
+  7: [
+    { id: 'skeleton', weight: 3 },
+    { id: 'shaman', weight: 1 },
+    { id: 'thief', weight: 1 },
+    { id: 'swarm', weight: 1 },
+  ],
+  8: [
+    { id: 'skeleton', weight: 3 },
+    { id: 'shaman', weight: 2 },
+    { id: 'gnoll', weight: 1 },
+    { id: 'thief', weight: 1 },
+    { id: 'swarm', weight: 1 },
+    { id: 'bat', weight: 0.02 },
+  ],
+  9: [
+    { id: 'skeleton', weight: 3 },
+    { id: 'shaman', weight: 3 },
+    { id: 'thief', weight: 1 },
+    { id: 'swarm', weight: 1 },
+    { id: 'bat', weight: 0.02 },
+    { id: 'brute', weight: 0.01 },
+  ],
 };
+
+/**
+ * Bestiary.mutable (Bestiary.java:37-53): 1/30 of the time the resolved mob
+ * is a rare variant — Rat -> albino rat, Thief -> crazy bandit,
+ * Brute -> shielded brute. (Java also maps Monk -> senior and
+ * Scorpio -> acidic at later depths; those land with their depths.)
+ * Vanilla call site: the level respawner (Level.java:370) — regular level
+ * spawns and the summoning trap use the plain table. The port has no
+ * respawner yet; this is exported for it.
+ */
+export function mutable(rng: MechanicsRng, mobId: string): string {
+  if (rng.int(0, 30) === 0) {
+    // Random.Int(30) == 0 (Bestiary.java:46)
+    switch (mobId) {
+      case 'rat':
+        return 'albino';
+      case 'thief':
+        return 'bandit';
+      case 'brute':
+        return 'shielded';
+      default:
+        break;
+    }
+  }
+  return mobId;
+}
 
 /**
  * Weighted pick (Random.chances, Random.java:78-95): first entry whose
@@ -88,30 +157,60 @@ export interface ResolvedMob {
 
 /**
  * Resolve generator mob spawns. MobSpawn kinds (src/dungeon/level.ts):
- * 'mob' -> depth table; 'boss' -> goo; 'ghost'/'ratking'/'statue'/
- * 'piranha' -> M1: skipped (no quest/NPC/statue/piranha mechanics yet,
- * documented).
+ * 'mob' -> depth table; 'boss' -> goo (depth 5) / tengu (depth 10);
+ * 'ghost' -> the sad ghost (once/run quest NPC); 'wandmaker' -> the old
+ * wandmaker (once/run quest NPC); 'shopkeeper' -> the shop NPC;
+ * 'ratking'/'statue'/'piranha' -> M1: skipped (no ratking/statue/piranha
+ * mechanics yet, documented).
  */
 export function resolveMobSpawns(
   rng: RNG,
   depth: number,
   spawns: MobSpawn[],
+  level?: { w: number; h: number; getAt(pos: number): Terrain },
 ): ResolvedMob[] {
   const out: ResolvedMob[] = [];
   for (const s of spawns) {
     if (s.kind === 'mob') {
       out.push({ pos: s.pos, mobId: pickMobId(rng, depth) });
     } else if (s.kind === 'boss') {
-      out.push({ pos: s.pos, mobId: 'goo' });
+      out.push({ pos: s.pos, mobId: depth === 10 ? 'tengu' : 'goo' });
+    } else if (s.kind === 'ghost') {
+      // Vanilla Ghost.Quest.spawn: once per run (Ghost.java:234). The
+      // generator marks its own run state, but the quest singleton is the
+      // run-level guard here (the generator's RunState is per-depth in the
+      // SEAM adapter path).
+      if (!ghostQuest.spawned) {
+        initGhostQuest(rng, depth);
+        out.push({ pos: s.pos, mobId: 'ghost' });
+      }
+    } else if (s.kind === 'wandmaker') {
+      // Vanilla Wandmaker.Quest.spawn: once per run (Wandmaker.java:183).
+      // The FISH->BERRY/DUST fallback counts the level's water tiles
+      // (Wandmaker.java:193-203).
+      if (!wandmakerQuest.spawned) {
+        let water = 0;
+        let length = 0;
+        if (level) {
+          length = level.w * level.h;
+          for (let i = 0; i < length; i++) {
+            if (level.getAt(i) === Terrain.WATER) water++;
+          }
+        }
+        initWandmakerQuest(rng, water, length);
+        out.push({ pos: s.pos, mobId: 'wandmaker' });
+      }
+    } else if (s.kind === 'shopkeeper') {
+      out.push({ pos: s.pos, mobId: 'shopkeeper' });
     }
-    // ghost/ratking/statue/piranha: skipped for M1.
+    // ratking/statue/piranha: skipped for M1.
   }
   return out;
 }
 
 /** Build live ContentMobs from resolved spawns (ids from the shared counter). */
-export function buildMobs(resolved: ResolvedMob[], w: number): ContentMob[] {
-  return resolved.map((r) => buildMob(r.mobId, nextMobId(), r.pos, w));
+export function buildMobs(resolved: ResolvedMob[], w: number, depth = 0): ContentMob[] {
+  return resolved.map((r) => buildMob(r.mobId, nextMobId(), r.pos, w, depth));
 }
 
 /**
@@ -183,6 +282,60 @@ export function resolveItemTag(
       return 'ration'; // M1: no plant mechanics
     case 'random':
       return pickRandomItemId(rng, depth);
+    // Shop stock (ShopPainter.java:103-147, via shopPainter.ts): the exact
+    // tag strings the shop painter emits, resolved to catalog ids.
+    case 'quarterstaff':
+      return 'quarterstaff';
+    case 'spear':
+      return 'spear';
+    case 'leather-armor':
+      return 'leather_armor';
+    case 'seed-pouch':
+      return 'seed_pouch';
+    case 'weightstone':
+      return 'weightstone';
+    case 'sword':
+      return 'sword';
+    case 'mace':
+      return 'mace';
+    case 'mail-armor':
+      return 'mail_armor';
+    case 'scroll-holder':
+      return 'scroll_holder';
+    case 'longsword':
+      return 'longsword';
+    case 'battle-axe':
+      return 'battle_axe';
+    case 'scale-armor':
+      return 'scale_armor';
+    case 'wand-holster':
+      return 'wand_holster';
+    case 'glaive':
+      return 'glaive';
+    case 'war-hammer':
+      return 'war_hammer';
+    case 'plate-armor':
+      return 'plate_armor';
+    case 'torch':
+      return 'torch';
+    case 'potion-of-healing':
+      return 'potion_healing';
+    case 'random-potion':
+      // ShopPainter.java:135 — Generator.random(Category.POTION).
+      return itemGenerator.randomFrom(rng, 'potion', depth);
+    case 'scroll-of-identify':
+      return 'scroll_identify';
+    case 'scroll-of-remove-curse':
+      return 'scroll_remove_curse';
+    case 'scroll-of-magic-mapping':
+      return 'scroll_magic_mapping';
+    case 'random-scroll':
+      // ShopPainter.java:145 — Generator.random(Category.SCROLL).
+      return itemGenerator.randomFrom(rng, 'scroll', depth);
+    case 'overpriced-ration':
+      return 'overpriced_ration';
+    case 'ankh':
+      return 'ankh';
     default:
       throw new Error(`spawns: unknown item tag "${tag}" (M1 has no mapping)`);
   }
@@ -247,11 +400,14 @@ export function takeGenResult(level: object): GenResult | null {
  * WeakMap entry never outlives the level handoff.
  */
 export const contentLevelGen: LevelGen = {
-  generate(rng: RNG, depth: number) {
+  generate(rng: RNG, depth: number, run?: RunState) {
     // Generator.reset() on depth entry (InterlevelScene.java:116): the
     // per-depth category weights start fresh before any draw.
     resetItemGenerator();
-    const result = generateLevel(rng, depth, newRunState());
+    // The engine threads its per-run RunState (ghost/wandmaker/dew vial/
+    // scroll quota/weak floor persist across depths); direct callers that
+    // pass none get an isolated state.
+    const result = generateLevel(rng, depth, run ?? newRunState());
     const items = resolveItemSpawns(rng, depth, result.items);
     for (const it of items) result.level.items.push(it);
     stashGenResult(result.level, result);

@@ -89,6 +89,10 @@ export interface TrapMob extends BlobChar {
   def: { dr: number };
   state: 'sleeping' | 'wandering' | 'hunting' | 'fleeing' | 'passive';
   target: number;
+  /** NPC invulnerability (NPC.damage is a no-op, NPC.java:45-47). */
+  invulnerable?: boolean;
+  /** Mob.damage subclass hooks (Brute.damage enrage, Brute.java:173-184). */
+  onDamaged?: (ctx: ActionContext) => void;
 }
 
 export type TrapChar = TrapHero | TrapMob;
@@ -159,6 +163,9 @@ export function damageFromTrap(
   sourceTag: string,
   onHeroDeath?: () => void,
 ): void {
+  // NPC.damage is a no-op (NPC.java:45-47): invulnerable NPCs (ghost,
+  // wandmaker, shopkeeper) never take damage from anything.
+  if (ch.kind === 'mob' && ch.invulnerable) return;
   const target: DamageTarget = {
     hp: ch.hp,
     ht: ch.ht,
@@ -178,11 +185,17 @@ export function damageFromTrap(
     } else {
       ctx.killMob(ch as unknown as MobActor);
     }
+  } else if (ch.kind === 'mob') {
+    // Mob.damage subclass hooks (Brute.damage enrage, Brute.java:173-184):
+    // trap damage is a damage call like any other.
+    ch.onDamaged?.(ctx);
   }
 }
 
 /** Vanilla Mob.beckon(cell) (Mob.java:399-407): notice + hunt/wander retarget. */
 export function beckonMob(mob: TrapMob, cell: number): void {
+  // NPC.beckon is a no-op (NPC.java:50-52): quest NPCs ignore alarm traps.
+  if (mob.invulnerable) return;
   // notice(): sprite.showAlert() — visual; the renderer owns it.
   if (mob.state !== 'hunting') {
     mob.state = 'wandering';
@@ -222,11 +235,15 @@ export function makeBlobWorld(
         ? () => onHeroDeath(ch)
         : undefined),
     reigniteBurning: (ch) => {
+      // NPC.add(Buff) is a no-op (NPC.java:41-43).
+      if (ch.invulnerable) return;
       // Buff.affect(ch, Burning.class).reignite(ch): left = duration = 8
       // (Burning.java:109-111; no RingOfElements in M1).
       ch.buffs.burning = { kind: 'burning', left: BURNING_DURATION };
     },
     prolongParalysis: (ch, duration) => {
+      // NPC.add(Buff) is a no-op (NPC.java:41-43).
+      if (ch.invulnerable) return;
       // Buff.prolong: affect + postpone(duration) = max(existing, duration)
       // (Buff.java:85-89, Actor.postpone); attach sets paralysed
       // (Paralysis.java:27-35).
@@ -383,9 +400,10 @@ function grippingTrap(
 }
 
 /**
- * Bestiary.mob(depth) target for SummoningTrap, depths 1-4 (Bestiary.java
- * mobClass tables). Depth 5+ is unreachable here (boss-level early return);
- * later-region tables are the Stage 1+ worker's extension — null there.
+ * Bestiary.mob(depth) target for SummoningTrap (SummoningTrap.java:80 —
+ * the plain table, NOT mutable; the respawner owns mutation).
+ * Tables: Bestiary.java mobClass, depths 1-4 (M1) and 6-9 (Stage 1).
+ * Depth 5/10 are boss levels (early return — no summoning there).
  */
 export function bestiaryMobId(
   rng: MechanicsRng,
@@ -410,8 +428,24 @@ export function bestiaryMobId(
       chances = [1, 2, 3, 0.02, 0.01, 0.01];
       ids = ['rat', 'gnoll', 'crab', 'swarm', 'skeleton', 'thief'];
       break;
+    case 6:
+      chances = [4, 2, 1, 0.2];
+      ids = ['skeleton', 'thief', 'swarm', 'shaman'];
+      break;
+    case 7:
+      chances = [3, 1, 1, 1];
+      ids = ['skeleton', 'shaman', 'thief', 'swarm'];
+      break;
+    case 8:
+      chances = [3, 2, 1, 1, 1, 0.02];
+      ids = ['skeleton', 'shaman', 'gnoll', 'thief', 'swarm', 'bat'];
+      break;
+    case 9:
+      chances = [3, 3, 1, 1, 0.02, 0.01];
+      ids = ['skeleton', 'shaman', 'thief', 'swarm', 'bat', 'brute'];
+      break;
     default:
-      return null; // Stage 1+ extends the Bestiary map for depths 6+.
+      return null; // boss depths 5/10 + future regions: no summoning table.
   }
   // Vanilla Random.chances(float[]): value = Float(sum); first i with
   // value < cumsum (watabou Random.java).

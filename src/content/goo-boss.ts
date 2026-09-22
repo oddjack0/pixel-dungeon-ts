@@ -101,7 +101,7 @@ export class GooMob extends ContentMob {
   }
 
   /** canAttack: adjacent, or distance <= 2 while pumped (Goo.canAttack). */
-  override canAttack(targetPos: number): boolean {
+  override canAttack(_ctx: ActionContext, targetPos: number): boolean {
     return gooCanAttack(this.pumpedUp, chebyshevPos(this.pos, targetPos, this.w));
   }
 

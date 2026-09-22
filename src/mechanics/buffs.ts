@@ -69,6 +69,7 @@ export type BuffKind =
   | 'ooze'
   | 'bleeding'
   | 'cripple'
+  | 'blindness'
   | 'hunger'
   | 'regeneration';
 

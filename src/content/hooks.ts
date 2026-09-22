@@ -66,6 +66,9 @@ import {
 } from '../ui/inventory.js';
 import type { Game } from '../engine/loop.js';
 import './goo-boss.js'; // registers the Goo constructor for buildMob
+import './tengu-boss.js'; // registers the Tengu constructor for buildMob
+import './npcs.js'; // registers the quest-NPC builder for buildMob
+import { resetQuestState, type NpcMob } from './npcs.js';
 
 /**
  * Content inventory adapter (src/ui/inventory.ts seam): the panel shows the
@@ -91,6 +94,9 @@ function catalogKind(def: ItemDef): ItemKind {
     case 'gold':
     case 'dewdrop':
     case 'seed':
+    case 'quest':
+    case 'bag':
+    case 'misc':
       return 'misc';
   }
 }
@@ -183,6 +189,8 @@ export interface MobSaveEx extends Record<string, unknown> {
   stolen: ItemStack | null;
   pumpedUp: boolean;
   jumped: boolean;
+  timeToJump: number; // Tengu.timeToJump (Tengu.java:50)
+  enraged: boolean; // Brute.enraged (Brute.java:147)
   buffs: Partial<Record<BuffKind, BuffState>>;
   paralysed: boolean;
 }
@@ -241,6 +249,8 @@ function reviveHeroEx(save: HeroSaveEx): ContentHero {
 
 function saveMobEx(mob: ContentMob): MobSaveEx {
   const goo = mob as unknown as { pumpedUp?: boolean; jumped?: boolean };
+  const tengu = mob as unknown as { timeToJump?: number };
+  const brute = mob as unknown as { enraged?: boolean };
   return {
     id: mob.id,
     mobId: mob.def.id,
@@ -258,6 +268,8 @@ function saveMobEx(mob: ContentMob): MobSaveEx {
     stolen: mob.stolen ? { ...mob.stolen } : null,
     pumpedUp: goo.pumpedUp ?? false,
     jumped: goo.jumped ?? false,
+    timeToJump: tengu.timeToJump ?? 5, // Tengu.timeToJump (Tengu.java:50)
+    enraged: brute.enraged ?? false, // Brute.enraged (Brute.java:147)
     buffs: { ...mob.buffs },
     paralysed: mob.paralysed,
   };
@@ -279,6 +291,10 @@ function reviveMobEx(save: MobSaveEx): ContentMob {
     goo.pumpedUp = save.pumpedUp;
     goo.jumped = save.jumped;
   }
+  const tengu = mob as unknown as { timeToJump?: number };
+  if ('timeToJump' in mob) tengu.timeToJump = save.timeToJump ?? 5;
+  const brute = mob as unknown as { enraged?: boolean };
+  if ('enraged' in mob) brute.enraged = save.enraged ?? false;
   mob.buffs = { ...save.buffs };
   mob.paralysed = save.paralysed;
   return mob;
@@ -286,6 +302,9 @@ function reviveMobEx(save: MobSaveEx): ContentMob {
 
 export const contentMechanics: MechanicsHooks = {
   spawnHero(_rng: RNG, level: Level): HeroActor {
+    // Quest state is run-level (vanilla Ghost.Quest/Wandmaker.Quest statics);
+    // a fresh hero means a fresh run.
+    resetQuestState();
     return createStarterHero(level.stairsUp, level.w);
   },
 
@@ -297,8 +316,8 @@ export const contentMechanics: MechanicsHooks = {
     // Stage 0 (exact copy): register the painter's sign markers so the
     // 'wait' intent can read signs (Sign.java).
     noteSignCells(level, result.markers.signs);
-    const resolved = resolveMobSpawns(rng, result.level.depth, result.mobs);
-    return buildMobs(resolved, result.level.w);
+    const resolved = resolveMobSpawns(rng, result.level.depth, result.mobs, result.level);
+    return buildMobs(resolved, result.level.w, result.level.depth);
   },
 
   handleHeroIntent(intent: HeroIntent, ctx: ActionContext): number {
@@ -370,6 +389,27 @@ export const contentMechanics: MechanicsHooks = {
           intent.slot,
           target.y * ctx.level.w + target.x,
         );
+        break;
+      }
+      case 'talk': {
+        // Vanilla Hero.actInteract: talking to an adjacent NPC costs no
+        // turn (Hero.java:498-516). onTalk is the shared NPC contract
+        // (seams.ts MobActor.onTalk, implemented by NpcMob in npcs.ts).
+        const npc = ctx.mobs.find(
+          (m) => m.id === intent.targetId && m.isAlive(),
+        ) as NpcMob | undefined;
+        if (!npc || typeof npc.onTalk !== 'function') {
+          ctx.log('Nobody there.');
+          cost = 0;
+          break;
+        }
+        if (mobChebyshev(hero.pos, npc.pos, ctx.level.w) > 1) {
+          ctx.log('You are too far away to talk.');
+          cost = 0;
+          break;
+        }
+        npc.onTalk(ctx);
+        cost = 0;
         break;
       }
       case 'descend':

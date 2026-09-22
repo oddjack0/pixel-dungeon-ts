@@ -61,7 +61,14 @@ export function earnExp(state: LevelState, amount: number): number {
  *  Swarm: EXP default 1, maxLvl 10 (Swarm.java:47). (Splits keep full stats.)
  *  Skeleton: EXP 5, maxLvl 10 (Skeleton.java:47-48).
  *  Thief: EXP 5, maxLvl 10 (Thief.java:48-49).
- *  Goo: EXP 10, maxLvl default 30 (Goo.java:52; Mob.java:69). */
+ *  Goo: EXP 10, maxLvl default 30 (Goo.java:52; Mob.java:69).
+ *  Shaman: EXP 6, maxLvl 14 (Shaman.java:51-52).
+ *  Bat: EXP 7, maxLvl 15 (Bat.java:39-40).
+ *  Brute: EXP 8, maxLvl 15 (Brute.java:43-44).
+ *  Tengu: EXP 20, maxLvl default 30 (Tengu.java:56; Mob.java:69).
+ *  Albino: Rat stats — EXP 1, maxLvl 5 (Albino.java overrides HP only).
+ *  Bandit: Thief stats — EXP 5, maxLvl 10 (Bandit.java).
+ *  Shielded: Brute stats — EXP 8, maxLvl 15 (Shielded.java). */
 export const MOB_EXP: Readonly<Record<string, { exp: number; maxLvl: number }>> = {
   rat: { exp: 1, maxLvl: 5 },
   gnoll: { exp: 2, maxLvl: 8 },
@@ -70,6 +77,17 @@ export const MOB_EXP: Readonly<Record<string, { exp: number; maxLvl: number }>> 
   skeleton: { exp: 5, maxLvl: 10 },
   thief: { exp: 5, maxLvl: 10 },
   goo: { exp: GOO_EXP, maxLvl: GOO_MAX_LVL },
+  shaman: { exp: 6, maxLvl: 14 },
+  bat: { exp: 7, maxLvl: 15 },
+  brute: { exp: 8, maxLvl: 15 },
+  tengu: { exp: 20, maxLvl: 30 },
+  albino: { exp: 1, maxLvl: 5 },
+  // Quest mobs: FetidRat.java:41 (EXP 3, maxLvl 5),
+  // CursePersonification.java:41 (EXP 3, maxLvl 5).
+  fetidrat: { exp: 3, maxLvl: 5 },
+  curse: { exp: 3, maxLvl: 5 },
+  bandit: { exp: 5, maxLvl: 10 },
+  shielded: { exp: 8, maxLvl: 15 },
 };
 
 /** EXP granted for a kill (Mob.exp, Mob.java:353-355). */

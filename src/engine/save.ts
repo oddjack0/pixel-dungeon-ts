@@ -1,6 +1,6 @@
 import { RNG } from '../core/rng.js';
 import { Region } from '../core/grid.js';
-import { Level, type PlacedItem } from '../dungeon/level.js';
+import { Level, newRunState, type PlacedItem, type RunState } from '../dungeon/level.js';
 import { Game } from './loop.js';
 import {
   type HeroSaveData,
@@ -32,6 +32,12 @@ interface LevelSaveData {
   /** Boss-arena seal state (SewerBossLevel.seal/unseal). */
   sealed?: boolean;
   bossLevel?: boolean;
+  /** Tengu arena bounds + door cell (the boss worker's runtime hook). */
+  bossArena?: { l: number; t: number; r: number; b: number } | null;
+  arenaDoorCell?: number;
+  /** PrisonBossLevel bundle ENTERED/DROPPED (PrisonBossLevel.java:75-76). */
+  enteredArena?: boolean;
+  keyDropped?: boolean;
 }
 
 interface RunSaveData {
@@ -46,6 +52,8 @@ interface RunSaveData {
   level: LevelSaveData;
   hero: HeroSaveData;
   mobs: MobSaveData[];
+  /** Per-run generation state (ghost/wandmaker/dew vial/scroll quota/weak floor). */
+  run?: RunState;
 }
 
 export function hasSave(key: string = SAVE_KEY): boolean {
@@ -89,9 +97,14 @@ export function saveGame(game: Game, mechanics: MechanicsHooks, key: string = SA
       items: lvl.items.map((it) => ({ ...it })),
       sealed: lvl.sealed,
       bossLevel: lvl.bossLevel,
+      bossArena: lvl.bossArena ? { ...lvl.bossArena } : null,
+      arenaDoorCell: lvl.arenaDoorCell,
+      enteredArena: lvl.enteredArena,
+      keyDropped: lvl.keyDropped,
     },
     hero: mechanics.saveHero(game.hero),
     mobs: game.mobs.map((m) => mechanics.saveMob(m)),
+    run: { ...game.run },
   };
   try {
     localStorage.setItem(key, JSON.stringify(data));
@@ -142,6 +155,10 @@ export function loadGame(
   // sealed entrance stays water; the flag keeps ascend blocked.
   lvl.sealed = data.level.sealed ?? false;
   lvl.bossLevel = data.level.bossLevel ?? false;
+  lvl.bossArena = data.level.bossArena ? { ...data.level.bossArena } : null;
+  lvl.arenaDoorCell = data.level.arenaDoorCell ?? -1;
+  lvl.enteredArena = data.level.enteredArena ?? false;
+  lvl.keyDropped = data.level.keyDropped ?? false;
 
   const rng = RNG.restore(data.seed, data.rngState);
   const game = new Game(data.seed, {
@@ -154,6 +171,7 @@ export function loadGame(
   game.turnCount = data.turnCount;
   game.gameOver = data.gameOver;
   game.log = [...data.log];
+  game.run = data.run ? { ...data.run } : newRunState();
 
   const hero = mechanics.reviveHero(rng, data.hero);
   game.hero = hero;
@@ -166,5 +184,9 @@ export function loadGame(
   for (const m of game.mobs) game.scheduler.add(m);
 
   game.level.updateFov(hero.x, hero.y, hero.sight);
+  // Blindness blackout on load too (Level.updateFieldOfView, Level.java:793).
+  if ((hero as unknown as { buffs?: { blindness?: unknown } }).buffs?.blindness) {
+    game.level.visible.fill(0);
+  }
   return game;
 }

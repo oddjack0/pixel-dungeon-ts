@@ -1,7 +1,7 @@
 import { RNG } from '../core/rng.js';
 import { Scheduler } from '../core/turn.js';
 import type { XY } from '../core/grid.js';
-import { Level, type LevelGen } from '../dungeon/level.js';
+import { Level, newRunState, type LevelGen, type RunState } from '../dungeon/level.js';
 import { resetSpecials } from '../dungeon/rooms.js';
 import { DEATH_MESSAGE_RE } from '../mechanics/buffs.js';
 import {
@@ -41,6 +41,13 @@ export class Game {
   log: string[] = [];
   turnCount = 0;
   gameOver = false;
+  /**
+   * Per-run generation state (vanilla `Dungeon` statics): threaded through
+   * every depth's generation so once-per-run quests (ghost, wandmaker, dew
+   * vial, upgrade scroll quota, weak-floor chaining) behave like the
+   * original. Persisted by the save system.
+   */
+  run: RunState;
 
   /** Tap-to-move path; consumed one step per hero turn. */
   private path: XY[] = [];
@@ -58,7 +65,8 @@ export class Game {
     // (Room.shuffleTypes); reset it before depth-1 generation so a new run
     // never inherits rotation state mutated by a previous run.
     resetSpecials(this.rng);
-    this.level = deps.gen.generate(this.rng, 1);
+    this.run = newRunState();
+    this.level = deps.gen.generate(this.rng, 1, this.run);
     this.hero = deps.mechanics.spawnHero(this.rng, this.level);
     this.mobs = deps.mechanics.spawnMobs(this.rng, this.level);
     this.placeHeroAtEntrance();
@@ -241,10 +249,13 @@ export class Game {
       }
       const mob = this.level.mobAt(step.x, step.y);
       if (mob) {
-        this.path = []; // bump into a fight: stop pathing, attack once
+        this.path = []; // bump: stop pathing, then attack or talk once
         const live = this.mobs.find((m) => m.id === mob.id);
-        if (live) return { kind: 'attack', targetId: live.id };
-        return null;
+        if (!live) return null;
+        // Shared NPC contract (seams.ts): a talkable NPC on the bumped cell
+        // gets a talk intent; hostile mobs get an attack intent.
+        if (typeof live.onTalk === 'function') return { kind: 'talk', targetId: live.id };
+        return { kind: 'attack', targetId: live.id };
       }
       return { kind: 'move', dx, dy };
     }
@@ -252,12 +263,27 @@ export class Game {
   }
 
   private afterAction(): void {
-    this.level.updateFov(this.hero.x, this.hero.y, this.hero.sight);
+    this.updateHeroFov();
     this.syncMobs();
     // A newly-seen hostile interrupts tap-to-move (vanilla behavior).
     if (this.path.length > 0 && this.mobs.some((m) => m.hostile && this.level.visible[this.level.idx(m.x, m.y)])) {
       this.path = [];
       this.logMsg('You stop: danger ahead.');
+    }
+  }
+
+  /**
+   * Level.updateFieldOfView (Level.java:793): a blinded char sees nothing.
+   * Stage 1: the crazy bandit's steal (Bandit.steal, Bandit.java:39-49).
+   */
+  private updateHeroFov(): void {
+    // The engine's HeroActor seam doesn't declare buffs; ContentHero carries
+    // them (src/content/hero.ts). Structural read keeps the seam narrow.
+    const buffs = (this.hero as unknown as { buffs?: { blindness?: unknown } }).buffs;
+    if (buffs?.blindness) {
+      this.level.visible.fill(0);
+    } else {
+      this.level.updateFov(this.hero.x, this.hero.y, this.hero.sight);
     }
   }
 
@@ -282,6 +308,7 @@ export class Game {
       mobs: this.mobs,
       log: (msg: string) => this.logMsg(msg),
       killMob: (mob: MobActor) => this.removeMob(mob),
+      removeMob: (mob: MobActor) => this.removeMob(mob),
       addMob: (mob: MobActor, delay?: number) => {
         this.mobs.push(mob);
         mob.time = this.scheduler.now + (delay ?? 0);
@@ -321,7 +348,7 @@ export class Game {
   }
 
   private changeDepth(depth: number): void {
-    this.level = this.deps.gen.generate(this.rng, depth);
+    this.level = this.deps.gen.generate(this.rng, depth, this.run);
     for (const m of this.mobs) this.scheduler.remove(m);
     this.mobs = this.deps.mechanics.spawnMobs(this.rng, this.level);
     this.placeHeroAtEntrance();

@@ -19,6 +19,7 @@ import { computeFov } from '../core/fov.js';
 import { findPath } from '../core/path.js';
 import { Terrain } from '../core/grid.js';
 import { type Level } from '../dungeon/level.js';
+import { onItemDropped } from '../dungeon/prisonBoss.js';
 import type { ActionContext, MobActor } from '../engine/seams.js';
 import type { MechanicsRng } from '../mechanics/rng.js';
 import {
@@ -40,6 +41,7 @@ import { earnExp, expForKill, MOB_EXP } from '../mechanics/exp.js';
 import { heroDefenseSkill, heroDR } from '../mechanics/hero.js';
 import type { BuffState } from '../mechanics/char.js';
 import { charTimeScale, crippleFactor } from '../mechanics/char.js';
+import { seedBlob } from '../mechanics/blobs.js';
 import type { ContentHero, ItemStack } from './hero.js';
 import { addToInventory, removeFromInventory } from './hero.js';
 import { getItem, ITEMS } from './items.js';
@@ -69,7 +71,7 @@ export interface MobDef {
   speed: number;
   flying: boolean;
   /** Special-ability hook id. */
-  ability: 'swarm' | 'skeleton' | 'thief' | null;
+  ability: 'swarm' | 'skeleton' | 'thief' | 'fetidrat' | null;
   /** attackDelay() in turns (Thief 0.5, Thief.java:88-91). */
   attackDelay: number;
   immunities: string[];
@@ -137,6 +139,65 @@ export const MOB_DEFS: Readonly<Record<string, MobDef>> = {
     exp: MOB_EXP.thief.exp, maxLvl: MOB_EXP.thief.maxLvl, // single-sourced
     speed: 1, flying: false, ability: 'thief', attackDelay: 0.5,
     immunities: [], resistances: [],
+  },
+  // --- Stage 1: Prison depths (Bestiary.java:90-105) ---
+  /** Shaman.java:44-71 — "gnoll shaman": HP/HT 18, def 8, atk 11,
+   *  melee NormalIntRange(2,6), dr 4, EXP 6, maxLvl 14, resists Electricity
+   *  ('lightning'); loot: Generator.Category.SCROLL @ 0.33 (Shaman.java:54). */
+  shaman: {
+    id: 'shaman', name: 'gnoll shaman', sprite: 'mob_shaman',
+    hp: 18, atk: 11, def: 8, dmgMin: 2, dmgMax: 6, triangular: true, dr: 4,
+    exp: MOB_EXP.shaman.exp, maxLvl: MOB_EXP.shaman.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 1,
+    immunities: [], resistances: ['lightning'],
+  },
+  /** Bat.java:31-61 — "vampire bat": HP/HT 30, def 15, atk 16,
+   *  NormalIntRange(6,12), dr 4, baseSpeed 2, flying, EXP 7, maxLvl 15,
+   *  heals min(damage, HT-HP) per landed hit (Bat.java:69-79),
+   *  loot PotionOfHealing @ 0.125 (Bat.java:44), resists Leech. */
+  bat: {
+    id: 'bat', name: 'vampire bat', sprite: 'mob_bat',
+    hp: 30, atk: 16, def: 15, dmgMin: 6, dmgMax: 12, triangular: true, dr: 4,
+    exp: MOB_EXP.bat.exp, maxLvl: MOB_EXP.bat.maxLvl, // single-sourced
+    speed: 2, flying: true, ability: null, attackDelay: 1,
+    immunities: [], resistances: ['leech'],
+  },
+  /** Brute.java:133-170 — "gnoll brute": HP/HT 40, def 15, atk 20,
+   *  NormalIntRange(8,18) / enraged NormalIntRange(10,40), dr 8, EXP 8,
+   *  maxLvl 15, immune to Terror ('terror'), loot Gold @ 0.5 (Brute.java:145). */
+  brute: {
+    id: 'brute', name: 'gnoll brute', sprite: 'mob_brute',
+    hp: 40, atk: 20, def: 15, dmgMin: 8, dmgMax: 18, triangular: true, dr: 8,
+    exp: MOB_EXP.brute.exp, maxLvl: MOB_EXP.brute.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 1,
+    immunities: ['terror'], resistances: [],
+  },
+  /** Albino.java:27-50 — "albino rat" (Rat variant): HP/HT 15, Rat stats
+   *  otherwise (EXP 1, maxLvl 5); no dedicated loot table. */
+  albino: {
+    id: 'albino', name: 'albino rat', sprite: 'mob_albino',
+    hp: 15, atk: 8, def: 3, dmgMin: 1, dmgMax: 5, triangular: true, dr: 1,
+    exp: MOB_EXP.albino.exp, maxLvl: MOB_EXP.albino.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 1,
+    immunities: [], resistances: [],
+  },
+  /** Bandit.java:29-55 — "crazy bandit" (Thief variant): Thief stats
+   *  (EXP 5, maxLvl 10); steal prolongs Blindness (Bandit.steal). */
+  bandit: {
+    id: 'bandit', name: 'crazy bandit', sprite: 'mob_bandit',
+    hp: 20, atk: 12, def: 12, dmgMin: 1, dmgMax: 7, triangular: true, dr: 3,
+    exp: MOB_EXP.bandit.exp, maxLvl: MOB_EXP.bandit.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: 'thief', attackDelay: 0.5,
+    immunities: [], resistances: [],
+  },
+  /** Shielded.java:25-46 — "shielded brute" (Brute variant): def 20, dr 10,
+   *  defenseVerb "blocked"; Brute stats otherwise (EXP 8, maxLvl 15). */
+  shielded: {
+    id: 'shielded', name: 'shielded brute', sprite: 'mob_shielded',
+    hp: 40, atk: 20, def: 20, dmgMin: 8, dmgMax: 18, triangular: true, dr: 10,
+    exp: MOB_EXP.shielded.exp, maxLvl: MOB_EXP.shielded.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 1,
+    immunities: ['terror'], resistances: [],
   },
 };
 
@@ -301,6 +362,13 @@ export function tickBuffs(
     b.cripple.left -= 1;
     if (b.cripple.left <= 0) delete b.cripple;
   }
+  // Blindness (Blindness.java): FlavourBuff countdown; a blinded char
+  // sees nothing (Level.updateFieldOfView, Level.java:793). Stage 1
+  // applier: the crazy bandit's steal (Bandit.steal, Bandit.java:39-49).
+  if (b.blindness) {
+    b.blindness.left -= 1;
+    if (b.blindness.left <= 0) delete b.blindness;
+  }
 }
 
 /** The live hero, cast from the engine seam. */
@@ -417,6 +485,9 @@ export function randomDestination(rng: MechanicsRng, level: Level): number {
 /** Drop an item on the floor (Dungeon.level.drop). */
 export function dropItemAt(ctx: ActionContext, pos: number, itemId: string): void {
   ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
+  // PrisonBossLevel.drop (PrisonBossLevel.java:331-343): the first SkeletonKey
+  // dropped on the prison boss level turns the arena door into an ordinary door.
+  onItemDropped(ctx.level, itemId);
 }
 
 /**
@@ -478,6 +549,13 @@ export class ContentMob extends Actor implements MobActor {
   generation = 0;
   /** Thief.stolen item (Thief.java:28). */
   stolen: ItemStack | null = null;
+  /**
+   * Vanilla NPC.damage()/NPC.add(Buff) no-ops (NPC.java:33-53): the sad ghost
+   * and wandmaker cannot be damaged or buffed. Set by NPC subclasses;
+   * honored by strikeHeroVsMob, damageMobDirect, damageFromTrap and the
+   * trap buff-attach sites.
+   */
+  invulnerable = false;
 
   constructor(id: number, def: MobDef, pos: number, w: number) {
     super();
@@ -531,6 +609,15 @@ export class ContentMob extends Actor implements MobActor {
     return this.enemySeen && !this.paralysed ? this.def.def : 0;
   }
 
+  /**
+   * Defense verb shown when the hero's attack misses
+   * (Char.TXT_YOU_MISSED "%s %s your attack", Char.java:69, 196-203).
+   * Default "dodged" (Char.java:227-229).
+   */
+  defenseVerb(): string {
+    return 'dodged';
+  }
+
   mobDamageRoll(rng: MechanicsRng): number {
     return rng.normalIntRange(this.def.dmgMin, this.def.dmgMax);
   }
@@ -571,24 +658,35 @@ export class ContentMob extends Actor implements MobActor {
       return this.waitCost();
     }
 
-    const hero = heroOf(ctx);
+    // Vanilla Mob.chooseEnemy() (Mob.java:167-176): the sad ghost overrides
+    // it to null (Ghost.java:77-85) and never acquires an enemy.
+    const enemy = this.selectEnemy(ctx);
     const enemyInFOV =
-      hero.isAlive() && this.canSee(ctx, hero.pos); // Level.fieldOfView (Mob.java:157-159)
+      enemy != null && enemy.isAlive() && this.canSee(ctx, enemy.pos); // Level.fieldOfView (Mob.java:157-159)
+    const enemyPos = enemy != null ? enemy.pos : -1;
 
     switch (this.state) {
       case 'sleeping':
-        return this.actSleeping(ctx, hero.pos, enemyInFOV);
+        return this.actSleeping(ctx, enemyPos, enemyInFOV);
       case 'wandering':
-        return this.actWandering(ctx, hero.pos, enemyInFOV, justAlerted);
+        return this.actWandering(ctx, enemyPos, enemyInFOV, justAlerted);
       case 'hunting':
-        return this.actHunting(ctx, hero, enemyInFOV);
+        return this.actHunting(ctx, enemy, enemyInFOV);
       case 'fleeing':
-        return this.actFleeing(ctx, hero.pos, enemyInFOV);
+        return this.actFleeing(ctx, enemyPos, enemyInFOV);
       case 'passive':
       default:
         this.enemySeen = false;
         return this.waitCost();
     }
+  }
+
+  /**
+   * Vanilla Mob.chooseEnemy() (Mob.java:167-176): default returns the hero.
+   * The sad ghost overrides this to null (Ghost.java:77-85).
+   */
+  protected selectEnemy(ctx: ActionContext): ContentHero | null {
+    return heroOf(ctx);
   }
 
   /** Hook: shown when the mob notices the hero (Goo yells). */
@@ -624,7 +722,7 @@ export class ContentMob extends Actor implements MobActor {
   }
 
   /** canAttack(enemy) (Mob.java:226-228); Goo overrides. */
-  canAttack(targetPos: number): boolean {
+  canAttack(_ctx: ActionContext, targetPos: number): boolean {
     return chebyshevPos(this.pos, targetPos, this.w) <= 1;
   }
 
@@ -697,15 +795,17 @@ export class ContentMob extends Actor implements MobActor {
 
   private actHunting(
     ctx: ActionContext,
-    hero: ContentHero,
+    hero: ContentHero | null,
     enemyInFOV: boolean,
   ): number {
-    // Hunting.act (Mob.java:479-513)
+    // Hunting.act (Mob.java:479-513). hero is null only when selectEnemy()
+    // returned null (sad ghost), in which case enemyInFOV is false and the
+    // hero is never dereferenced.
     this.enemySeen = enemyInFOV;
-    if (enemyInFOV && this.canAttack(hero.pos)) {
+    if (enemyInFOV && hero != null && this.canAttack(ctx, hero.pos)) {
       return this.doAttack(ctx, hero);
     }
-    if (enemyInFOV) {
+    if (enemyInFOV && hero != null) {
       this.target = hero.pos;
     }
     const oldPos = this.pos;
@@ -761,11 +861,86 @@ export class ContentMob extends Actor implements MobActor {
 
   /** doAttack(enemy) (Mob.java:267-278); damage resolves immediately in M1. */
   doAttack(ctx: ActionContext, hero: ContentHero): number {
-    strikeMobVsHero(ctx, this, hero, this.def.atk, (rng) => this.mobDamageRoll(rng));
+    strikeMobVsHero(
+      ctx,
+      this,
+      hero,
+      this.def.atk,
+      (rng) => this.mobDamageRoll(rng),
+      (_rng, damage) => this.attackProc(ctx, hero, damage),
+    );
     return this.attackCost(); // spend(attackDelay())
+  }
+
+  /**
+   * Char.attack step 5 (Char.java:149), before defenseProc/damage:
+   * thief steals here (Thief.attackProc, Thief.java:103-111), the albino
+   * rat bleeds here (Albino.attackProc, Albino.java:52-60).
+   */
+  attackProc(
+    _ctx: ActionContext,
+    _hero: ContentHero,
+    damage: number,
+  ): number {
+    return damage;
+  }
+
+  /**
+   * Mob.damage subclass hooks (Brute.damage enrage, Brute.java:173-184):
+   * fired by damageMob/strikeHeroVsMob/damageFromTrap whenever the mob
+   * survives a damage call (vanilla checks isAlive() first).
+   */
+  onDamaged(_ctx: ActionContext): void {
+    // base: nothing
   }
 }
 
+/**
+ * Ranged canAttack (Ballistica.cast(pos, enemy.pos, false, true) == enemy.pos;
+ * Shaman.java:74-76, Tengu.java:119-121): the trace stops at the first
+ * non-passable cell (before it — Ballistica.java:85) or AT the first
+ * opaque cell / char (hitChars=true — Ballistica.java:88). The mob can
+ * attack iff the trace ends on the target.
+ */
+export function rangedCanAttack(
+  ctx: ActionContext,
+  self: ContentMob,
+  targetPos: number,
+): boolean {
+  const level = ctx.level;
+  const w = level.w;
+  if (targetPos === self.pos) return true; // Ballistica.cast: trace[0] == to
+  const x0 = self.pos % w;
+  const y0 = Math.floor(self.pos / w);
+  const x1 = targetPos % w;
+  const y1 = Math.floor(targetPos / w);
+  // Bresenham trace (mirrors the integer walk used by Goo's lineClear).
+  let dx = Math.abs(x1 - x0);
+  let dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  let x = x0;
+  let y = y0;
+  for (;;) {
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+    const cell = y * w + x;
+    if (cell === self.pos) continue; // start-exclusive
+    if (!level.inBounds(x, y)) return false;
+    if (!level.isPassable(x, y)) return false; // trace stops before it
+    if (level.isOpaque(x, y)) return cell === targetPos; // trace stops AT it
+    if (charAtPos(ctx, cell, self)) return cell === targetPos; // hitChars
+    if (cell === targetPos) return true;
+  }
+}
 /**
  * Thief's Fleeing.nowhereToRun: back to HUNTING when cornered
  * (Thief.java:151-160; M1 has no Terror buff).
@@ -774,20 +949,215 @@ export class ThiefMob extends ContentMob {
   protected override nowhereToRun(_ctx: ActionContext): void {
     this.state = 'hunting';
   }
+
+  /** Thief.attackProc (Thief.java:103-111): steal before damage resolves. */
+  override attackProc(ctx: ActionContext, hero: ContentHero, damage: number): number {
+    thiefSteal(ctx, this, hero);
+    return damage;
+  }
+}
+
+/**
+ * Bat (Bat.java:69-79): a landed hit sates the bat — it heals
+ * min(damage, HT - HP). No message in vanilla (red sparkle emitter only).
+ */
+export class BatMob extends ContentMob {
+  /** Bat.defenseVerb (Bat.java:64-66). */
+  override defenseVerb(): string {
+    return 'evaded';
+  }
+
+  override attackProc(
+    _ctx: ActionContext,
+    _hero: ContentHero,
+    damage: number,
+  ): number {
+    const reg = Math.min(damage, this.ht - this.hp);
+    if (reg > 0) this.hp += reg;
+    return damage;
+  }
+}
+
+/**
+ * Shaman (Shaman.java:44-120): ranged lightning zap through Ballistica
+ * (Shaman.canAttack, Shaman.java:74-76); adjacent targets take the plain
+ * melee die instead (Shaman.doAttack, Shaman.java:79-84).
+ */
+export class ShamanMob extends ContentMob {
+  override canAttack(ctx: ActionContext, targetPos: number): boolean {
+    return rangedCanAttack(ctx, this, targetPos);
+  }
+
+  override doAttack(ctx: ActionContext, hero: ContentHero): number {
+    if (chebyshevPos(this.pos, hero.pos, this.w) > 1) {
+      return this.zap(ctx, hero);
+    }
+    return super.doAttack(ctx, hero);
+  }
+
+  /**
+   * Shaman.doAttack zap branch (Shaman.java:85-119): magic accuracy
+   * (hit(this, enemy, true), Char.java:213-217), uniform Random.Int(2,12)
+   * — NOT the triangular melee die — x1.5 (Java float compound assignment
+   * truncates) in water against a non-flying target (Shaman.java:95-98),
+   * costs TIME_TO_ZAP = 2 turns (Shaman.java:40, 92).
+   */
+  private zap(ctx: ActionContext, hero: ContentHero): number {
+    const rng = ctx.rng;
+    if (hitRoll(rng, this.def.atk, heroDefenseSkill(hero), true)) {
+      let dmg = rng.int(2, 12);
+      if (ctx.level.getAt(hero.pos) === Terrain.WATER && !hero.flying) {
+        dmg = Math.floor(dmg * 1.5);
+      }
+      const applied = applyDamage(
+        rng,
+        {
+          hp: hero.hp, ht: hero.ht, paralysed: hero.paralysed,
+          immunities: [], resistances: [],
+        },
+        dmg,
+        'lightning',
+      );
+      hero.hp = applied.hp;
+      if (applied.paralysisBroken) {
+        hero.paralysed = false;
+        delete hero.buffs.paralysis;
+      }
+      ctx.log(`The ${this.name}'s lightning hits you for ${dmg}.`);
+      if (applied.died) {
+        ctx.log(`${this.name}'s lightning bolt killed you...`); // TXT_LIGHTNING_KILLED, Shaman.java:42
+      }
+    } else {
+      // enemy.sprite.showStatus(NEUTRAL, enemy.defenseVerb()) (Shaman.java:114-118)
+      ctx.log(`The ${this.name}'s lightning misses you.`);
+    }
+    return 2 * this.getSpeed();
+  }
+}
+
+/**
+ * Brute (Brute.java:133-184): enrages (extra NormalIntRange(10,40) die)
+ * below HT/4 HP; the spend(TICK) on enrage (Brute.java:178) lands on the
+ * brute's next turn cost — Goo's pumpedTicks pattern — because the
+ * engine's scheduler heap cannot re-sort a mid-turn time mutation.
+ */
+export class BruteMob extends ContentMob {
+  enraged = false; // Brute.enraged (Brute.java:147)
+  private enrageDebt = 0;
+
+  /** Brute.damageRoll (Brute.java:156-160). */
+  override mobDamageRoll(rng: MechanicsRng): number {
+    return this.enraged
+      ? rng.normalIntRange(10, 40)
+      : rng.normalIntRange(8, 18);
+  }
+
+  /** Brute.damage (Brute.java:173-184). */
+  override onDamaged(ctx: ActionContext): void {
+    if (this.isAlive() && !this.enraged && this.hp < Math.floor(this.ht / 4)) {
+      this.enraged = true;
+      this.enrageDebt = 1;
+      if (ctx.level.visible[this.pos]) {
+        ctx.log(`${this.name} becomes enraged!`); // TXT_ENRAGED, Brute.java:131
+      }
+    }
+  }
+
+  override takeTurn(ctx: ActionContext): number {
+    const cost = super.takeTurn(ctx);
+    if (this.enrageDebt > 0) {
+      this.enrageDebt = 0;
+      return cost + 1;
+    }
+    return cost;
+  }
+}
+
+/**
+ * Shielded brute (Shielded.java:25-47): inherits Brute's enrage and damage
+ * dice; defenseSkill 20, dr 10, defenseVerb "blocked" come from the def.
+ */
+export class ShieldedMob extends BruteMob {
+  /** Shielded.defenseVerb (Shielded.java:38-40). */
+  override defenseVerb(): string {
+    return 'blocked';
+  }
+}
+
+/**
+ * Albino rat (Albino.java:29-60): Rat stats with HP/HT 15; half of all
+ * successful attackProcs apply Bleeding at the damage dealt
+ * (Albino.attackProc, Albino.java:52-60) — set, not stacked.
+ */
+export class AlbinoMob extends ContentMob {
+  override attackProc(
+    ctx: ActionContext,
+    hero: ContentHero,
+    damage: number,
+  ): number {
+    if (ctx.rng.int(0, 2) === 0) {
+      // Bleeding.affect(enemy).set(damage) (Albino.java:52-60): set, not
+      // stacked — matches the GrippingTrap applier shape (traps.ts).
+      hero.buffs.bleeding = { kind: 'bleeding', left: 0, level: damage };
+    }
+    return damage;
+  }
+}
+
+/**
+ * Crazy bandit (Bandit.java:33-55): a Thief whose steal also prolongs
+ * Blindness by Random.Int(5,12) turns and re-observes the FOV
+ * (Bandit.steal, Bandit.java:39-49). Extends ThiefMob so the steal,
+ * fleeing, and defenseProc gold drop stay identical.
+ */
+export class BanditMob extends ThiefMob {
+  override attackProc(ctx: ActionContext, hero: ContentHero, damage: number): number {
+    if (thiefSteal(ctx, this, hero)) {
+      // Buff.prolong(hero, Blindness.class, Random.Int(5, 12)) (Bandit.java:42)
+      const left = ctx.rng.int(5, 12);
+      const cur = hero.buffs.blindness?.left ?? 0;
+      hero.buffs.blindness = { kind: 'blindness', left: Math.max(cur, left) };
+      // Dungeon.observe() (Bandit.java:43): the engine recomputes FOV
+      // afterAction; the blackout itself is applied in the FOV pass.
+    }
+    return damage;
+  }
 }
 
 /** Build a live mob from a resolved spawn (spawns.ts) or a save blob. */
-export function buildMob(mobId: string, id: number, pos: number, w: number): ContentMob {
+export function buildMob(mobId: string, id: number, pos: number, w: number, depth = 0): ContentMob {
   if (mobId === 'goo') {
     // Goo lives in goo-boss.ts; it registers itself here to avoid a cycle.
     const ctor = gooCtor;
     if (!ctor) throw new Error('goo-boss not registered (import src/content/goo-boss.js)');
     return new ctor(id, pos, w);
   }
+  // Quest NPCs (sad ghost, wandmaker, fetid rat, curse, shopkeeper) live in
+  // npcs.ts; they register here to avoid a cycle. The curse's HP scales with
+  // depth (CursePersonification, CursePersonification.java:36-37), hence the
+  // depth parameter (0 when reviving from a save, where HP is restored).
+  if (npcBuilder) {
+    const npc = npcBuilder(mobId, id, pos, w, depth);
+    if (npc) return npc;
+  }
+  if (mobId === 'tengu') {
+    // Tengu lives in tengu-boss.ts; it registers itself here to avoid a cycle.
+    const ctor = tenguCtor;
+    if (!ctor) throw new Error('tengu-boss not registered (import src/content/tengu-boss.js)');
+    return new ctor(id, pos, w);
+  }
   const def = MOB_DEFS[mobId];
   if (!def) throw new Error(`unknown mob id: ${mobId}`);
-  if (mobId === 'thief') return new ThiefMob(id, def, pos, w);
-  return new ContentMob(id, def, pos, w);
+  switch (mobId) {
+    case 'thief': return new ThiefMob(id, def, pos, w);
+    case 'shaman': return new ShamanMob(id, def, pos, w);
+    case 'bat': return new BatMob(id, def, pos, w);
+    case 'brute': return new BruteMob(id, def, pos, w);
+    case 'albino': return new AlbinoMob(id, def, pos, w);
+    case 'bandit': return new BanditMob(id, def, pos, w);
+    case 'shielded': return new ShieldedMob(id, def, pos, w);
+    default: return new ContentMob(id, def, pos, w);
+  }
 }
 
 /** Goo constructor registration (avoids a goo-boss <-> mobs import cycle). */
@@ -795,6 +1165,39 @@ type GooCtor = new (id: number, pos: number, w: number) => ContentMob;
 let gooCtor: GooCtor | null = null;
 export function registerGoo(ctor: GooCtor): void {
   gooCtor = ctor;
+}
+
+/** Tengu constructor registration (avoids a tengu-boss <-> mobs import cycle). */
+type TenguCtor = new (id: number, pos: number, w: number) => ContentMob;
+let tenguCtor: TenguCtor | null = null;
+export function registerTengu(ctor: TenguCtor): void {
+  tenguCtor = ctor;
+}
+
+/** NPC builder registration (avoids an npcs <-> mobs import cycle). */
+export type NpcBuilder = (
+  mobId: string,
+  id: number,
+  pos: number,
+  w: number,
+  depth: number,
+) => ContentMob | null;
+let npcBuilder: NpcBuilder | null = null;
+export function registerNpcBuilder(builder: NpcBuilder): void {
+  npcBuilder = builder;
+}
+
+/**
+ * Sewer-kill hook registration. Vanilla Rat.die (Rat.java:54), Gnoll.die
+ * (Gnoll.java:59), Crab.die (Crab.java:65) — and Albino via Rat.die — call
+ * Ghost.Quest.processSewersKill(pos) before the death pipeline. The quest
+ * logic lives in npcs.ts; this avoids an mobs <-> npcs import cycle.
+ */
+let sewersKillHook: ((ctx: ActionContext, pos: number) => void) | null = null;
+export function registerSewersKillHook(
+  fn: (ctx: ActionContext, pos: number) => void,
+): void {
+  sewersKillHook = fn;
 }
 
 /**
@@ -853,6 +1256,11 @@ export function mobDefenseProc(
   if (mob.def.ability === 'thief' && mob.state === 'fleeing') {
     dropItemAt(ctx, mob.pos, 'gold:1'); // Thief.java:114-121
   }
+  if (mob.def.ability === 'fetidrat') {
+    // FetidRat.defenseProc (FetidRat.java:79-82): seeds 20 ParalyticGas at
+    // its cell on every defense proc.
+    seedBlob(ctx.level.blobs, 'paralytic', mob.pos, 20, ctx.level.w * ctx.level.h);
+  }
   return damage;
 }
 
@@ -891,6 +1299,7 @@ export function damageMobDirect(
   sourceTag?: string,
 ): void {
   if (!mob.isAlive()) return;
+  if (mob.invulnerable) return; // Vanilla NPC.damage() is a no-op (NPC.java:33-37).
   if (mob.state === 'sleeping') mob.state = 'wandering';
   mob.justAlerted = true;
   const applied = applyDamage(
@@ -907,7 +1316,13 @@ export function damageMobDirect(
     mob.paralysed = false;
     delete mob.buffs.paralysis;
   }
-  if (applied.died) killMob(ctx, mob, {});
+  if (applied.died) {
+    killMob(ctx, mob, {});
+  } else {
+    // Mob.damage subclass hooks (Brute.damage enrage, Brute.java:173-184):
+    // fires on any survived damage call — vanilla checks isAlive() first.
+    mob.onDamaged(ctx);
+  }
 }
 
 /**
@@ -918,6 +1333,19 @@ export function damageMobDirect(
 export function killMob(ctx: ActionContext, mob: ContentMob, _opts: object): void {
   const hero = heroOf(ctx);
   const wasAlive = hero.isAlive();
+
+  // Vanilla Rat.die / Gnoll.die / Crab.die (Albino via Rat.die) call
+  // Ghost.Quest.processSewersKill(pos) before super.die() — the ghost quest
+  // hook (rose drop chance / fetid rat spawn). FetidRat extends Mob, not
+  // Rat, so its own death does not fire it.
+  if (
+    mob.def.id === 'rat' ||
+    mob.def.id === 'gnoll' ||
+    mob.def.id === 'crab' ||
+    mob.def.id === 'albino'
+  ) {
+    sewersKillHook?.(ctx, mob.pos);
+  }
 
   // EXP (Mob.destroy): only when the hero is alive to earn it.
   if (wasAlive) {
@@ -1017,6 +1445,31 @@ function rollMobLoot(ctx: ActionContext, mob: ContentMob): void {
         dropItemAt(ctx, mob.pos, 'ration');
       }
       break;
+    case 'shaman': {
+      // loot = Generator.Category.SCROLL, lootChance 0.33 (Shaman.java:54-55);
+      // Generator.random(SCROLL) draws from the scroll probability bag.
+      if (rng.float(0, 1) < 0.33) {
+        dropItemAt(ctx, mob.pos, itemGenerator.randomFrom(rng, 'scroll', depth));
+      }
+      break;
+    }
+    case 'bat':
+      // loot = PotionOfHealing, lootChance 0.125 (Bat.java:44-45)
+      if (rng.float(0, 1) < 0.125) {
+        dropItemAt(ctx, mob.pos, 'potion_healing');
+      }
+      break;
+    case 'brute':
+    case 'shielded':
+      // loot = Gold.class, lootChance 0.5 (Brute.java:144-145); Shielded
+      // extends Brute with no loot override (Shielded.java), so it inherits.
+      // Gold.random(): 20 + depth*10 .. 40 + depth*20 (Gold.java:100-103)
+      if (rng.float(0, 1) < 0.5) {
+        dropItemAt(ctx, mob.pos, `gold:${rng.intRange(20 + depth * 10, 40 + depth * 20)}`);
+      }
+      break;
+    // albino: Rat has no loot table (Rat.java) — none.
+    // bandit: Thief's RingOfHaggler 0.01 skipped like the thief — no M1 rings.
     // thief: RingOfHaggler 0.01 (Thief.java:52-53) — no M1 rings; skipped.
     // goo: LloydsBeacon 0.333 (Goo.java:58-59) — no M1 beacons; skipped.
     default:
@@ -1045,7 +1498,15 @@ export function strikeHeroVsMob(
     onDefenseProc: (_r, dmg) => mobDefenseProc(ctx, mob, dmg),
   });
   if (!seq.hit) {
-    ctx.log(`You miss the ${mob.name}.`);
+    // TXT_YOU_MISSED "%s %s your attack" (Char.java:69, 196-203).
+    ctx.log(`The ${mob.name} ${mob.defenseVerb()} your attack.`);
+    return;
+  }
+  if (mob.invulnerable) {
+    // Vanilla NPC.damage() is a no-op (NPC.java:33-37): the sad ghost and
+    // wandmaker cannot be hurt. The hit roll above still runs (defense 1000
+    // -> a miss in practice); a rolled hit deals nothing.
+    ctx.log(`You hit the ${mob.name}, but do no damage.`);
     return;
   }
   const applied = applyDamage(
@@ -1069,7 +1530,12 @@ export function strikeHeroVsMob(
       ? `You hit the ${mob.name} for ${seq.damageDealt}.`
       : `You hit the ${mob.name}, but do no damage.`,
   );
-  if (applied.died) killMob(ctx, mob, {});
+  if (applied.died) {
+    killMob(ctx, mob, {});
+  } else {
+    // Mob.damage subclass hooks (Brute.damage enrage, Brute.java:173-184).
+    mob.onDamaged(ctx);
+  }
 }
 
 /**
