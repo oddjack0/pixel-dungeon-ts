@@ -34,6 +34,7 @@ import {
   burningTick,
   burnsUpMessage,
   bleedingTick,
+  elementsDurationFactor,
   oozeTick,
   poisonTick,
   type BuffKind,
@@ -47,13 +48,13 @@ import { satisfy, isStarving, STARVING } from '../mechanics/hunger.js';
 import { seedBlob } from '../mechanics/blobs.js';
 import { pressTrapCell, mobPressTrapCell, type TrapMob } from '../mechanics/traps.js';
 import {
+  affectBuff,
   weaponAttackProc,
   type ProcChar,
   type ProcFx,
 } from './enchantments.js';
 import { armorDefenseProc } from './glyphs.js';
-import type { ContentHero, ItemStack } from './hero.js';
-import { addToInventory, removeFromInventory } from './hero.js';
+import { ContentHero, addToInventory, removeFromInventory, type ItemStack } from './hero.js';
 import { getItem, ITEMS } from './items.js';
 import { itemGenerator, skeletonWeaponDrop } from './itemgen.js';
 
@@ -79,6 +80,9 @@ export interface MobDef {
   maxLvl: number;
   /** baseSpeed (Char.speed); crab = 2. */
   speed: number;
+  /** viewDistance override (Char.java:90, default 8); Succubus = 4
+   * (Light.DISTANCE, Succubus.java:35). */
+  viewDistance?: number;
   flying: boolean;
   /** Special-ability hook id. */
   ability: 'swarm' | 'skeleton' | 'thief' | 'fetidrat' | null;
@@ -245,6 +249,42 @@ export const MOB_DEFS: Readonly<Record<string, MobDef>> = {
     exp: MOB_EXP.monk.exp, maxLvl: MOB_EXP.monk.maxLvl, // single-sourced
     speed: 1, flying: false, ability: null, attackDelay: 0.5,
     immunities: ['amok', 'terror'], resistances: [],
+  },
+  /** Warlock.java:31-53 — name 'dwarf warlock', HP/HT 70, def 18, atk 25,
+   *  Random.NormalIntRange(12,20), dr 8, EXP 11, maxLvl 21; loot
+   *  Generator.Category.POTION @ 0.83 (Warlock.java:50-51); resists Death
+   *  (Warlock.java:63). Ranged shadow-bolt handled by WarlockMob below. */
+  warlock: {
+    id: 'warlock', name: 'dwarf warlock', sprite: 'mob_warlock',
+    hp: 70, atk: 25, def: 18, dmgMin: 12, dmgMax: 20, triangular: true, dr: 8,
+    exp: MOB_EXP.warlock.exp, maxLvl: MOB_EXP.warlock.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 1,
+    immunities: [], resistances: ['death'],
+  },
+  /** Golem.java:31-51 — name 'golem', HP/HT 85, def 18, atk 28,
+   *  Random.NormalIntRange(20,40), dr 12, EXP 12, maxLvl 22; attackDelay
+   *  1.5 (Golem.java:54); defense verb 'blocked' (Golem.java:58); immune
+   *  to Amok/Terror/Sleep (Golem.java:61-62); resists Psionic Blast
+   *  (Golem.java:66); no ordinary loot. Death triggers Imp.Quest.process
+   *  (Golem.java:72-77) — port seam via GolemMob.die; Imp quest not ported. */
+  golem: {
+    id: 'golem', name: 'golem', sprite: 'mob_golem',
+    hp: 85, atk: 28, def: 18, dmgMin: 20, dmgMax: 40, triangular: true, dr: 12,
+    exp: MOB_EXP.golem.exp, maxLvl: MOB_EXP.golem.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 1.5,
+    immunities: ['amok', 'terror', 'sleep'], resistances: ['psionic_blast'],
+  },
+  /** Succubus.java:33-53 — name 'succubus', HP/HT 80, def 25, atk 40,
+   *  Random.NormalIntRange(15,25), dr 10, EXP 12, maxLvl 25; viewDistance =
+   *  Light.DISTANCE = 4 (Succubus.java:35); loot ScrollOfLullaby @ 0.05
+   *  (Succubus.java:49-50); resists Leech (Succubus.java:98); immune to
+   *  Sleep (Succubus.java:93). Blink + charm handled by SuccubusMob below. */
+  succubus: {
+    id: 'succubus', name: 'succubus', sprite: 'mob_succubus',
+    hp: 80, atk: 40, def: 25, dmgMin: 15, dmgMax: 25, triangular: true, dr: 10,
+    exp: MOB_EXP.succubus.exp, maxLvl: MOB_EXP.succubus.maxLvl, // single-sourced
+    speed: 1, flying: false, ability: null, attackDelay: 1, viewDistance: 4,
+    immunities: ['sleep'], resistances: ['leech'],
   },
 };
 
@@ -656,6 +696,13 @@ export class ContentMob extends Actor implements MobActor {
   enemySeen = false;
   target = -1;
   justAlerted = false;
+  /**
+   * Retained enemy (Mob.java:66). Vanilla Mob.chooseEnemy (Mob.java:167-176)
+   * returns the live retained enemy, else the hero. A hostile mob stung by
+   * the honeypot bee keeps the bee as its enemy (Bee.attackProc calls
+   * mob.aggro(this), Bee.java:159).
+   */
+  enemy: ContentHero | ContentMob | null = null;
 
   paralysed = false;
   rooted = false;
@@ -801,11 +848,21 @@ export class ContentMob extends Actor implements MobActor {
   }
 
   /**
-   * Vanilla Mob.chooseEnemy() (Mob.java:167-176): default returns the hero.
-   * The sad ghost overrides this to null (Ghost.java:77-85).
+   * Mob.aggro (Mob.java:305-307): the chaser becomes this mob's retained
+   * enemy. A hostile mob stung by the bee hunts the bee (Bee.java:159).
    */
-  protected selectEnemy(ctx: ActionContext): ContentHero | null {
-    return heroOf(ctx);
+  aggro(chaser: ContentHero | ContentMob): void {
+    this.enemy = chaser;
+  }
+
+  /**
+   * Vanilla Mob.chooseEnemy() (Mob.java:167-176): the live retained enemy,
+   * else the hero. The sad ghost overrides this to null (Ghost.java:77-85)
+   * and never acquires an enemy; the bee overrides it to pick hostile
+   * mobs in the hero's field of view (Bee.java:104-121).
+   */
+  protected selectEnemy(ctx: ActionContext): ContentHero | ContentMob | null {
+    return this.enemy != null && this.enemy.isAlive() ? this.enemy : heroOf(ctx);
   }
 
   /** Hook: shown when the mob notices the hero (Goo yells). */
@@ -855,7 +912,8 @@ export class ContentMob extends Actor implements MobActor {
     return chebyshevPos(this.pos, targetPos, this.w) <= 1;
   }
 
-  /** FOV from the mob's position, radius = viewDistance 8 (Char.java:90). */
+  /** FOV from the mob's position, radius = viewDistance (Char.java:90, default
+   *  8; Succubus overrides to Light.DISTANCE = 4, Succubus.java:35). */
   canSee(ctx: ActionContext, pos: number): boolean {
     const level = ctx.level;
     const out = new Uint8Array(level.w * level.h);
@@ -864,7 +922,7 @@ export class ContentMob extends Actor implements MobActor {
       (x, y) => level.isOpaque(x, y),
       this.x,
       this.y,
-      8,
+      this.def.viewDistance ?? 8,
       out,
     );
     return out[pos] === 1;
@@ -924,18 +982,19 @@ export class ContentMob extends Actor implements MobActor {
 
   private actHunting(
     ctx: ActionContext,
-    hero: ContentHero | null,
+    enemy: ContentHero | ContentMob | null,
     enemyInFOV: boolean,
   ): number {
-    // Hunting.act (Mob.java:479-513). hero is null only when selectEnemy()
+    // Hunting.act (Mob.java:479-513). enemy is null only when selectEnemy()
     // returned null (sad ghost), in which case enemyInFOV is false and the
-    // hero is never dereferenced.
+    // enemy is never dereferenced. The bee's chooseEnemy can return a
+    // hostile mob (Bee.java:104-121) — hunting works against any enemy.
     this.enemySeen = enemyInFOV;
-    if (enemyInFOV && hero != null && this.canAttack(ctx, hero.pos)) {
-      return this.doAttack(ctx, hero);
+    if (enemyInFOV && enemy != null && this.canAttack(ctx, enemy.pos)) {
+      return this.doAttack(ctx, enemy);
     }
-    if (enemyInFOV && hero != null) {
-      this.target = hero.pos;
+    if (enemyInFOV && enemy != null) {
+      this.target = enemy.pos;
     }
     const oldPos = this.pos;
     if (this.target !== -1 && this.getCloser(ctx, this.target)) {
@@ -989,26 +1048,48 @@ export class ContentMob extends Actor implements MobActor {
   }
 
   /** doAttack(enemy) (Mob.java:267-278); damage resolves immediately in M1. */
-  doAttack(ctx: ActionContext, hero: ContentHero): number {
-    strikeMobVsHero(
-      ctx,
-      this,
-      hero,
-      this.def.atk,
-      (rng) => this.mobDamageRoll(rng),
-      (_rng, damage) => this.attackProc(ctx, hero, damage),
-    );
+  /**
+   * Mob attack against any enemy (Char.attack, Char.java:128-186). The
+   * enemy is usually the hero; the honeypot bee hunts hostile mobs instead
+   * (Bee.chooseEnemy, Bee.java:104-121), so mob-vs-mob strikes route
+   * through strikeMobVsMob.
+   */
+  doAttack(ctx: ActionContext, enemy: ContentHero | ContentMob): number {
+    const proc = (rng: MechanicsRng, damage: number) =>
+      this.attackProc(ctx, enemy, damage);
+    if (enemy instanceof ContentHero) {
+      strikeMobVsHero(
+        ctx,
+        this,
+        enemy,
+        this.def.atk,
+        (rng) => this.mobDamageRoll(rng),
+        proc,
+      );
+    } else {
+      strikeMobVsMob(
+        ctx,
+        this,
+        enemy,
+        this.def.atk,
+        (rng) => this.mobDamageRoll(rng),
+        proc,
+      );
+    }
     return this.attackCost(); // spend(attackDelay())
   }
 
   /**
    * Char.attack step 5 (Char.java:149), before defenseProc/damage:
    * thief steals here (Thief.attackProc, Thief.java:103-111), the albino
-   * rat bleeds here (Albino.attackProc, Albino.java:52-60).
+   * rat bleeds here (Albino.attackProc, Albino.java:52-60). The enemy is
+   * `Char` in vanilla — procs that only work on the hero (thief's steal,
+   * monk's disarm) guard on it, exactly like vanilla's `enemy instanceof
+   * Hero` / `enemy == Dungeon.hero` checks.
    */
   attackProc(
     _ctx: ActionContext,
-    _hero: ContentHero,
+    _enemy: ContentHero | ContentMob,
     damage: number,
   ): number {
     return damage;
@@ -1080,8 +1161,9 @@ export class ThiefMob extends ContentMob {
   }
 
   /** Thief.attackProc (Thief.java:103-111): steal before damage resolves. */
-  override attackProc(ctx: ActionContext, hero: ContentHero, damage: number): number {
-    thiefSteal(ctx, this, hero);
+  override attackProc(ctx: ActionContext, enemy: ContentHero | ContentMob, damage: number): number {
+    // Thief.attackProc (Thief.java:102-108): the steal only targets the hero.
+    if (enemy instanceof ContentHero) thiefSteal(ctx, this, enemy);
     return damage;
   }
 }
@@ -1098,7 +1180,7 @@ export class BatMob extends ContentMob {
 
   override attackProc(
     _ctx: ActionContext,
-    _hero: ContentHero,
+    _enemy: ContentHero | ContentMob,
     damage: number,
   ): number {
     const reg = Math.min(damage, this.ht - this.hp);
@@ -1117,11 +1199,11 @@ export class ShamanMob extends ContentMob {
     return rangedCanAttack(ctx, this, targetPos);
   }
 
-  override doAttack(ctx: ActionContext, hero: ContentHero): number {
-    if (chebyshevPos(this.pos, hero.pos, this.w) > 1) {
-      return this.zap(ctx, hero);
+  override doAttack(ctx: ActionContext, enemy: ContentHero | ContentMob): number {
+    if (chebyshevPos(this.pos, enemy.pos, this.w) > 1) {
+      return this.zap(ctx, enemy);
     }
-    return super.doAttack(ctx, hero);
+    return super.doAttack(ctx, enemy);
   }
 
   /**
@@ -1129,36 +1211,55 @@ export class ShamanMob extends ContentMob {
    * (hit(this, enemy, true), Char.java:213-217), uniform Random.Int(2,12)
    * — NOT the triangular melee die — x1.5 (Java float compound assignment
    * truncates) in water against a non-flying target (Shaman.java:95-98),
-   * costs TIME_TO_ZAP = 2 turns (Shaman.java:40, 92).
+   * costs TIME_TO_ZAP = 2 turns (Shaman.java:40, 92). Vanilla works on any
+   * Char enemy (a bee-aggroed shaman zaps the bee).
    */
-  private zap(ctx: ActionContext, hero: ContentHero): number {
+  private zap(ctx: ActionContext, target: ContentHero | ContentMob): number {
     const rng = ctx.rng;
-    if (hitRoll(rng, this.def.atk, heroDefenseSkill(hero), true)) {
+    const evasion =
+      target instanceof ContentHero ? heroDefenseSkill(target) : target.mobDefenseSkill();
+    if (hitRoll(rng, this.def.atk, evasion, true)) {
       let dmg = rng.int(2, 12);
-      if (ctx.level.getAt(hero.pos) === Terrain.WATER && !hero.flying) {
+      if (ctx.level.getAt(target.pos) === Terrain.WATER && !target.flying) {
         dmg = Math.floor(dmg * 1.5);
       }
       const applied = applyDamage(
         rng,
         {
-          hp: hero.hp, ht: hero.ht, paralysed: hero.paralysed,
+          hp: target.hp, ht: target.ht, paralysed: target.paralysed,
           immunities: [], resistances: [],
         },
         dmg,
         'lightning',
       );
-      hero.hp = applied.hp;
+      target.hp = applied.hp;
       if (applied.paralysisBroken) {
-        hero.paralysed = false;
-        delete hero.buffs.paralysis;
+        target.paralysed = false;
+        delete target.buffs.paralysis;
       }
-      ctx.log(`The ${this.name}'s lightning hits you for ${dmg}.`);
-      if (applied.died) {
-        ctx.log(`${this.name}'s lightning bolt killed you...`); // TXT_LIGHTNING_KILLED, Shaman.java:42
+      if (target instanceof ContentHero) {
+        ctx.log(`The ${this.name}'s lightning hits you for ${dmg}.`);
+        if (applied.died) {
+          ctx.log(`${this.name}'s lightning bolt killed you...`); // TXT_LIGHTNING_KILLED, Shaman.java:42
+        }
+      } else {
+        ctx.log(`The ${this.name}'s lightning hits the ${target.name} for ${dmg}.`);
+        if (applied.died) {
+          killMob(ctx, target, {});
+        } else {
+          // Mob.damage wake/alert (Mob.java:328-337) + subclass hooks.
+          if (target.state === 'sleeping') target.state = 'wandering';
+          target.justAlerted = true;
+          target.onDamaged(ctx);
+        }
       }
     } else {
       // enemy.sprite.showStatus(NEUTRAL, enemy.defenseVerb()) (Shaman.java:114-118)
-      ctx.log(`The ${this.name}'s lightning misses you.`);
+      ctx.log(
+        target instanceof ContentHero
+          ? `The ${this.name}'s lightning misses you.`
+          : `The ${this.name}'s lightning misses the ${target.name}.`,
+      );
     }
     return 2 * this.getSpeed();
   }
@@ -1221,13 +1322,13 @@ export class ShieldedMob extends BruteMob {
 export class AlbinoMob extends ContentMob {
   override attackProc(
     ctx: ActionContext,
-    hero: ContentHero,
+    enemy: ContentHero | ContentMob,
     damage: number,
   ): number {
     if (ctx.rng.int(0, 2) === 0) {
       // Bleeding.affect(enemy).set(damage) (Albino.java:52-60): set, not
       // stacked — matches the GrippingTrap applier shape (traps.ts).
-      hero.buffs.bleeding = { kind: 'bleeding', left: 0, level: damage };
+      enemy.buffs.bleeding = { kind: 'bleeding', left: 0, level: damage };
     }
     return damage;
   }
@@ -1240,12 +1341,14 @@ export class AlbinoMob extends ContentMob {
  * fleeing, and defenseProc gold drop stay identical.
  */
 export class BanditMob extends ThiefMob {
-  override attackProc(ctx: ActionContext, hero: ContentHero, damage: number): number {
-    if (thiefSteal(ctx, this, hero)) {
+  override attackProc(ctx: ActionContext, enemy: ContentHero | ContentMob, damage: number): number {
+    // Bandit.steal only targets the hero (Thief.attackProc guard, Thief.java:103).
+    if (!(enemy instanceof ContentHero)) return damage;
+    if (thiefSteal(ctx, this, enemy)) {
       // Buff.prolong(hero, Blindness.class, Random.Int(5, 12)) (Bandit.java:42)
       const left = ctx.rng.int(5, 12);
-      const cur = hero.buffs.blindness?.left ?? 0;
-      hero.buffs.blindness = { kind: 'blindness', left: Math.max(cur, left) };
+      const cur = enemy.buffs.blindness?.left ?? 0;
+      enemy.buffs.blindness = { kind: 'blindness', left: Math.max(cur, left) };
       // Dungeon.observe() (Bandit.java:43): the engine recomputes FOV
       // afterAction; the blackout itself is applied in the FOV pass.
     }
@@ -1272,13 +1375,13 @@ export class BanditMob extends ThiefMob {
 export class SpinnerMob extends ContentMob {
   override attackProc(
     ctx: ActionContext,
-    hero: ContentHero,
+    enemy: ContentHero | ContentMob,
     damage: number,
   ): number {
     if (ctx.rng.int(0, 2) === 0) {
       // Buff.affect(enemy, Poison.class).set(...) (Spinner.java:89-90):
       // Poison.set overwrites the duration (Poison.java:50-52).
-      hero.buffs.poison = {
+      enemy.buffs.poison = {
         kind: 'poison',
         left: ctx.rng.int(7, 9) * 1, // * Poison.durationFactor — no Resistance ring in the port
       };
@@ -1334,11 +1437,11 @@ export class SpinnerMob extends ContentMob {
 export class ElementalMob extends ContentMob {
   override attackProc(
     _ctx: ActionContext,
-    hero: ContentHero,
+    enemy: ContentHero | ContentMob,
     damage: number,
   ): number {
     if (_ctx.rng.int(0, 2) === 0) {
-      hero.buffs.burning = { kind: 'burning', left: 8 }; // reignite, Burning.java:109-111
+      enemy.buffs.burning = { kind: 'burning', left: 8 }; // reignite, Burning.java:109-111
     }
     return damage;
   }
@@ -1365,14 +1468,17 @@ export class MonkMob extends ContentMob {
 
   override attackProc(
     ctx: ActionContext,
-    hero: ContentHero,
+    enemy: ContentHero | ContentMob,
     damage: number,
   ): number {
-    if (ctx.rng.int(0, 6) === 0 && hero.weaponId !== null && hero.weaponId !== 'knuckles') {
-      const def = getItem(hero.weaponId);
-      dropItemAt(ctx, hero.pos, hero.weaponId); // Dungeon.level.drop(weapon, hero.pos)
-      hero.weapon = null;
-      hero.weaponId = null;
+    // Monk.attackProc (Monk.java:86-106): disarm only the hero
+    // (vanilla: `enemy == Dungeon.hero`).
+    if (!(enemy instanceof ContentHero)) return damage;
+    if (ctx.rng.int(0, 6) === 0 && enemy.weaponId !== null && enemy.weaponId !== 'knuckles') {
+      const def = getItem(enemy.weaponId);
+      dropItemAt(ctx, enemy.pos, enemy.weaponId); // Dungeon.level.drop(weapon, hero.pos)
+      enemy.weapon = null;
+      enemy.weaponId = null;
       ctx.log(`${this.name} has knocked the ${def.name} from your hands!`); // TXT_DISARM, Monk.java:34
     }
     return damage;
@@ -1386,6 +1492,14 @@ export function buildMob(mobId: string, id: number, pos: number, w: number, dept
     const ctor = gooCtor;
     if (!ctor) throw new Error('goo-boss not registered (import src/content/goo-boss.js)');
     return new ctor(id, pos, w);
+  }
+  if (mobId === 'bee') {
+    // The honeypot bee lives in bee.ts; it registers itself here to avoid
+    // a cycle. spawn(depth) scales HP/attack/defense with depth, hence the
+    // depth parameter (0 when reviving from a save, where HP is restored).
+    const ctor = beeCtor;
+    if (!ctor) throw new Error('bee not registered (import src/content/bee.js)');
+    return new ctor(id, pos, w, depth);
   }
   // Quest NPCs (sad ghost, wandmaker, fetid rat, curse, shopkeeper) live in
   // npcs.ts; they register here to avoid a cycle. The curse's HP scales with
@@ -1429,6 +1543,13 @@ type GooCtor = new (id: number, pos: number, w: number) => ContentMob;
 let gooCtor: GooCtor | null = null;
 export function registerGoo(ctor: GooCtor): void {
   gooCtor = ctor;
+}
+
+/** Bee constructor registration (avoids a bee <-> mobs import cycle). */
+export type BeeCtor = new (id: number, pos: number, w: number, depth: number) => ContentMob;
+let beeCtor: BeeCtor | null = null;
+export function registerBee(ctor: BeeCtor): void {
+  beeCtor = ctor;
 }
 
 /** Tengu constructor registration (avoids a tengu-boss <-> mobs import cycle). */
@@ -1989,6 +2110,72 @@ export function strikeHeroVsMob(
   } else {
     // Mob.damage subclass hooks (Brute.damage enrage, Brute.java:173-184).
     mob.onDamaged(ctx);
+  }
+}
+
+/**
+ * Mob-vs-mob strike (Char.attack, Char.java:128-186): the bee's sting
+ * against a hostile mob, or a bee-aggroed mob striking back at the bee.
+ * Mirrors strikeHeroVsMob with the defender's mobDefenseSkill() and
+ * vanilla Mob.damage wake/alert (Mob.java:328-337); invulnerable NPCs
+ * (sad ghost, wandmaker) take no damage (NPC.damage no-op, NPC.java:33-37)
+ * — the bee inherits this from NPC in vanilla too (Bee extends NPC).
+ */
+export function strikeMobVsMob(
+  ctx: ActionContext,
+  attacker: ContentMob,
+  defender: ContentMob,
+  accuracy: number,
+  damageRoll: (rng: MechanicsRng) => number,
+  onAttackProc?: (rng: MechanicsRng, damage: number) => number,
+): void {
+  const rng = ctx.rng;
+  const seq = runAttackSequence(rng, {
+    accuracy,
+    evasion: defender.mobDefenseSkill(),
+    defenderDr: defender.def.dr,
+    damageRoll,
+    onAttackProc,
+    onDefenseProc: (_r, dmg) => mobDefenseProc(ctx, defender, dmg),
+  });
+  if (!seq.hit) {
+    // Char.attack miss: the defender's defense verb (Char.java:196-203).
+    ctx.log(`The ${attacker.name} misses the ${defender.name}.`);
+    return;
+  }
+  if (defender.invulnerable) {
+    // Vanilla NPC.damage() is a no-op (NPC.java:33-37).
+    ctx.log(`The ${attacker.name} hits the ${defender.name}, but does no damage.`);
+    return;
+  }
+  const applied = applyDamage(
+    rng,
+    {
+      hp: defender.hp,
+      ht: defender.ht,
+      paralysed: defender.paralysed,
+      immunities: defender.immunities,
+      resistances: defender.resistances,
+    },
+    seq.damageDealt,
+  );
+  defender.hp = applied.hp;
+  if (applied.paralysisBroken) {
+    defender.paralysed = false;
+    delete defender.buffs.paralysis;
+  }
+  ctx.log(
+    seq.damageDealt > 0
+      ? `The ${attacker.name} hits the ${defender.name} for ${seq.damageDealt}.`
+      : `The ${attacker.name} hits the ${defender.name}, but does no damage.`,
+  );
+  if (applied.died) {
+    killMob(ctx, defender, {});
+  } else {
+    // Mob.damage wake/alert (Mob.java:328-337) + subclass hooks.
+    if (defender.state === 'sleeping') defender.state = 'wandering';
+    defender.justAlerted = true;
+    defender.onDamaged(ctx);
   }
 }
 

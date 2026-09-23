@@ -56,7 +56,7 @@ import {
 import {
   addToInventory,
   removeFromInventory,
-  type ContentHero,
+  ContentHero,
 } from './hero.js';
 import { getItem } from './items.js';
 import { itemGenerator } from './itemgen.js';
@@ -68,12 +68,15 @@ import {
   instanceItemDef,
   parseWandId,
 } from './wands.js';
-import { pressTrapCell } from '../mechanics/traps.js';
+import { mobPressTrapCell, pressTrapCell, type TrapMob } from '../mechanics/traps.js';
 import { upgradeItem, type DurableItem } from '../mechanics/durability.js';
 import { tickHeroClock } from './actions.js';
 import { showDialog, uiBridge } from '../ui/dialog.js';
 import { Shopkeeper } from './shopkeeper.js';
 import type { Game } from '../engine/loop.js';
+// Stage 3 (Worker E): the Imp quest's heirloom-ring reward is a real ring
+// instance (Imp.java:226-231), drawn from the ring system at quest spawn.
+import { RING_SPECS, createRing, getRingState, identifyRingType } from './rings.js';
 
 // ---------------------------------------------------------------------------
 // Quest state (vanilla Ghost.Quest / Wandmaker.Quest statics)
@@ -141,6 +144,7 @@ export function resetQuestState(): void {
   Object.assign(ghostQuest, freshGhostQuest());
   Object.assign(wandmakerQuest, freshWandmakerQuest());
   Object.assign(blacksmithQuest, freshBlacksmithQuest());
+  Object.assign(impQuest, freshImpQuest());
 }
 
 /**
@@ -180,16 +184,55 @@ export function freshBlacksmithQuest(): BlacksmithQuestState {
 export const blacksmithQuest: BlacksmithQuestState = freshBlacksmithQuest();
 
 /**
- * Save-bundle form of the three run-level quest singletons (vanilla
+ * Vanilla Imp.Quest statics (Imp.java:158-248): the ambitious imp's bounty
+ * quest on the City depths. `alternative` picks the quest variant at spawn
+ * (Imp.java:223): false = kill 6 golems (TXT_GOLEMS1), true = kill 8 monks
+ * (TXT_MONKS1). `reward` is the heirloom ring instance rolled at spawn
+ * (Imp.java:226-231), cleared on turn-in (Imp.Quest.complete).
+ */
+export interface ImpQuestState {
+  /** Vanilla Quest.spawned (Imp.java:163). */
+  spawned: boolean;
+  /** Vanilla Quest.alternative (Imp.java:161): monks variant when true. */
+  alternative: boolean;
+  /** Vanilla Quest.given (Imp.java:164). */
+  given: boolean;
+  /** Vanilla Quest.completed (Imp.java:165). */
+  completed: boolean;
+  /**
+   * The reward ring INSTANCE id rolled at quest spawn (Imp.java:226-231:
+   * random non-cursed ring, upgrade(2), then cursed=true). Stored like the
+   * wandmaker's wand instances (`ring_of_power#3`) so the exact roll
+   * survives until turn-in. Quest.complete() clears it (Imp.java:240-245).
+   */
+  rewardRingId: string | null;
+}
+
+export function freshImpQuest(): ImpQuestState {
+  return {
+    spawned: false,
+    alternative: false,
+    given: false,
+    completed: false,
+    rewardRingId: null,
+  };
+}
+
+export const impQuest: ImpQuestState = freshImpQuest();
+
+/**
+ * Save-bundle form of the run-level quest singletons (vanilla
  * Dungeon.storeInBundle -> Ghost.Quest.storeInBundle (Ghost.java:194-216),
  * Wandmaker.Quest.storeInBundle (Wandmaker.java:143-160),
- * Blacksmith.Quest.storeInBundle (Blacksmith.java:275-290)).
+ * Blacksmith.Quest.storeInBundle (Blacksmith.java:275-290),
+ * Imp.Quest.storeInBundle (Imp.java:179-194)).
  * JSON-serializable; restored with restoreQuestState().
  */
 export interface QuestSaveData {
   ghost: GhostQuestState;
   wandmaker: WandmakerQuestState;
   blacksmith: BlacksmithQuestState;
+  imp: ImpQuestState;
 }
 
 /** Snapshot the quest singletons for the save bundle. */
@@ -198,6 +241,7 @@ export function saveQuestState(): QuestSaveData {
     ghost: { ...ghostQuest },
     wandmaker: { ...wandmakerQuest },
     blacksmith: { ...blacksmithQuest },
+    imp: { ...impQuest },
   };
 }
 
@@ -210,6 +254,7 @@ export function restoreQuestState(data: QuestSaveData | undefined): void {
   Object.assign(ghostQuest, freshGhostQuest(), data?.ghost ?? {});
   Object.assign(wandmakerQuest, freshWandmakerQuest(), data?.wandmaker ?? {});
   Object.assign(blacksmithQuest, freshBlacksmithQuest(), data?.blacksmith ?? {});
+  Object.assign(impQuest, freshImpQuest(), data?.imp ?? {});
 }
 
 /**
@@ -276,6 +321,60 @@ export function initWandmakerQuest(rng: RNG, waterCells: number, levelLength: nu
   const nonBattle = ['amok', 'blink', 'regrowth', 'slowness', 'reach'];
   wandmakerQuest.wand1 = createWandReward(rng, rng.pick(battle));
   wandmakerQuest.wand2 = createWandReward(rng, rng.pick(nonBattle));
+}
+
+/**
+ * Vanilla Imp.Quest.spawn (Imp.java:212-232): once per run, drawn at City
+ * depths. The generator calls this when the roll succeeds; the imp variant
+ * and the heirloom ring are fixed here.
+ *
+ * - `alternative = Random.Int(2) == 0` (Imp.java:223): true = monks (8
+ *   tokens), false = golems (6 tokens).
+ * - The reward (Imp.java:226-231): `do { reward = Generator.random(RING); }
+ *   while (reward.cursed); reward.upgrade(2); reward.cursed = true;`
+ *   Generator's ring probs are uniform 1s over the first 10 ring classes
+ *   (Generator.java:164-177, haggler/thorns prob 0), and each drawn ring
+ *   runs Ring.random() (lvl = IntRange(1,3), 30% degraded+cursed —
+ *   Ring.java:306-315). The reroll-until-uncursed loop plus upgrade(2)
+ *   makes the final ring: uniform type, level = IntRange(1,3)+2, cursed.
+ */
+export function initImpQuest(rng: RNG): void {
+  impQuest.spawned = true;
+  impQuest.alternative = rng.int(0, 2) === 0;
+  impQuest.given = false;
+
+  // Generator RING bag (Generator.java:164-177): prob 1 for Accuracy,
+  // Evasion, Haste, Satiety, Mending, Detection, Shadows, Power, Herbalism,
+  // Elements; prob 0 for Haggler and Thorns (the port's haggler/thorns
+  // have price 0, never generated — mechanics/rings.ts).
+  const generatable = RING_SPECS.filter(
+    (s) => s.id !== 'haggler' && s.id !== 'thorns',
+  ).map((s) => s.id);
+  let ringId = rng.pick(generatable);
+  // Ring.random() curse roll (Ring.java:306-315): 30% degraded+cursed.
+  // Vanilla re-rolls the whole ring until it is NOT cursed.
+  while (rng.float(0, 1) < 0.3) {
+    ringId = rng.pick(generatable);
+  }
+  const instanceId = createRing(rng, ringId);
+  const st = getRingState(instanceId);
+  if (st) {
+    // reward.upgrade(2) (Item.upgrade: level += 2), then cursed = true
+    // (Imp.java:228-231).
+    st.level = rng.intRange(1, 3) + 2;
+    st.cursed = true;
+  }
+  impQuest.rewardRingId = instanceId;
+}
+
+/**
+ * Vanilla Imp.Quest.spawn's placement gate (Imp.java:213, called from
+ * CityLevel.decorate — CityLevel.java:91): once per run, on depths > 16
+ * (CityLevel depths 17-19), with chance 1/(20-depth) per depth — so the imp
+ * always appears by depth 19 (Random.Int(1) == 0).
+ */
+export function rollImpSpawn(rng: RNG, depth: number): boolean {
+  return !impQuest.spawned && depth > 16 && rng.int(0, 20 - depth) === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -963,20 +1062,23 @@ export class CurseMob extends ContentMob {
    * pushes the enemy one cell directly away when that cell is passable (or
    * avoid) and unoccupied. For the hero, vanilla calls
    * Dungeon.level.press(newPos, enemy) — the trap-press only — which the
-   * port models with pressTrapCell.
+   * port models with pressTrapCell. A mob enemy (e.g. the honeypot bee,
+   * which can be aggroed by the curse) is pushed the same way with the
+   * mob trap-press (mobPressTrapCell).
    */
-  override attackProc(ctx: ActionContext, hero: ContentHero, damage: number): number {
+  override attackProc(ctx: ActionContext, enemy: ContentHero | ContentMob, damage: number): number {
     const w = this.w;
-    const dx = (hero.pos % w) - (this.pos % w);
-    const dy = Math.floor(hero.pos / w) - Math.floor(this.pos / w);
+    const dx = (enemy.pos % w) - (this.pos % w);
+    const dy = Math.floor(enemy.pos / w) - Math.floor(this.pos / w);
     if (Math.max(Math.abs(dx), Math.abs(dy)) === 1) {
-      const nx = (hero.pos % w) + dx;
-      const ny = Math.floor(hero.pos / w) + dy;
+      const nx = (enemy.pos % w) + dx;
+      const ny = Math.floor(enemy.pos / w) + dy;
       const newPos = ny * w + nx;
       if (ctx.level.isPassable(nx, ny) && charAtPos(ctx, newPos) == null) {
-        hero.pos = newPos;
+        enemy.pos = newPos;
         ctx.syncMobs();
-        pressTrapCell(ctx, newPos, hero, () => undefined);
+        if (enemy instanceof ContentHero) pressTrapCell(ctx, newPos, enemy, () => undefined);
+        else mobPressTrapCell(ctx, enemy as unknown as TrapMob, () => undefined);
       }
     }
     return damage;
@@ -1444,6 +1546,67 @@ export function nextNpcId(): number {
  * Build quest NPCs / quest mobs. Registered with the mob builder
  * (registerNpcBuilder) to avoid an npcs <-> mobs import cycle.
  */
+/**
+ * Ambitious imp (Stage 3, Worker E completion).
+ *
+ * Ground truth: watabou/pixel-dungeon, actors/mobs/npcs/Imp.java (GPL-3.0).
+ * The imp offers the golem/monk bounty quest (Imp.Quest, Imp.java:158-248).
+ * Full quest completion (dwarf token collection, Imp shop, ring reward) is
+ * a known gap — the NPC, spawn, and quest state/persistence exist.
+ */
+export class ImpMob extends NpcMob {
+  constructor(id: number, pos: number, w: number) {
+    // mob_imp: imp.png — ImpSprite (stage3_workerE_sprites.ts).
+    super(id, npcDef('imp', 'ambitious imp', 'mob_imp', 1, false), pos, w);
+    this.state = 'wandering';
+  }
+
+  override onTalk(ctx: ActionContext): void {
+    // Imp.interact (Imp.java:249-290): first talk gives the quest.
+    if (!impQuest.given) {
+      impQuest.given = true;
+      const text = impQuest.alternative ? TXT_MONKS1 : TXT_GOLEMS1;
+      ctx.log(text);
+    } else if (!impQuest.completed) {
+      const text = impQuest.alternative ? TXT_MONKS2 : TXT_GOLEMS2;
+      ctx.log(text);
+    } else {
+      ctx.log('The imp is busy with his new shop.');
+    }
+  }
+
+  /** Flavor text (Imp.description, Imp.java). */
+  description(): string {
+    return (
+      'This imp is clearly up to something. He is being very polite, ' +
+      'which is suspicious.'
+    );
+  }
+}
+
+/** Imp quest dialog (Imp.java:47-77), verbatim. */
+const TXT_GOLEMS1 =
+  'Are you an adventurer? I love adventurers! You can always rely on them ' +
+  'if something needs to be killed. Am I right? For a bounty, of course ;)\n' +
+  'In my case this is _golems_ who need to be killed. You see, I\'m going to start a ' +
+  'little business here, but these stupid golems are bad for business! ' +
+  'It\'s very hard to negotiate with wandering lumps of granite, damn them! ' +
+  'So please, kill... let\'s say _6 of them_ and a reward is yours.';
+
+const TXT_MONKS1 =
+  'Are you an adventurer? I love adventurers! You can always rely on them ' +
+  'if something needs to be killed. Am I right? For a bounty, of course ;)\n' +
+  'In my case this is _monks_ who need to be killed. You see, I\'m going to start a ' +
+  'little business here, but these lunatics don\'t buy anything themselves and ' +
+  'will scare away other customers. ' +
+  'So please, kill... let\'s say _8 of them_ and a reward is yours.';
+
+const TXT_GOLEMS2 = 'How is your golem safari going?';
+
+const TXT_MONKS2 =
+  'Oh, you are still alive! I knew that your kung-fu is stronger ;) ' +
+  'Just don\'t forget to grab these monks\' tokens.';
+
 export function buildNpc(
   mobId: string,
   id: number,
@@ -1464,6 +1627,8 @@ export function buildNpc(
       return new ShopkeeperMob(id, pos, w);
     case 'blacksmith':
       return new BlacksmithMob(id, pos, w);
+    case 'imp':
+      return new ImpMob(id, pos, w);
     default:
       return null;
   }

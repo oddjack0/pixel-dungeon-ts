@@ -11,6 +11,8 @@ import { STAGE3_KING_SPRITES } from '../assets/stage3_king_sprites.js';
 import { STAGE3_CITY_SPRITES } from '../assets/stage3_city_sprites.js';
 import { STAGE3_WORKERE_SPRITES } from '../assets/stage3_workerE_sprites.js';
 import { WORKER_F_SPRITES } from '../assets/stage3_workerF_sprites.js';
+// Stage 3 (City mobs): warlock/golem/succubus sprites (same provenance).
+import { STAGE3_CITY_MOBS_SPRITES } from '../assets/stage3_city_mobs_sprites.js';
 import { Terrain, regionForDepth, type Region } from '../core/grid.js';
 import type { Level } from '../dungeon/level.js';
 import type { Game } from './loop.js';
@@ -410,6 +412,7 @@ export class Renderer {
       ORIGINAL_SPRITES[name] ??
       STAGE3_KING_SPRITES[name] ??
       STAGE3_CITY_SPRITES[name] ??
+      STAGE3_CITY_MOBS_SPRITES[name] ??
       STAGE3_WORKERE_SPRITES[name] ??
       WORKER_F_SPRITES[name];
     if (orig) {

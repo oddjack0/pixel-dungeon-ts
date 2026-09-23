@@ -139,6 +139,36 @@ export const SEWER_MOB_TABLE: Readonly<
     { id: 'monk', weight: 0.01 },
   ],
   // depth 15: DM-300 only — boss flag, no table entry.
+  // --- Stage 3: City (Bestiary.java:134-151) ---
+  // depth 16: Elemental 1, Warlock 1, Monk 0.2 (Bestiary.java:134-137)
+  16: [
+    { id: 'elemental', weight: 1 },
+    { id: 'warlock', weight: 1 },
+    { id: 'monk', weight: 0.2 },
+  ],
+  // depth 17: Elemental 1, Monk 1, Warlock 1 (Bestiary.java:138-141)
+  17: [
+    { id: 'elemental', weight: 1 },
+    { id: 'monk', weight: 1 },
+    { id: 'warlock', weight: 1 },
+  ],
+  // depth 18: Elemental 1, Monk 2, Golem 1, Warlock 1 (Bestiary.java:142-145)
+  18: [
+    { id: 'elemental', weight: 1 },
+    { id: 'monk', weight: 2 },
+    { id: 'golem', weight: 1 },
+    { id: 'warlock', weight: 1 },
+  ],
+  // depth 19: Elemental 1, Monk 2, Golem 3, Warlock 1, Succubus 0.02
+  // (Bestiary.java:146-149)
+  19: [
+    { id: 'elemental', weight: 1 },
+    { id: 'monk', weight: 2 },
+    { id: 'golem', weight: 3 },
+    { id: 'warlock', weight: 1 },
+    { id: 'succubus', weight: 0.02 },
+  ],
+  // depth 20: King only — boss flag, no table entry.
 };
 
 /**
