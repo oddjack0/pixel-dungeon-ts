@@ -2983,7 +2983,6 @@ function generateLevel(rng, depth, run) {
       mobs.push({ pos, kind: "imp" });
       run.impSpawned = true;
     }
-    run.impAlternative = rng.int(0, 2) === 0;
   }
   const level = new Level(W, H);
   level.depth = depth;
@@ -4139,6 +4138,13 @@ var HUNGER_STARVING = 360;
 function hasGasesImmunity(buffs) {
   return buffs.gasesimmunity != null;
 }
+function barkskinTick(level) {
+  const next = level - 1;
+  return { level: next, detached: next <= 0 };
+}
+function barkskinLevel(current, value) {
+  return current < value ? value : current;
+}
 
 // src/mechanics/blobs.ts
 function isSolidForBlob(t) {
@@ -4731,6 +4737,196 @@ function eraseArmorMagic(armor, rng, preserve, log) {
   }
 }
 
+// src/mechanics/hunger.ts
+var HUNGER_STEP = 10;
+var HUNGRY = 260;
+var STARVING = 360;
+var STARVE_DAMAGE_CHANCE = 0.3;
+function isHungry(level) {
+  return level >= HUNGRY;
+}
+function isStarving(level) {
+  return level >= STARVING;
+}
+function hungerTick(rng, s) {
+  const wasHungry = isHungry(s.level);
+  const wasStarving = isStarving(s.level);
+  let level = s.level;
+  let damage = 0;
+  let died = false;
+  if (wasStarving) {
+    if (rng.float(0, 1) < STARVE_DAMAGE_CHANCE && (s.hp > 1 || !s.paralysed)) {
+      damage = 1;
+      died = s.hp - 1 <= 0;
+    }
+  } else {
+    level += HUNGER_STEP;
+  }
+  return {
+    level,
+    damage,
+    died,
+    becameStarving: !wasStarving && isStarving(level),
+    becameHungry: !wasHungry && level >= HUNGRY && level < STARVING
+  };
+}
+function satisfy(level, energy) {
+  const v = level - energy;
+  if (v < 0)
+    return 0;
+  if (v > STARVING)
+    return STARVING;
+  return v;
+}
+function regenTick(hp, ht, starving) {
+  return hp < ht && !starving ? hp + 1 : hp;
+}
+
+// src/mechanics/subclass_buffs.ts
+var FURY_LEVEL = 0.4;
+function furyTick(hp, ht) {
+  return { detached: hp > ht * FURY_LEVEL };
+}
+function furyCheckOnDamage(subClass, hp, ht) {
+  return subClass === "berserker" && hp > 0 && hp <= ht * FURY_LEVEL;
+}
+function furyDamageBonus(damage) {
+  return Math.floor(damage * 1.5);
+}
+function comboHit(count, damage) {
+  const next = count + 1;
+  if (next >= 3) {
+    return {
+      count: next,
+      bonus: Math.floor(damage * (next - 2) / 5),
+      duration: 1.41 - next / 10,
+      log: `${next} hit combo!`,
+      badgeCount: next
+    };
+  }
+  return { count: next, bonus: 0, duration: 1.1, log: null, badgeCount: next };
+}
+
+// src/mechanics/subclasses.ts
+var SUBCLASS_TITLES = {
+  gladiator: "gladiator",
+  berserker: "berserker",
+  warlock: "warlock",
+  battlemage: "battlemage",
+  assassin: "assassin",
+  freerunner: "freerunner",
+  sniper: "sniper",
+  warden: "warden"
+};
+var SUBCLASS_DESCS = {
+  gladiator: "A successful attack with a melee weapon allows the _Gladiator_ to start a combo, " + "in which every next successful hit inflicts more damage.",
+  berserker: "When severely wounded, the _Berserker_ enters a state of wild fury " + "significantly increasing his damage output.",
+  warlock: "After killing an enemy the _Warlock_ consumes its soul. " + "It heals his wounds and satisfies his hunger.",
+  battlemage: "When fighting with a wand in his hands, the _Battlemage_ inflicts additional damage depending " + "on the current number of charges. Every successful hit restores 1 charge to this wand.",
+  assassin: "When performing a surprise attack, the _Assassin_ inflicts additional damage to his target.",
+  freerunner: "The _Freerunner_ can move almost twice faster, than most of the monsters. When he " + "is running, the Freerunner is much harder to hit. For that he must be unencumbered and not starving.",
+  sniper: "_Snipers_ are able to detect weak points in an enemy's armor, " + "effectively ignoring it when using a missile weapon.",
+  warden: "Having a strong connection with forces of nature gives _Wardens_ an ability to gather dewdrops and " + "seeds from plants. Also trampling a high grass grants them a temporary armor buff."
+};
+function capitalizeTitle(title) {
+  return title.length === 0 ? title : title[0].toUpperCase() + title.slice(1);
+}
+var TOME_CHOICES = {
+  warrior: ["gladiator", "berserker"],
+  mage: ["battlemage", "warlock"],
+  rogue: ["assassin", "freerunner"],
+  huntress: ["sniper", "warden"]
+};
+var TIME_TO_READ = 10;
+var TOME_BLINDED_MSG = "You can't read while blinded";
+function tomeDisplayName(subClass) {
+  return subClass === "none" ? "Tome of Mastery" : "Tome of Remastery";
+}
+function tomeChoices(heroClass, subClass) {
+  const [sc1, sc2] = TOME_CHOICES[heroClass];
+  if (subClass === sc1)
+    return { respec: true, options: [sc2] };
+  if (subClass === sc2)
+    return { respec: true, options: [sc1] };
+  return { respec: false, options: [sc1, sc2] };
+}
+var WND_MASTERY_TITLE = "Which way will you follow?";
+var WND_MASTERY_CANCEL = "I'll decide later";
+var WND_REMASTERY_PROMPT = "Do you want to respec into %s?";
+var WND_REMASTERY_OK = "Yes, I want to respec";
+var WND_REMASTERY_CANCEL = "Maybe later";
+function respecPrompt(subClass) {
+  const title = SUBCLASS_TITLES[subClass];
+  const article = "aoeiu".includes(title[0].toLowerCase()) ? "an" : "a";
+  return WND_REMASTERY_PROMPT.replace("%s", `${article} ${title}`);
+}
+function tomeChoose(way, hp, ht) {
+  return {
+    subClass: way,
+    timeCost: TIME_TO_READ,
+    log: `You have chosen the way of the ${capitalizeTitle(SUBCLASS_TITLES[way])}!`,
+    gainFury: way === "berserker" && hp <= ht * FURY_LEVEL
+  };
+}
+function heroSubclassAttackProc(input) {
+  let damage = input.damage;
+  let combo = null;
+  let wand = null;
+  let sniperMark = null;
+  if (input.subClass === "gladiator" && input.wepIsMeleeWeapon) {
+    const hit = comboHit(input.comboCount, damage);
+    damage += hit.bonus;
+    combo = hit;
+  }
+  if (input.subClass === "battlemage" && input.wepIsWand) {
+    let cur = input.wandCurCharges;
+    let used = false;
+    let delta = 0;
+    if (cur >= input.wandMaxCharges) {
+      used = true;
+    } else if (damage > 0) {
+      delta = 1;
+      cur += 1;
+    }
+    damage += cur;
+    wand = { chargeDelta: delta, wandUsed: used, rechargingFx: true };
+  }
+  if (input.subClass === "sniper" || input.subClass === "battlemage") {
+    if (input.hasRangedWeapon) {
+      sniperMark = {
+        object: input.enemyId,
+        duration: input.attackDelay * 1.1
+      };
+    }
+  }
+  return { damage, combo, wand, sniperMark };
+}
+function sniperIgnoresArmor(subClass, hasRangedWeapon) {
+  return subClass === "sniper" && hasRangedWeapon;
+}
+function assassinSurpriseBonus(rng, damage, mobSeesHero) {
+  if (mobSeesHero) {
+    return damage;
+  }
+  return damage + rng.int(1, damage);
+}
+function freerunnerEvasionMultiplier(opts) {
+  return opts.heroClass === "rogue" && opts.subClass === "freerunner" && opts.moving && !opts.starving ? 2 : 1;
+}
+function freerunnerSpeedMultiplier(subClass, starving, encumbered) {
+  return !encumbered && subClass === "freerunner" && !starving ? 1.6 : 1;
+}
+function warlockSoulHeal(hp, ht, depth) {
+  const value = Math.min(ht - hp, 1 + Math.floor((depth - 1) / 5));
+  return { heal: value > 0 ? value : 0, hungerSatisfied: 10 };
+}
+function wardenBarkskinLevel(ht) {
+  return Math.floor(ht / 3);
+}
+function heroDamageRollFury(damage, hasFury) {
+  return hasFury ? furyDamageBonus(damage) : damage;
+}
+
 // src/mechanics/hero.ts
 var DART = {
   name: "dart",
@@ -4750,6 +4946,10 @@ function accuracyFactor(weapon, heroStr, heroClass = "warrior") {
       encumbrance += 3;
   }
   return encumbrance > 0 ? weapon.acu / Math.pow(1.5, encumbrance) : weapon.acu;
+}
+function speedFactor(weapon, heroStr) {
+  const encumbrance = weapon.str - heroStr;
+  return encumbrance > 0 ? weapon.dly * Math.pow(1.2, encumbrance) : weapon.dly;
 }
 function heroAttackSkill(hero, opts) {
   let accuracy = 1;
@@ -4772,6 +4972,12 @@ function heroDefenseSkill(hero, opts = {}) {
   let evasion = evasionMultiplier(opts.evasionBonus ?? 0);
   if (hero.paralysed)
     evasion /= 2;
+  evasion *= freerunnerEvasionMultiplier({
+    heroClass: hero.heroClass,
+    subClass: hero.subClass,
+    moving: opts.moving ?? false,
+    starving: isStarving(hero.hungerLevel)
+  });
   const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
   if (aEnc > 0) {
     return Math.floor(hero.defenseSkill * evasion / Math.pow(1.5, aEnc));
@@ -4799,6 +5005,10 @@ function heroDamageRoll(rng, hero, opts) {
   const s = strEff(hero);
   return s > 10 ? rng.intRange(1, s - 9) : 1;
 }
+function heroAttackDelay(hero, opts) {
+  const wep = opts.ranged ? hero.rangedWeapon ?? DART : hero.weapon;
+  return wep ? speedFactor(wep, strEff(hero)) : 1;
+}
 function upgradeWeapon(weapon, rng, opts = {}) {
   eraseWeaponMagic(weapon, rng, opts.preserveEnchant ?? false, opts.log ?? (() => {
     return;
@@ -4821,7 +5031,10 @@ function updateAwareness(lvl, rogue) {
 function heroSpeed(hero) {
   const base = charSpeed(hero);
   const aEnc = hero.armor ? hero.armor.str - strEff(hero) : 0;
-  return aEnc > 0 ? base * Math.pow(1.3, -aEnc) : base;
+  if (aEnc > 0) {
+    return base * Math.pow(1.3, -aEnc);
+  }
+  return base * freerunnerSpeedMultiplier(hero.subClass, isStarving(hero.hungerLevel), false);
 }
 function intentionalSearchLevel(awareness) {
   return 2 * awareness - awareness * awareness;
@@ -6047,51 +6260,6 @@ function onItemDropped2(level, itemId) {
   }
 }
 
-// src/mechanics/hunger.ts
-var HUNGER_STEP = 10;
-var HUNGRY = 260;
-var STARVING = 360;
-var STARVE_DAMAGE_CHANCE = 0.3;
-function isHungry(level) {
-  return level >= HUNGRY;
-}
-function isStarving(level) {
-  return level >= STARVING;
-}
-function hungerTick(rng, s) {
-  const wasHungry = isHungry(s.level);
-  const wasStarving = isStarving(s.level);
-  let level = s.level;
-  let damage = 0;
-  let died = false;
-  if (wasStarving) {
-    if (rng.float(0, 1) < STARVE_DAMAGE_CHANCE && (s.hp > 1 || !s.paralysed)) {
-      damage = 1;
-      died = s.hp - 1 <= 0;
-    }
-  } else {
-    level += HUNGER_STEP;
-  }
-  return {
-    level,
-    damage,
-    died,
-    becameStarving: !wasStarving && isStarving(level),
-    becameHungry: !wasHungry && level >= HUNGRY && level < STARVING
-  };
-}
-function satisfy(level, energy) {
-  const v = level - energy;
-  if (v < 0)
-    return 0;
-  if (v > STARVING)
-    return STARVING;
-  return v;
-}
-function regenTick(hp, ht, starving) {
-  return hp < ht && !starving ? hp + 1 : hp;
-}
-
 // src/content/enchantments.ts
 var ENCHANTMENT_ORDER = [
   "fire",
@@ -7238,6 +7406,27 @@ function tickBuffs(rng, level, ch, log) {
     if (b.charm.left <= 0)
       delete b.charm;
   }
+  if (b.fury && ch.isAlive()) {
+    if (furyTick(ch.hp, ch.ht).detached)
+      delete b.fury;
+  }
+  if (b.combo) {
+    b.combo.left -= 1;
+    if (b.combo.left <= 0)
+      delete b.combo;
+  }
+  if (b.snipersmark) {
+    b.snipersmark.left -= 1;
+    if (b.snipersmark.left <= 0)
+      delete b.snipersmark;
+  }
+  if (b.barkskin && ch.isAlive()) {
+    const t = barkskinTick(b.barkskin.level ?? 0);
+    if (t.detached)
+      delete b.barkskin;
+    else
+      b.barkskin.level = t.level;
+  }
   tickPotionBuffs(b, ch, () => {
     const m = ch;
     if (m.aiState === "sleeping")
@@ -7891,6 +8080,10 @@ var sewersKillHook = null;
 function registerSewersKillHook(fn) {
   sewersKillHook = fn;
 }
+var impKillHook = null;
+function registerImpKillHook(fn) {
+  impKillHook = fn;
+}
 function thiefSteal(ctx, thief, hero) {
   if (thief.stolen)
     return false;
@@ -7907,7 +8100,10 @@ function stackLabel(stack) {
   const def = getItem(stack.itemId);
   return stack.qty > 1 ? `${stack.qty}x ${def.name}` : `your ${def.name}`;
 }
-function mobDefenseProc(ctx, mob, damage) {
+function mobDefenseProc(ctx, mob, damage, opts = {}) {
+  if (opts.attackerIsHero && opts.heroSubClass === "assassin" && !mob.enemySeen) {
+    damage = assassinSurpriseBonus(ctx.rng, damage, false);
+  }
   if (mob.def.ability === "swarm" && mob.isAlive() && mob.hp >= damage + 2) {
     const cell = findSplitCell(ctx, mob);
     if (cell !== -1) {
@@ -7985,10 +8181,14 @@ function killMob(ctx, mob, _opts) {
   if (mob.def.id === "rat" || mob.def.id === "gnoll" || mob.def.id === "crab" || mob.def.id === "albino") {
     sewersKillHook?.(ctx, mob.pos);
   }
+  if (mob.def.id === "monk" || mob.def.id === "golem") {
+    impKillHook?.(ctx, mob);
+  }
   if (wasAlive) {
     const exp = expForKill(mob.def.id, hero.lvl);
     if (exp > 0) {
       const gained = earnExp(hero, exp);
+      warlockSoulHealOnExp(hero, ctx.level.depth);
       ctx.log(`+${exp} EXP`);
       if (gained > 0)
         ctx.log(`You level up! Welcome to level ${hero.lvl}.`);
@@ -8030,6 +8230,7 @@ function skeletonBurst(ctx, mob) {
       if (ch === hero) {
         const applied = applyDamage(ctx.rng, { hp: hero.hp, ht: hero.ht, paralysed: hero.paralysed, immunities: [], resistances: [] }, dmg);
         hero.hp = applied.hp;
+        applyFuryGain(hero);
         ctx.log(`The skeleton's explosion hits you for ${dmg}.`);
         if (applied.died)
           ctx.log("You were killed by the explosion of bones...");
@@ -8204,13 +8405,58 @@ function combatProcFx(ctx) {
     isStarving: () => isStarving(hero.hungerLevel)
   };
 }
-function strikeHeroVsMob(ctx, hero, mob, accuracy, damageRoll) {
+function heroSubclassAttackStep(ctx, hero, mob, damage, ranged) {
+  const wep = hero.rangedWeapon ?? hero.weapon;
+  if (!wep)
+    return damage;
+  const wepIsMeleeWeapon = wep === hero.weapon && !wep.missile;
+  const wandId = wep === hero.weapon ? hero.weaponId : null;
+  const wand = wandId ? getWandState(wandId) : undefined;
+  const res = heroSubclassAttackProc({
+    subClass: hero.subClass,
+    wepIsMeleeWeapon,
+    wepIsWand: wand !== undefined,
+    hasRangedWeapon: hero.rangedWeapon != null,
+    wandCurCharges: wand?.curCharges ?? 0,
+    wandMaxCharges: wand?.maxCharges ?? 0,
+    attackDelay: heroAttackDelay(hero, { ranged }),
+    enemyId: mob.id,
+    comboCount: hero.buffs.combo?.count ?? 0,
+    damage
+  });
+  if (res.combo) {
+    const cur = hero.buffs.combo;
+    hero.buffs.combo = {
+      kind: "combo",
+      left: Math.max(cur?.left ?? 0, res.combo.duration),
+      count: res.combo.count
+    };
+    if (res.combo.log)
+      ctx.log(res.combo.log);
+  }
+  if (res.wand && wand) {
+    if (res.wand.chargeDelta !== 0) {
+      wand.curCharges = Math.min(wand.maxCharges, wand.curCharges + res.wand.chargeDelta);
+    }
+  }
+  if (res.sniperMark) {
+    const cur = hero.buffs.snipersmark;
+    hero.buffs.snipersmark = {
+      kind: "snipersmark",
+      left: Math.max(cur?.left ?? 0, res.sniperMark.duration),
+      sourceId: res.sniperMark.object
+    };
+  }
+  return res.damage;
+}
+function strikeHeroVsMob(ctx, hero, mob, accuracy, damageRoll, opts = {}) {
   const rng = ctx.rng;
+  const ranged = opts.ranged ?? false;
   const seq = runAttackSequence(rng, {
     accuracy,
     evasion: mob.mobDefenseSkill(),
-    defenderDr: mob.def.dr,
-    damageRoll,
+    defenderDr: sniperIgnoresArmor(hero.subClass, ranged) ? 0 : mob.def.dr,
+    damageRoll: (r) => heroDamageRollFury(damageRoll(r), hero.buffs.fury != null),
     onAttackProc: (_r, dmg) => {
       const wep = hero.rangedWeapon ?? hero.weapon;
       if (wep) {
@@ -8219,9 +8465,12 @@ function strikeHeroVsMob(ctx, hero, mob, accuracy, damageRoll) {
           weaponAttackProc(fx, hero, mob, dmg, wep);
         }
       }
-      return dmg;
+      return heroSubclassAttackStep(ctx, hero, mob, dmg, ranged);
     },
-    onDefenseProc: (_r, dmg) => mobDefenseProc(ctx, mob, dmg)
+    onDefenseProc: (_r, dmg) => mobDefenseProc(ctx, mob, dmg, {
+      attackerIsHero: true,
+      heroSubClass: hero.subClass
+    })
   });
   if (!seq.hit) {
     ctx.log(`The ${mob.name} ${mob.defenseVerb()} your attack.`);
@@ -8316,6 +8565,7 @@ function strikeMobVsHero(ctx, mob, hero, accuracy, damageRoll, onAttackProc) {
   }
   const applied = applyDamage(rng, { hp: hero.hp, ht: hero.ht, paralysed: hero.paralysed, immunities: [], resistances: [] }, seq.damageDealt);
   hero.hp = applied.hp;
+  applyFuryGain(hero);
   if (applied.paralysisBroken) {
     hero.paralysed = false;
     delete hero.buffs.paralysis;
@@ -8569,6 +8819,9 @@ function registerRingIdClasses() {
     images: RING_SPECS.map((s) => s.spriteKey)
   });
 }
+function equippedRings() {
+  return [ringSlots[0], ringSlots[1]];
+}
 function equippedRingStates() {
   return [
     ringSlots[0] ? ringStates.get(ringSlots[0]) ?? null : null,
@@ -8619,6 +8872,22 @@ function equipRing(ctx, hero, slot) {
   }
   syncRingBuffs(hero);
   return finger;
+}
+function unequipRing(ctx, hero, finger) {
+  const instanceId = ringSlots[finger - 1];
+  if (!instanceId)
+    return false;
+  const st = ringStates.get(instanceId);
+  if (!st)
+    return false;
+  if (st.cursed) {
+    ctx.log(`You can't remove the ${ringDisplayName(st.ringId)}!`);
+    return false;
+  }
+  ringSlots[finger - 1] = null;
+  addToInventory(hero, instanceId, 1);
+  syncRingBuffs(hero);
+  return true;
 }
 function tickRingClocks(hero, cost) {
   for (const st of equippedRingStates()) {
@@ -9453,6 +9722,7 @@ class ContentHero extends Actor {
   rangedWeapon = null;
   darts = 0;
   subClass = "none";
+  heroClass = "warrior";
   inventory = [];
   gold = 0;
   hungerLevel = 0;
@@ -9502,6 +9772,18 @@ function createStarterHero(pos, w) {
 }
 function syncDarts(hero) {
   hero.darts = hero.inventory.find((s) => s.itemId === "dart")?.qty ?? 0;
+}
+function applyFuryGain(hero) {
+  if (furyCheckOnDamage(hero.subClass, hero.hp, hero.ht) && !hero.buffs.fury) {
+    hero.buffs.fury = { kind: "fury", left: 0 };
+  }
+}
+function warlockSoulHealOnExp(hero, depth) {
+  if (hero.subClass !== "warlock")
+    return;
+  const { heal, hungerSatisfied } = warlockSoulHeal(hero.hp, hero.ht, depth);
+  hero.hp = Math.min(hero.ht, hero.hp + heal);
+  hero.hungerLevel = satisfy(hero.hungerLevel, hungerSatisfied);
 }
 function addToInventory(hero, itemId, qty, gear) {
   const def = instanceItemDef(itemId) ?? getItem(itemId);
@@ -9570,6 +9852,9 @@ function removeFromInventory(hero, slot, qty = 1) {
   syncDarts(hero);
   return removed;
 }
+function countItem(hero, itemId) {
+  return hero.inventory.filter((s) => s.itemId === itemId).reduce((n, s) => n + s.qty, 0);
+}
 
 // src/content/potions.ts
 function affectBuff3(buffs, kind, duration) {
@@ -9624,6 +9909,13 @@ var POTION_DEFS = {
   potion_might: def("potion_might", "Potion of Might", "item_potion_might", "This powerful liquid will course through your muscles, permanently " + "increasing your strength by one point and health by five points."),
   potion_frost: def("potion_frost", "Potion of Frost", "item_potion_frost", "Upon exposure to open air, the fluid will evaporate, releasing an icy " + "blast.")
 };
+function potionDisplayName(id, knownName) {
+  if (identificationReady() && isPotionKnown(id))
+    return knownName;
+  if (!identificationReady())
+    return knownName;
+  return `${potionLabel(id)} potion`;
+}
 function potionSprite(id, fallback) {
   return identificationReady() ? potionImage(id) : fallback;
 }
@@ -9704,6 +9996,7 @@ function applyDrinkEffect(ctx, hero, id) {
     case "potion_experience": {
       const need2 = maxExp(hero.lvl) - hero.exp;
       earnExp(hero, need2);
+      warlockSoulHealOnExp(hero, ctx.level.depth);
       ctx.log("You feel more experienced.");
       break;
     }
@@ -9999,7 +10292,7 @@ function scrollUiInfo(id, knownName, catalogSprite) {
     identified: known
   };
 }
-var TIME_TO_READ = 1;
+var TIME_TO_READ2 = 1;
 function readScroll(ctx, hero, slot) {
   const stack = hero.inventory[slot];
   if (!stack || !isScrollId(stack.itemId)) {
@@ -10019,7 +10312,7 @@ function readScroll(ctx, hero, slot) {
   removeFromInventory(hero, slot, 1);
   doReadEffect(ctx, hero, id);
   knowScroll(id);
-  return TIME_TO_READ;
+  return TIME_TO_READ2;
 }
 var pendingSelect = null;
 function openInventoryScroll(ctx, hero, slot, id) {
@@ -10029,14 +10322,14 @@ function openInventoryScroll(ctx, hero, slot, id) {
   const candidates = inventoryScrollCandidates(hero, kind);
   if (candidates.length === 0) {
     ctx.log(kind === "identify" ? "You have nothing to identify." : "You have nothing to enchant.");
-    return TIME_TO_READ;
+    return TIME_TO_READ2;
   }
   pendingSelect = {
     kind,
     candidates,
     title: kind === "identify" ? "Select an item to identify" : "Select an enchantable item"
   };
-  return TIME_TO_READ;
+  return TIME_TO_READ2;
 }
 function inventoryScrollCandidates(hero, kind) {
   const out = [];
@@ -10128,7 +10421,7 @@ function readUpgradeScroll(ctx, hero, slot) {
   const armor = hero.armor;
   if (!weapon && !armor) {
     ctx.log("You have nothing to upgrade.");
-    return TIME_TO_READ;
+    return TIME_TO_READ2;
   }
   removeFromInventory(hero, slot, 1);
   if (weapon) {
@@ -10146,7 +10439,7 @@ function readUpgradeScroll(ctx, hero, slot) {
     }
     ctx.log(`your ${gearDisplayName(armor)} certainly looks better now`);
   }
-  return TIME_TO_READ;
+  return TIME_TO_READ2;
 }
 function doReadEffect(ctx, hero, id) {
   switch (id) {
@@ -10297,6 +10590,7 @@ function doPsionicBlast(ctx, hero) {
   affectBuff3(hero.buffs, "blindness", blindFor);
   const heroDmg = rng.intRange(1, Math.floor(hero.ht * 2 / 3));
   hero.hp -= heroDmg;
+  applyFuryGain(hero);
   ctx.log("A blast of psionic energy erupts!");
 }
 var MIRROR_IMAGE_COUNT = 3;
@@ -10452,18 +10746,6 @@ function throwHoneypot(ctx, hero, slot, cell) {
   return HONEYPOT_THROW_TIME;
 }
 
-// src/mechanics/subclasses.ts
-var SUBCLASS_DESCS = {
-  gladiator: "A successful attack with a melee weapon allows the _Gladiator_ to start a combo, " + "in which every next successful hit inflicts more damage.",
-  berserker: "When severely wounded, the _Berserker_ enters a state of wild fury " + "significantly increasing his damage output.",
-  warlock: "After killing an enemy the _Warlock_ consumes its soul. " + "It heals his wounds and satisfies his hunger.",
-  battlemage: "When fighting with a wand in his hands, the _Battlemage_ inflicts additional damage depending " + "on the current number of charges. Every successful hit restores 1 charge to this wand.",
-  assassin: "When performing a surprise attack, the _Assassin_ inflicts additional damage to his target.",
-  freerunner: "The _Freerunner_ can move almost twice faster, than most of the monsters. When he " + "is running, the Freerunner is much harder to hit. For that he must be unencumbered and not starving.",
-  sniper: "_Snipers_ are able to detect weak points in an enemy's armor, " + "effectively ignoring it when using a missile weapon.",
-  warden: "Having a strong connection with forces of nature gives _Wardens_ an ability to gather dewdrops and " + "seeds from plants. Also trampling a high grass grants them a temporary armor buff."
-};
-
 // src/content/tomes.ts
 var TOME_OF_MASTERY_ID = "tome_of_mastery";
 var TOME_OF_MASTERY = {
@@ -10476,6 +10758,9 @@ var TOME_OF_MASTERY = {
   price: 0
 };
 var TOME_ITEMS = [TOME_OF_MASTERY];
+function tomeNameFor(subClass) {
+  return tomeDisplayName(subClass);
+}
 
 // src/content/items.ts
 var DARK_GOLD = {
@@ -10680,6 +10965,49 @@ var ROTBERRY_SEED = {
   stackable: false,
   desc: "A strange seed. Perhaps it can be planted."
 };
+var DWARF_TOKEN = {
+  id: "dwarf_token",
+  name: "dwarf token",
+  sprite: "item_token",
+  type: "quest",
+  stackable: true,
+  desc: "Many dwarves and some of their larger creations carry these small pieces of metal of unknown purpose. " + "Maybe they are jewelry or maybe some kind of ID. Dwarves are strange folk.",
+  price: 100
+};
+var ARMOR_KIT = {
+  id: "armor_kit",
+  name: "armor kit",
+  sprite: "item_armor_kit",
+  type: "misc",
+  stackable: false,
+  desc: 'Using this kit of small tools and materials anybody can transform any armor into an "epic armor", ' + "which will keep all properties of the original armor, but will also provide its wearer a special ability " + "depending on his class. No skills in tailoring, leatherworking or blacksmithing are required.",
+  price: 0
+};
+function makeClassArmorDef(id, name, sprite, desc) {
+  return {
+    id,
+    name,
+    sprite,
+    type: "armor",
+    stackable: false,
+    desc,
+    armor: {
+      name,
+      level: 0,
+      str: 0,
+      dr: 0,
+      tier: 6,
+      glyph: null,
+      cursedKnown: true,
+      upgradable: false
+    },
+    price: 0
+  };
+}
+var WARRIOR_ARMOR = makeClassArmorDef("armor_warrior", "warrior suit of armor", "armor_warrior", "While this armor looks heavy, it allows a warrior to perform heroic leap towards " + "a targeted location, slamming down to stun all neighbouring enemies.");
+var ROGUE_ARMOR = makeClassArmorDef("armor_rogue", "rogue garb", "armor_rogue", 'Wearing this dark garb, a rogue can perform a trick, that is called "smoke bomb" ' + "(though no real explosives are used): he blinds enemies who could see him and jumps aside.");
+var MAGE_ARMOR = makeClassArmorDef("armor_mage", "mage robe", "armor_mage", "Wearing this gorgeous robe, a mage can cast a spell of molten earth: all the enemies " + "in his field of view will be set on fire and unable to move at the same time.");
+var HUNTRESS_ARMOR = makeClassArmorDef("armor_huntress", "huntress cloak", "armor_huntress", "A huntress in such cloak can create a fan of spectral blades. Each of these blades " + "will target a single enemy in the huntress's field of view, inflicting damage depending " + "on her currently equipped melee weapon.");
 var QUARTERSTAFF = {
   id: "quarterstaff",
   name: "quarterstaff",
@@ -10910,6 +11238,12 @@ var ITEMS = {
   corpse_dust: CORPSE_DUST,
   phantom_fish: PHANTOM_FISH,
   rotberry_seed: ROTBERRY_SEED,
+  dwarf_token: DWARF_TOKEN,
+  armor_kit: ARMOR_KIT,
+  armor_warrior: WARRIOR_ARMOR,
+  armor_rogue: ROGUE_ARMOR,
+  armor_mage: MAGE_ARMOR,
+  armor_huntress: HUNTRESS_ARMOR,
   quarterstaff: QUARTERSTAFF,
   spear: SPEAR,
   sword: SWORD,
@@ -11363,712 +11697,6 @@ function wellItemKind(type) {
   }
 }
 
-// src/content/actions.ts
-function pickupAt(ctx, hero) {
-  const level = ctx.level;
-  const item = level.items.find((it) => it.pos === hero.pos);
-  if (!item) {
-    ctx.log("There is nothing here to pick up.");
-    return 1;
-  }
-  level.items = level.items.filter((it) => it !== item);
-  const { defId, qty } = parseItemId(item.itemId);
-  if (defId === "dewdrop")
-    return pickupDewdrop(ctx, hero, qty);
-  if (item.lockedChest)
-    return openLockedChest(ctx, hero, item);
-  const def3 = getItem(defId);
-  if (def3.type === "gold") {
-    hero.gold += qty;
-    ctx.log(`You pick up ${qty} gold.`);
-  } else {
-    addToInventory(hero, defId, qty);
-    const label = qty > 1 ? `${qty}x ${def3.name}` : def3.name;
-    ctx.log(`You pick up the ${label}.`);
-  }
-  return 1;
-}
-function useInventorySlot(ctx, hero, slot) {
-  const stack = hero.inventory[slot];
-  if (!stack) {
-    ctx.log("Nothing in that slot.");
-    return 1;
-  }
-  const def3 = getItem(stack.itemId);
-  if (isWandId(stack.itemId)) {
-    ctx.log("Choose a cell to zap.");
-    return 0;
-  }
-  if (isRingId(stack.itemId)) {
-    return useRingFromSlot(ctx, hero, slot) > 0 ? 1 : 0;
-  }
-  switch (def3.type) {
-    case "potion":
-      return drinkPotion2(ctx, hero, slot, stack);
-    case "food":
-      return eatFood(ctx, hero, slot, stack);
-    case "scroll":
-      return readScroll2(ctx, hero, slot, stack);
-    case "weapon":
-      return equipWeaponFromInventory(ctx, hero, slot, stack);
-    case "armor":
-      return equipArmorFromInventory(ctx, hero, slot, stack);
-    case "missile":
-      ctx.log("Choose a target to throw the dart at.");
-      return 0;
-    case "key":
-      return useKey(ctx, hero, slot, stack);
-    case "gold":
-      return 1;
-    case "dewdrop":
-    case "seed":
-      return 1;
-    case "bag":
-    case "misc":
-    case "quest":
-      return 1;
-    case "wand":
-    case "ring":
-      return 1;
-  }
-}
-function drinkPotion2(ctx, hero, slot, _stack) {
-  return drinkPotion(ctx, hero, slot);
-}
-function readScroll2(ctx, hero, slot, _stack) {
-  return readScroll(ctx, hero, slot);
-}
-function eatFood(ctx, hero, slot, stack) {
-  const def3 = getItem(stack.itemId);
-  removeFromInventory(hero, slot, 1);
-  hero.hungerLevel = satisfy(hero.hungerLevel, def3.energy ?? 260);
-  if (hero.hp < hero.ht) {
-    hero.hp = Math.min(hero.hp + 5, hero.ht);
-  }
-  ctx.log("That food tasted delicious!");
-  return 3;
-}
-function equipWeaponFromInventory(ctx, hero, slot, stack) {
-  const def3 = getItem(stack.itemId);
-  if (!def3.weapon) {
-    ctx.log("You can't wield that.");
-    return 1;
-  }
-  if (hero.weapon?.cursed) {
-    ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.weapon.name));
-    return 1;
-  }
-  const oldWeapon = hero.weapon;
-  const oldId = hero.weaponId;
-  const inst = stack.gear?.weapon ? { ...stack.gear.weapon } : { ...def3.weapon };
-  if (inst.durability === undefined)
-    initDurability(inst, "weapon");
-  removeFromInventory(hero, slot, 1);
-  hero.weapon = inst;
-  hero.weaponId = def3.id;
-  hero.weapon.cursedKnown = true;
-  if (oldId && oldWeapon) {
-    addToInventory(hero, oldId, 1, { weapon: oldWeapon });
-  }
-  ctx.log(`You equip the ${def3.name}.`);
-  if (inst.cursed) {
-    ctx.log(TXT_EQUIP_CURSED_WEAPON.replace("%s", inst.name));
-  }
-  return 1;
-}
-function equipArmorFromInventory(ctx, hero, slot, stack) {
-  const def3 = getItem(stack.itemId);
-  if (!def3.armor) {
-    ctx.log("You can't wear that.");
-    return 1;
-  }
-  if (hero.armor?.cursed) {
-    ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.armor.name));
-    return 1;
-  }
-  const oldArmor = hero.armor;
-  const oldId = hero.armorId;
-  const inst = stack.gear?.armor ? { ...stack.gear.armor } : { ...def3.armor };
-  if (inst.durability === undefined)
-    initDurability(inst, "armor");
-  removeFromInventory(hero, slot, 1);
-  hero.armor = inst;
-  hero.armorId = def3.id;
-  hero.armor.cursedKnown = true;
-  if (oldId && oldArmor) {
-    addToInventory(hero, oldId, 1, { armor: oldArmor });
-  }
-  ctx.log(`You equip the ${def3.name}.`);
-  if (inst.cursed) {
-    ctx.log(TXT_EQUIP_CURSED_ARMOR.replace("%s", inst.name));
-  }
-  return 1;
-}
-function useKey(ctx, hero, slot, stack) {
-  const level = ctx.level;
-  const w = level.w;
-  const x = hero.x;
-  const y = hero.y;
-  const lockedAround = [
-    [x + 1, y],
-    [x - 1, y],
-    [x, y + 1],
-    [x, y - 1]
-  ];
-  if (stack.itemId === "iron_key") {
-    for (const [nx, ny] of lockedAround) {
-      if (level.inBounds(nx, ny) && level.get(nx, ny) === 3 /* DOOR_LOCKED */) {
-        level.set(nx, ny, 2 /* DOOR */);
-        removeFromInventory(hero, slot, 1);
-        ctx.log("You unlock the door.");
-        return 1;
-      }
-    }
-    ctx.log("There is no locked door nearby.");
-    return 1;
-  }
-  if (stack.itemId === "skeleton_key") {
-    for (const [nx, ny] of lockedAround) {
-      if (level.inBounds(nx, ny) && level.get(nx, ny) === 5 /* EXIT_LOCKED */) {
-        level.set(nx, ny, 7 /* EXIT */);
-        removeFromInventory(hero, slot, 1);
-        ctx.log("You unlock the way down with the skeleton key.");
-        return 1;
-      }
-    }
-    ctx.log("There is no locked exit nearby.");
-    return 1;
-  }
-  ctx.log("You can't use that here.");
-  return 1;
-}
-function throwDart(ctx, hero, slot, targetPos) {
-  const stack = hero.inventory[slot];
-  if (!stack || stack.itemId !== "dart") {
-    ctx.log("You have no darts to throw.");
-    return 1;
-  }
-  const level = ctx.level;
-  const trace = dartTrace(level, hero.pos, targetPos);
-  removeFromInventory(hero, slot, 1);
-  syncDarts(hero);
-  for (const cell of trace.cells) {
-    const mob = ctx.mobs.find((m) => m.isAlive() && m.x === cell % level.w && m.y === Math.floor(cell / level.w));
-    if (mob) {
-      const ranged = { ...getItem("dart").weapon };
-      const dist = trace.distances.get(cell) ?? 1;
-      try {
-        hero.rangedWeapon = ranged;
-        strikeHeroVsMob(ctx, hero, mob, heroAttackSkill(hero, { ranged: true, adjacent: dist <= 1 }), (rng) => heroDamageRoll(rng, hero, { ranged: true }));
-      } finally {
-        hero.rangedWeapon = null;
-      }
-      return 1;
-    }
-  }
-  dropDartAt(level, trace.landCell);
-  ctx.log("The dart clatters to the floor.");
-  return 1;
-}
-function dropDartAt(level, pos) {
-  level.items.push({ pos, itemId: "dart", sprite: getItem("dart").sprite });
-}
-function equipSlot(ctx, hero, slot) {
-  if (slot === -1) {
-    if (!hero.weaponId) {
-      ctx.log("You wield nothing.");
-      return 1;
-    }
-    if (hero.weapon?.cursed) {
-      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.weapon.name));
-      return 1;
-    }
-    const def4 = getItem(hero.weaponId);
-    const inst = hero.weapon;
-    addToInventory(hero, hero.weaponId, 1, inst ? { weapon: inst } : undefined);
-    hero.weapon = null;
-    hero.weaponId = null;
-    ctx.log(`You unwield the ${def4.name}.`);
-    return 1;
-  }
-  if (slot === -2) {
-    if (!hero.armorId) {
-      ctx.log("You wear nothing.");
-      return 1;
-    }
-    if (hero.armor?.cursed) {
-      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.armor.name));
-      return 1;
-    }
-    const def4 = getItem(hero.armorId);
-    const inst = hero.armor;
-    addToInventory(hero, hero.armorId, 1, inst ? { armor: inst } : undefined);
-    hero.armor = null;
-    hero.armorId = null;
-    ctx.log(`You take off the ${def4.name}.`);
-    return 1;
-  }
-  const stack = hero.inventory[slot];
-  if (!stack) {
-    ctx.log("Nothing in that slot.");
-    return 1;
-  }
-  const def3 = getItem(stack.itemId);
-  if (def3.type === "weapon")
-    return equipWeaponFromInventory(ctx, hero, slot, stack);
-  if (def3.type === "armor")
-    return equipArmorFromInventory(ctx, hero, slot, stack);
-  if (isRingId(stack.itemId)) {
-    const finger = useRingFromSlot(ctx, hero, slot);
-    if (finger === 0) {
-      ctx.log("Unequip one ring first.");
-      return 0;
-    }
-    return 1;
-  }
-  ctx.log("You can't equip that.");
-  return 1;
-}
-function dropSlot(ctx, hero, slot) {
-  if (slot === -1 || slot === -2) {
-    const equippedId = slot === -1 ? hero.weaponId : hero.armorId;
-    if (!equippedId) {
-      ctx.log("Nothing in that slot.");
-      return 1;
-    }
-    const inst = slot === -1 ? hero.weapon : hero.armor;
-    if (inst?.cursed) {
-      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", inst.name));
-      return 1;
-    }
-    if (slot === -1) {
-      hero.weapon = null;
-      hero.weaponId = null;
-    } else {
-      hero.armor = null;
-      hero.armorId = null;
-    }
-    const def4 = getItem(equippedId);
-    ctx.level.items.push({
-      pos: hero.pos,
-      itemId: equippedId,
-      sprite: def4.sprite
-    });
-    ctx.log(`You drop the ${def4.name}.`);
-    return 0.5;
-  }
-  const stack = hero.inventory[slot];
-  if (!stack) {
-    ctx.log("Nothing in that slot.");
-    return 1;
-  }
-  const removed = removeFromInventory(hero, slot, stack.qty);
-  const def3 = getItem(removed.itemId);
-  ctx.level.items.push({
-    pos: hero.pos,
-    itemId: removed.itemId,
-    sprite: def3.sprite
-  });
-  ctx.log(`You drop the ${def3.name}.`);
-  return 0.5;
-}
-var chasmArmed = null;
-function stepTowardChasm(ctx, hero, nx, ny) {
-  const level = ctx.level;
-  const from = hero.pos;
-  const to = ny * level.w + nx;
-  if (hero.flying) {
-    hero.pos = to;
-    passiveSearch(ctx, hero);
-    return 1;
-  }
-  if (chasmArmed !== null && chasmArmed.from === from && chasmArmed.to === to) {
-    chasmArmed = null;
-    return heroFall(ctx, hero);
-  }
-  chasmArmed = { from, to };
-  ctx.log("Do you really want to jump into the chasm? You can probably die.");
-  return 0;
-}
-function heroFall(ctx, hero) {
-  chasmArmed = null;
-  ctx.log("You fall into the chasm!");
-  hero.buffs.cripple = { kind: "cripple", left: CRIPPLE_DURATION };
-  const dmg = ctx.rng.intRange(Math.floor(hero.ht / 3), Math.floor(hero.ht / 2));
-  const applied = applyDamage(ctx.rng, hero, dmg);
-  hero.hp = applied.hp;
-  if (applied.paralysisBroken) {
-    hero.paralysed = false;
-    delete hero.buffs.paralysis;
-  }
-  if (!hero.isAlive()) {
-    ctx.log("You fell to death...");
-  }
-  return 1;
-}
-function doorEnter(ctx, x, y) {
-  ctx.level.set(x, y, 40 /* OPEN_DOOR */);
-}
-function doorLeave(ctx, x, y) {
-  const level = ctx.level;
-  if (!level.items.some((it) => it.pos === level.idx(x, y))) {
-    level.set(x, y, 2 /* DOOR */);
-  }
-}
-function trampleHighGrass(ctx, hero, x, y) {
-  const level = ctx.level;
-  level.set(x, y, 10 /* GRASS */);
-  const herbalismLevel = 0;
-  if (ctx.rng.int(0, 18) <= ctx.rng.int(0, herbalismLevel + 1)) {
-    dropAt(ctx, level.idx(x, y), "seed");
-  }
-  if (ctx.rng.int(0, 6) <= ctx.rng.int(0, herbalismLevel + 1)) {
-    dropAt(ctx, level.idx(x, y), "dewdrop");
-  }
-}
-function dropAt(ctx, pos, itemId) {
-  ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
-}
-function pickupDewdrop(ctx, hero, qty) {
-  const level = ctx.level;
-  const value = 1 + Math.floor((level.depth - 1) / 5);
-  const effect = Math.min(hero.ht - hero.hp, value * qty);
-  if (effect > 0) {
-    hero.hp += effect;
-    ctx.log(`+${effect}HP`);
-  }
-  return 1;
-}
-function openLockedChest(ctx, hero, item) {
-  const level = ctx.level;
-  const keySlot = hero.inventory.findIndex((s) => s.itemId === "golden_key");
-  if (keySlot === -1) {
-    ctx.log("This chest is locked and you don't have matching key");
-    return 0;
-  }
-  removeFromInventory(hero, keySlot, 1);
-  level.items = level.items.filter((it) => it !== item);
-  const { defId, qty } = parseItemId(item.itemId);
-  const def3 = getItem(defId);
-  const label = qty > 1 ? `${qty}x ${def3.name}` : def3.name;
-  if (def3.type === "gold") {
-    hero.gold += qty;
-    ctx.log(`You unlock the chest and take ${qty} gold.`);
-  } else {
-    addToInventory(hero, defId, qty);
-    ctx.log(`You unlock the chest and take the ${label}.`);
-  }
-  return 1;
-}
-var SIGN_TIPS = [
-  "Wear the highest tier armor you can; do not rely on dodging alone.",
-  "Enchantments on weapons and armor are potent; identify items to find them.",
-  "Dewdrops heal a little; save potions of healing for emergencies.",
-  "Do not be afraid to run from a fight you cannot win.",
-  "Upgrade scrolls are precious; spend them on gear you will keep.",
-  "Mystery meat is risky; cook it at a stove if you can.",
-  "Strength potions let you wear heavier gear sooner.",
-  "Hidden traps and doors can be found by searching.",
-  "Blandfruit can be cooked with seeds for useful meals.",
-  "Flies are weak alone; do not let a swarm surround you.",
-  "Gnoll scouts hit hard; use doorways to fight them one at a time.",
-  "Crabs block a lot of damage; use wands or surprise attacks.",
-  "Goo is coming. Fire will keep it from healing.",
-  "Fire hurts Goo, but do not stand in it yourself.",
-  "Keep your distance from spinners and their webs.",
-  "Skeletons hit hard; blind or slow them first.",
-  "Thieves steal; kill them before they flee with your gear.",
-  "Shaman bolts hurt; break line of sight.",
-  "Brutes enrage when hurt; finish them quickly.",
-  "DM-300 is coming. Lightning hurts it most.",
-  "Lightning wands and surprise attacks bring DM-300 down.",
-  "The City awaits. Mind the monks and their disabling strikes."
-];
-var signCells = new WeakMap;
-function noteSignCells(level, cells) {
-  signCells.set(level, new Set(cells));
-}
-var wallDecoCells = new WeakMap;
-function noteWallDecoCells(level, cells) {
-  wallDecoCells.set(level, new Set(cells));
-}
-function mineDarkGold(ctx, hero, slot) {
-  const stack = hero.inventory[slot];
-  if (!stack || stack.itemId !== "pickaxe") {
-    ctx.log("Nothing to mine with.");
-    return 0;
-  }
-  if (ctx.level.depth < 11 || ctx.level.depth > 15) {
-    ctx.log(TXT_NO_VEIN);
-    return 0;
-  }
-  const veins = wallDecoCells.get(ctx.level);
-  const w = ctx.level.w;
-  const hx = hero.pos % w;
-  const hy = Math.floor(hero.pos / w);
-  let vein = null;
-  for (let dy = -1;dy <= 1 && vein === null; dy++) {
-    for (let dx = -1;dx <= 1; dx++) {
-      if (dx === 0 && dy === 0)
-        continue;
-      const pos = (hy + dy) * w + (hx + dx);
-      if (veins?.has(pos)) {
-        vein = pos;
-        break;
-      }
-    }
-  }
-  if (vein === null) {
-    ctx.log(TXT_NO_VEIN);
-    return 0;
-  }
-  veins.delete(vein);
-  addToInventory(hero, "darkgold", 1);
-  ctx.log("You now have dark gold ore");
-  if (hero.hungerLevel < STARVING) {
-    hero.hungerLevel = satisfy(hero.hungerLevel, -STARVING / 10);
-  }
-  return 2;
-}
-var TXT_NO_VEIN = "There is no dark gold vein near you to mine";
-function readSign(ctx, hero) {
-  const cells = signCells.get(ctx.level);
-  if (!cells || !cells.has(hero.pos))
-    return 1;
-  const index = ctx.level.depth - 1;
-  if (index < SIGN_TIPS.length) {
-    ctx.log(SIGN_TIPS[index]);
-  } else {
-    cells.delete(hero.pos);
-    ctx.level.set(hero.x, hero.y, 38 /* EMBERS */);
-    ctx.log("As you try to read the sign it bursts into greenish flames.");
-  }
-  return 0;
-}
-function waitTurn(ctx, hero) {
-  return readSign(ctx, hero);
-}
-function moveHero(ctx, hero, dx, dy) {
-  const level = ctx.level;
-  if (hero.rooted)
-    return 1;
-  let nx = hero.x + dx;
-  let ny = hero.y + dy;
-  if (!level.inBounds(nx, ny))
-    return 1;
-  const foe = ctx.mobs.find((m) => m.isAlive() && m.x === nx && m.y === ny);
-  if (foe) {
-    strikeHeroVsMob(ctx, hero, foe, heroAttackSkill(hero, { ranged: false, adjacent: false }), (r) => heroDamageRoll(r, hero, { ranged: false }));
-    return 1;
-  }
-  if (hasBuff(hero, "vertigo")) {
-    const step = vertigoRedirect(ctx.rng, hero.pos, level.w, (p) => {
-      const px = p % level.w;
-      const py = Math.floor(p / level.w);
-      return !level.inBounds(px, py) || !level.isPassable(px, py) || ctx.mobs.some((m) => m.isAlive() && m.x === px && m.y === py);
-    });
-    if (step === null) {
-      passiveSearch(ctx, hero);
-      return 1;
-    }
-    nx = step % level.w;
-    ny = Math.floor(step / level.w);
-  }
-  const tile = level.get(nx, ny);
-  if (tile === 8 /* CHASM */)
-    return stepTowardChasm(ctx, hero, nx, ny);
-  if (tile === 3 /* DOOR_LOCKED */) {
-    const keySlot = hero.inventory.findIndex((s) => s.itemId === "iron_key");
-    if (keySlot === -1) {
-      ctx.log("You don't have a matching key");
-      return 0;
-    }
-    level.set(nx, ny, 2 /* DOOR */);
-    removeFromInventory(hero, keySlot, 1);
-    ctx.log("You unlock the door.");
-    return 1;
-  }
-  if (!level.isPassable(nx, ny))
-    return 1;
-  if (level.get(hero.x, hero.y) === 40 /* OPEN_DOOR */) {
-    doorLeave(ctx, hero.x, hero.y);
-  }
-  hero.pos = ny * level.w + nx;
-  if (!hero.flying) {
-    pressTrapCell(ctx, hero.pos, hero, (mobId, pos) => {
-      const mob = buildMob(mobId, nextMobId(), pos, level.w);
-      mob.state = "wandering";
-      ctx.addMob(mob, 2);
-    });
-    if (ctx.level.depth === 10) {
-      pressArenaCell(ctx.level, ctx.rng, hero.pos, {
-        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
-        spawn: (pos) => {
-          const tengu = buildMob("tengu", nextMobId(), pos, level.w);
-          tengu.state = "hunting";
-          ctx.addMob(tengu);
-          tengu.notice(ctx);
-        }
-      });
-    } else if (ctx.level.depth === 15) {
-      pressArenaCell2(ctx.level, ctx.rng, hero.pos, {
-        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
-        spawn: (pos) => {
-          const dm300 = buildMob("dm300", nextMobId(), pos, level.w);
-          dm300.state = "hunting";
-          ctx.addMob(dm300);
-          dm300.notice(ctx);
-        }
-      });
-    } else if (ctx.level.depth === 20) {
-      setKingPedestals(pedestalCell(true), pedestalCell(false));
-      pressArenaCell3(ctx.level, ctx.rng, hero.pos, {
-        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
-        spawn: (pos) => {
-          spawnKingArena(ctx, pos);
-        }
-      });
-    }
-    enterCell(ctx, hero, nx, ny);
-  } else if (tile === 2 /* DOOR */) {
-    doorEnter(ctx, nx, ny);
-  }
-  passiveSearch(ctx, hero);
-  return 1;
-}
-function enterCell(ctx, hero, x, y) {
-  const t = ctx.level.get(x, y);
-  if (t === 39 /* HIGH_GRASS */)
-    trampleHighGrass(ctx, hero, x, y);
-  else if (t === 2 /* DOOR */)
-    doorEnter(ctx, x, y);
-  else if (t === 12 /* WELL */)
-    drinkWell(ctx, hero, y * ctx.level.w + x);
-}
-function searchIntentional(ctx, hero) {
-  const level = ctx.level;
-  const distance = 1;
-  const level_ = intentionalSearchLevel(hero.awareness);
-  let found = false;
-  for (let dy = -distance;dy <= distance; dy++) {
-    for (let dx = -distance;dx <= distance; dx++) {
-      const nx = hero.x + dx;
-      const ny = hero.y + dy;
-      if (!level.inBounds(nx, ny))
-        continue;
-      if (level.visible[level.idx(nx, ny)] === 0)
-        continue;
-      const t = level.get(nx, ny);
-      if (t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) {
-        if (t === 4 /* DOOR_SECRET */) {
-          level.revealSecretDoor(nx, ny);
-        } else {
-          level.revealTrap(nx, ny);
-        }
-        found = true;
-      }
-    }
-  }
-  if (found) {
-    ctx.log("You noticed something");
-  }
-  return searchTimeCost(ctx.rng, found, level_);
-}
-function passiveSearch(ctx, hero) {
-  const level = ctx.level;
-  const chance = passiveSearchLevel(hero.awareness);
-  for (let dy = -1;dy <= 1; dy++) {
-    for (let dx = -1;dx <= 1; dx++) {
-      const nx = hero.x + dx;
-      const ny = hero.y + dy;
-      if (!level.inBounds(nx, ny))
-        continue;
-      if (level.visible[level.idx(nx, ny)] === 0)
-        continue;
-      const t = level.get(nx, ny);
-      if ((t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) && ctx.rng.float(0, 1) < chance) {
-        if (t === 4 /* DOOR_SECRET */) {
-          level.revealSecretDoor(nx, ny);
-        } else {
-          level.revealTrap(nx, ny);
-        }
-      }
-    }
-  }
-}
-function tickHeroClock(rng, ctx, hero, cost) {
-  hero.hungerClock += cost;
-  while (hero.hungerClock >= HUNGER_STEP) {
-    hero.hungerClock -= HUNGER_STEP;
-    const t = hungerTick(rng, {
-      level: hero.hungerLevel,
-      hp: hero.hp,
-      paralysed: hero.paralysed
-    });
-    hero.hungerLevel = t.level;
-    if (t.becameStarving)
-      ctx.log(MSG_STARVING);
-    else if (t.becameHungry)
-      ctx.log(MSG_HUNGRY);
-    if (t.damage > 0) {
-      ctx.log(MSG_STARVING);
-      hero.hp = Math.max(hero.hp - t.damage, 0);
-      if (!hero.isAlive())
-        ctx.log(MSG_STARVED_TO_DEATH);
-    }
-    if (hero.isAlive()) {
-      hero.hp = regenTick(hero.hp, hero.ht, isStarving(hero.hungerLevel));
-    }
-  }
-  rechargeWands(hero, cost, false);
-  tickRingClocks(hero, cost);
-}
-function dartTrace(level, from, to) {
-  const w = level.w;
-  const x0 = from % w;
-  const y0 = Math.floor(from / w);
-  const x1 = to % w;
-  const y1 = Math.floor(to / w);
-  const cells = [];
-  const distances = new Map;
-  let dx = Math.abs(x1 - x0);
-  let dy = -Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1;
-  const sy = y0 < y1 ? 1 : -1;
-  let err = dx + dy;
-  let x = x0;
-  let y = y0;
-  let dist = 0;
-  for (;; ) {
-    if (dist > 0) {
-      if (!level.inBounds(x, y) || level.isOpaque(x, y))
-        break;
-      const pos = y * w + x;
-      cells.push(pos);
-      distances.set(pos, dist);
-    }
-    if (x === x1 && y === y1)
-      break;
-    const e2 = 2 * err;
-    if (e2 >= dy) {
-      err += dy;
-      x += sx;
-    }
-    if (e2 <= dx) {
-      err += dx;
-      y += sy;
-    }
-    dist++;
-    if (dist > 64)
-      break;
-  }
-  return {
-    cells,
-    distances,
-    landCell: cells.length > 0 ? cells[cells.length - 1] : from
-  };
-}
-
 // src/ui/palette.ts
 var UI = {
   panel: "#f2e3bd",
@@ -12413,6 +12041,1044 @@ class Dialogs {
   }
 }
 
+// src/content/classarmor.ts
+var ARMOR_KIT_ID = "armor_kit";
+var WARRIOR_ARMOR_ID = "armor_warrior";
+var ROGUE_ARMOR_ID = "armor_rogue";
+var MAGE_ARMOR_ID = "armor_mage";
+var HUNTRESS_ARMOR_ID = "armor_huntress";
+var TIME_TO_UPGRADE = 2;
+var LEAP_TIME = 1;
+var SHOCK_TIME = 3;
+var CLASS_ARMOR_IDS = {
+  warrior: WARRIOR_ARMOR_ID,
+  rogue: ROGUE_ARMOR_ID,
+  mage: MAGE_ARMOR_ID,
+  huntress: HUNTRESS_ARMOR_ID
+};
+function isClassArmorId(id) {
+  return id === WARRIOR_ARMOR_ID || id === ROGUE_ARMOR_ID || id === MAGE_ARMOR_ID || id === HUNTRESS_ARMOR_ID;
+}
+function classArmorKind(id) {
+  switch (id) {
+    case WARRIOR_ARMOR_ID:
+      return "warrior";
+    case ROGUE_ARMOR_ID:
+      return "rogue";
+    case MAGE_ARMOR_ID:
+      return "mage";
+    case HUNTRESS_ARMOR_ID:
+      return "huntress";
+    default:
+      return null;
+  }
+}
+var CLASS_ARMOR_SPECIAL = {
+  warrior: "HEROIC LEAP",
+  rogue: "SMOKE BOMB",
+  mage: "MOLTEN EARTH",
+  huntress: "SPECTRAL BLADES"
+};
+var CLASS_ARMOR_GATE = {
+  warrior: "Only warriors can use this armor!",
+  rogue: "Only rogues can use this armor!",
+  mage: "Only mages can use this armor!",
+  huntress: "Only huntresses can use this armor!"
+};
+function upgradeToClassArmor(hero, armor) {
+  const kind = (() => {
+    switch (hero.heroClass) {
+      case "warrior":
+        return "warrior";
+      case "rogue":
+        return "rogue";
+      case "mage":
+        return "mage";
+      case "huntress":
+        return "huntress";
+    }
+  })();
+  const id = CLASS_ARMOR_IDS[kind];
+  const def3 = getItem(id);
+  const inst = {
+    name: def3.name,
+    level: 0,
+    str: armor.str,
+    dr: Math.max(armor.dr + armor.level, 0),
+    tier: 6,
+    glyph: armor.glyph ?? null,
+    cursedKnown: true,
+    upgradable: false
+  };
+  initDurability(inst, "armor");
+  return { id, armor: inst };
+}
+function armorKitTargets(hero) {
+  const targets = [];
+  hero.inventory.forEach((stack, slot) => {
+    const def3 = getItem(stack.itemId);
+    if (def3.type === "armor") {
+      targets.push({ slot, id: stack.itemId, name: def3.name, equipped: false });
+    }
+  });
+  if (hero.armorId) {
+    const def3 = getItem(hero.armorId);
+    targets.push({ slot: -2, id: hero.armorId, name: def3.name, equipped: true });
+  }
+  return targets;
+}
+function applyArmorKit(ctx, hero, kitSlot, armorSlot) {
+  const kit = hero.inventory[kitSlot];
+  if (!kit || kit.itemId !== ARMOR_KIT_ID) {
+    ctx.log("You have no armor kit to apply.");
+    return 1;
+  }
+  let donor;
+  let donorName;
+  let fromEquipped = false;
+  if (armorSlot === -2) {
+    if (!hero.armor || !hero.armorId) {
+      ctx.log("You are not wearing any armor to upgrade.");
+      return 1;
+    }
+    donor = { ...hero.armor };
+    donorName = donor.name;
+    fromEquipped = true;
+  } else {
+    const stack = hero.inventory[armorSlot];
+    const def3 = stack ? getItem(stack.itemId) : undefined;
+    if (!stack || !def3 || def3.type !== "armor") {
+      ctx.log("Select an armor to upgrade.");
+      return 1;
+    }
+    donor = stack.gear?.armor ? { ...stack.gear.armor } : { ...def3.armor };
+    donorName = donor.name;
+  }
+  removeFromInventory(hero, kitSlot, 1);
+  ctx.log(`you applied the armor kit to upgrade your ${donorName}`);
+  const { id, armor: classArmor } = upgradeToClassArmor(hero, donor);
+  if (fromEquipped) {
+    hero.armor = classArmor;
+    hero.armorId = id;
+  } else {
+    const donorSlot = armorSlot > kitSlot ? armorSlot - 1 : armorSlot;
+    removeFromInventory(hero, donorSlot, 1);
+    addToInventory(hero, id, 1, { armor: classArmor });
+  }
+  return TIME_TO_UPGRADE;
+}
+function useArmorKitFromSlot(ctx, hero, kitSlot) {
+  const kit = hero.inventory[kitSlot];
+  if (!kit || kit.itemId !== ARMOR_KIT_ID)
+    return 1;
+  const targets = armorKitTargets(hero);
+  if (targets.length === 0) {
+    ctx.log("You have no armor to upgrade.");
+    return 1;
+  }
+  pickArmorForKit(ctx, hero, kitSlot, targets);
+  return 0;
+}
+async function pickArmorForKit(ctx, hero, kitSlot, targets) {
+  const choice = await showDialog({
+    title: "Select an armor to upgrade",
+    text: "Choose an armor to transform into epic class armor.",
+    choices: targets.map((t) => ({
+      label: `${t.name}${t.equipped ? " (worn)" : ""}`,
+      value: String(t.slot)
+    }))
+  });
+  if (choice === "")
+    return;
+  const armorSlot = parseInt(choice, 10);
+  if (!Number.isFinite(armorSlot))
+    return;
+  const kit = hero.inventory[kitSlot];
+  if (!kit || kit.itemId !== ARMOR_KIT_ID)
+    return;
+  if (applyArmorKit(ctx, hero, kitSlot, armorSlot) === TIME_TO_UPGRADE) {
+    ctx.spendHero?.(TIME_TO_UPGRADE);
+  }
+}
+var TXT_LOW_HEALTH = "Your health is too low!";
+var TXT_NOT_EQUIPPED = "You need to be wearing this armor to use its special power!";
+function executeArmorSpecial(ctx, hero) {
+  if (hero.hp < 3) {
+    ctx.log(TXT_LOW_HEALTH);
+    return 0;
+  }
+  const kind = classArmorKind(hero.armorId);
+  if (!kind || !hero.armor) {
+    ctx.log(TXT_NOT_EQUIPPED);
+    return 0;
+  }
+  if (kind === "warrior")
+    return "target";
+  return stubClassSpecial(ctx, kind);
+}
+function stubClassSpecial(ctx, kind) {
+  ctx.log(`${CLASS_ARMOR_SPECIAL[kind]} is not implemented yet — the ${kind} class is not playable in this build.`);
+  return 1;
+}
+function neighbours8(w) {
+  return [1, -1, w, -w, 1 + w, 1 - w, -1 + w, -1 - w];
+}
+function resolveHeroicLeap(ctx, hero, targetCell) {
+  if (targetCell == null || targetCell === hero.pos)
+    return 0;
+  const ball = ballisticaCast(ballisticaWorldOf(ctx), hero.pos, targetCell, false, true);
+  let cell = ball.cell;
+  if (charAtPos(ctx, cell) != null && cell !== hero.pos) {
+    cell = ball.trace[ball.distance - 2];
+  }
+  hero.hp -= Math.floor(hero.hp / 3);
+  if (hero.subClass === "berserker" && hero.hp > 0 && hero.hp <= hero.ht * FURY_LEVEL) {
+    applyFuryGain(hero);
+  }
+  delete hero.buffs.invisibility;
+  hero.pos = cell;
+  pressHeroCell(ctx, hero);
+  for (const d of neighbours8(ctx.level.w)) {
+    const ch = charAtPos(ctx, cell + d);
+    if (ch && ch !== hero && ch.isAlive()) {
+      const cur = ch.buffs.paralysis?.left ?? 0;
+      ch.buffs.paralysis = {
+        kind: "paralysis",
+        left: Math.max(cur, SHOCK_TIME)
+      };
+      ch.paralysed = true;
+    }
+  }
+  return LEAP_TIME;
+}
+
+// src/content/actions.ts
+function pickupAt(ctx, hero) {
+  const level = ctx.level;
+  const item = level.items.find((it) => it.pos === hero.pos);
+  if (!item) {
+    ctx.log("There is nothing here to pick up.");
+    return 1;
+  }
+  level.items = level.items.filter((it) => it !== item);
+  const { defId, qty } = parseItemId(item.itemId);
+  if (defId === "dewdrop")
+    return pickupDewdrop(ctx, hero, qty);
+  if (item.lockedChest)
+    return openLockedChest(ctx, hero, item);
+  const def3 = getItem(defId);
+  if (def3.type === "gold") {
+    hero.gold += qty;
+    ctx.log(`You pick up ${qty} gold.`);
+  } else {
+    addToInventory(hero, defId, qty);
+    const label = qty > 1 ? `${qty}x ${def3.name}` : def3.name;
+    ctx.log(`You pick up the ${label}.`);
+  }
+  return 1;
+}
+function useInventorySlot(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  const def3 = instanceItemDef(stack.itemId) ?? getItem(stack.itemId);
+  if (isWandId(stack.itemId)) {
+    ctx.log("Choose a cell to zap.");
+    return 0;
+  }
+  if (isRingId(stack.itemId)) {
+    return useRingFromSlot(ctx, hero, slot) > 0 ? 1 : 0;
+  }
+  if (stack.itemId === TOME_OF_MASTERY_ID) {
+    return readTomeOfMastery(ctx, hero, slot);
+  }
+  if (stack.itemId === ARMOR_KIT_ID) {
+    return useArmorKitFromSlot(ctx, hero, slot);
+  }
+  switch (def3.type) {
+    case "potion":
+      return drinkPotion2(ctx, hero, slot, stack);
+    case "food":
+      return eatFood(ctx, hero, slot, stack);
+    case "scroll":
+      return readScroll2(ctx, hero, slot, stack);
+    case "weapon":
+      return equipWeaponFromInventory(ctx, hero, slot, stack);
+    case "armor":
+      return equipArmorFromInventory(ctx, hero, slot, stack);
+    case "missile":
+      ctx.log("Choose a target to throw the dart at.");
+      return 0;
+    case "key":
+      return useKey(ctx, hero, slot, stack);
+    case "gold":
+      return 1;
+    case "dewdrop":
+    case "seed":
+      return 1;
+    case "bag":
+    case "misc":
+    case "quest":
+      return 1;
+    case "wand":
+    case "ring":
+      return 1;
+  }
+}
+function drinkPotion2(ctx, hero, slot, _stack) {
+  return drinkPotion(ctx, hero, slot);
+}
+function readScroll2(ctx, hero, slot, _stack) {
+  return readScroll(ctx, hero, slot);
+}
+function readTomeOfMastery(ctx, hero, slot) {
+  if (hero.buffs.blindness) {
+    ctx.log(TOME_BLINDED_MSG);
+    return 1;
+  }
+  tomeChooseWayFlow(ctx, hero, slot);
+  return 0;
+}
+async function tomeChooseWayFlow(ctx, hero, slot) {
+  const { respec, options } = tomeChoices(hero.heroClass, hero.subClass);
+  const title = hero.subClass === "none" ? "Tome of Mastery" : "Tome of Remastery";
+  let way = "";
+  if (respec) {
+    const opt = options[0];
+    way = await showDialog({
+      title,
+      text: `${SUBCLASS_DESCS[opt]}
+
+${respecPrompt(opt)}`,
+      sprite: "item_tome_mastery",
+      choices: [
+        { label: WND_REMASTERY_OK, value: opt },
+        { label: WND_REMASTERY_CANCEL, value: "" }
+      ]
+    });
+  } else {
+    const [sc1, sc2] = options;
+    way = await showDialog({
+      title,
+      text: `${SUBCLASS_DESCS[sc1]}
+
+${SUBCLASS_DESCS[sc2]}
+
+${WND_MASTERY_TITLE}`,
+      sprite: "item_tome_mastery",
+      choices: [
+        { label: capitalizeTitle(SUBCLASS_TITLES[sc1]), value: sc1 },
+        { label: capitalizeTitle(SUBCLASS_TITLES[sc2]), value: sc2 },
+        { label: WND_MASTERY_CANCEL, value: "" }
+      ]
+    });
+  }
+  if (!way)
+    return;
+  const stack = hero.inventory[slot];
+  if (!stack || stack.itemId !== TOME_OF_MASTERY_ID)
+    return;
+  const result = tomeChoose(way, hero.hp, hero.ht);
+  removeFromInventory(hero, slot, 1);
+  hero.subClass = result.subClass;
+  ctx.log(result.log);
+  if (result.gainFury) {
+    hero.buffs.fury = { kind: "fury", left: 0 };
+  }
+  ctx.spendHero?.(result.timeCost);
+}
+function eatFood(ctx, hero, slot, stack) {
+  const def3 = getItem(stack.itemId);
+  removeFromInventory(hero, slot, 1);
+  hero.hungerLevel = satisfy(hero.hungerLevel, def3.energy ?? 260);
+  if (hero.hp < hero.ht) {
+    hero.hp = Math.min(hero.hp + 5, hero.ht);
+  }
+  ctx.log("That food tasted delicious!");
+  return 3;
+}
+function equipWeaponFromInventory(ctx, hero, slot, stack) {
+  const def3 = getItem(stack.itemId);
+  if (!def3.weapon) {
+    ctx.log("You can't wield that.");
+    return 1;
+  }
+  if (hero.weapon?.cursed) {
+    ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.weapon.name));
+    return 1;
+  }
+  const oldWeapon = hero.weapon;
+  const oldId = hero.weaponId;
+  const inst = stack.gear?.weapon ? { ...stack.gear.weapon } : { ...def3.weapon };
+  if (inst.durability === undefined)
+    initDurability(inst, "weapon");
+  removeFromInventory(hero, slot, 1);
+  hero.weapon = inst;
+  hero.weaponId = def3.id;
+  hero.weapon.cursedKnown = true;
+  if (oldId && oldWeapon) {
+    addToInventory(hero, oldId, 1, { weapon: oldWeapon });
+  }
+  ctx.log(`You equip the ${def3.name}.`);
+  if (inst.cursed) {
+    ctx.log(TXT_EQUIP_CURSED_WEAPON.replace("%s", inst.name));
+  }
+  return 1;
+}
+function equipArmorFromInventory(ctx, hero, slot, stack) {
+  const def3 = getItem(stack.itemId);
+  if (!def3.armor) {
+    ctx.log("You can't wear that.");
+    return 1;
+  }
+  const armorKind = classArmorKind(def3.id);
+  if (armorKind && hero.heroClass !== armorKind) {
+    ctx.log(CLASS_ARMOR_GATE[armorKind]);
+    return 1;
+  }
+  if (hero.armor?.cursed) {
+    ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.armor.name));
+    return 1;
+  }
+  const oldArmor = hero.armor;
+  const oldId = hero.armorId;
+  const inst = stack.gear?.armor ? { ...stack.gear.armor } : { ...def3.armor };
+  if (inst.durability === undefined)
+    initDurability(inst, "armor");
+  removeFromInventory(hero, slot, 1);
+  hero.armor = inst;
+  hero.armorId = def3.id;
+  hero.armor.cursedKnown = true;
+  if (oldId && oldArmor) {
+    addToInventory(hero, oldId, 1, { armor: oldArmor });
+  }
+  ctx.log(`You equip the ${def3.name}.`);
+  if (inst.cursed) {
+    ctx.log(TXT_EQUIP_CURSED_ARMOR.replace("%s", inst.name));
+  }
+  return 1;
+}
+function useKey(ctx, hero, slot, stack) {
+  const level = ctx.level;
+  const w = level.w;
+  const x = hero.x;
+  const y = hero.y;
+  const lockedAround = [
+    [x + 1, y],
+    [x - 1, y],
+    [x, y + 1],
+    [x, y - 1]
+  ];
+  if (stack.itemId === "iron_key") {
+    for (const [nx, ny] of lockedAround) {
+      if (level.inBounds(nx, ny) && level.get(nx, ny) === 3 /* DOOR_LOCKED */) {
+        level.set(nx, ny, 2 /* DOOR */);
+        removeFromInventory(hero, slot, 1);
+        ctx.log("You unlock the door.");
+        return 1;
+      }
+    }
+    ctx.log("There is no locked door nearby.");
+    return 1;
+  }
+  if (stack.itemId === "skeleton_key") {
+    for (const [nx, ny] of lockedAround) {
+      if (level.inBounds(nx, ny) && level.get(nx, ny) === 5 /* EXIT_LOCKED */) {
+        level.set(nx, ny, 7 /* EXIT */);
+        removeFromInventory(hero, slot, 1);
+        ctx.log("You unlock the way down with the skeleton key.");
+        return 1;
+      }
+    }
+    ctx.log("There is no locked exit nearby.");
+    return 1;
+  }
+  ctx.log("You can't use that here.");
+  return 1;
+}
+function throwDart(ctx, hero, slot, targetPos) {
+  const stack = hero.inventory[slot];
+  if (!stack || stack.itemId !== "dart") {
+    ctx.log("You have no darts to throw.");
+    return 1;
+  }
+  const level = ctx.level;
+  const trace = dartTrace(level, hero.pos, targetPos);
+  removeFromInventory(hero, slot, 1);
+  syncDarts(hero);
+  for (const cell of trace.cells) {
+    const mob = ctx.mobs.find((m) => m.isAlive() && m.x === cell % level.w && m.y === Math.floor(cell / level.w));
+    if (mob) {
+      const ranged = { ...getItem("dart").weapon };
+      const dist = trace.distances.get(cell) ?? 1;
+      try {
+        hero.rangedWeapon = ranged;
+        strikeHeroVsMob(ctx, hero, mob, heroAttackSkill(hero, { ranged: true, adjacent: dist <= 1 }), (rng) => heroDamageRoll(rng, hero, { ranged: true }), { ranged: true });
+      } finally {
+        hero.rangedWeapon = null;
+      }
+      return 1;
+    }
+  }
+  dropDartAt(level, trace.landCell);
+  ctx.log("The dart clatters to the floor.");
+  return 1;
+}
+function dropDartAt(level, pos) {
+  level.items.push({ pos, itemId: "dart", sprite: getItem("dart").sprite });
+}
+function equipSlot(ctx, hero, slot) {
+  if (slot === -1) {
+    if (!hero.weaponId) {
+      ctx.log("You wield nothing.");
+      return 1;
+    }
+    if (hero.weapon?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.weapon.name));
+      return 1;
+    }
+    const def4 = getItem(hero.weaponId);
+    const inst = hero.weapon;
+    addToInventory(hero, hero.weaponId, 1, inst ? { weapon: inst } : undefined);
+    hero.weapon = null;
+    hero.weaponId = null;
+    ctx.log(`You unwield the ${def4.name}.`);
+    return 1;
+  }
+  if (slot === -2) {
+    if (!hero.armorId) {
+      ctx.log("You wear nothing.");
+      return 1;
+    }
+    if (hero.armor?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", hero.armor.name));
+      return 1;
+    }
+    const def4 = getItem(hero.armorId);
+    const inst = hero.armor;
+    addToInventory(hero, hero.armorId, 1, inst ? { armor: inst } : undefined);
+    hero.armor = null;
+    hero.armorId = null;
+    ctx.log(`You take off the ${def4.name}.`);
+    return 1;
+  }
+  if (slot === -3 || slot === -4) {
+    const finger = slot === -3 ? 1 : 2;
+    const [r1, r2] = equippedRings();
+    if (!(finger === 1 ? r1 : r2)) {
+      ctx.log("Nothing in that slot.");
+      return 1;
+    }
+    unequipRing(ctx, hero, finger);
+    return 1;
+  }
+  const stack = hero.inventory[slot];
+  if (!stack) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  const def3 = instanceItemDef(stack.itemId) ?? getItem(stack.itemId);
+  if (def3.type === "weapon")
+    return equipWeaponFromInventory(ctx, hero, slot, stack);
+  if (def3.type === "armor")
+    return equipArmorFromInventory(ctx, hero, slot, stack);
+  if (isRingId(stack.itemId)) {
+    const finger = useRingFromSlot(ctx, hero, slot);
+    if (finger === 0) {
+      ringFingerPickerFlow(ctx, hero, slot);
+      return 0;
+    }
+    return 1;
+  }
+  ctx.log("You can't equip that.");
+  return 1;
+}
+async function ringFingerPickerFlow(ctx, hero, slot) {
+  const [r1, r2] = equippedRings();
+  if (!r1 || !r2)
+    return;
+  const st1 = getRingState(r1);
+  const st2 = getRingState(r2);
+  if (!st1 || !st2)
+    return;
+  const choice = await showDialog({
+    title: "Unequip one ring",
+    text: "You can only wear two rings at a time. Unequip one of your equipped rings.",
+    choices: [
+      { label: capitalizeTitle(ringDisplayName(st1.ringId)), value: "1" },
+      { label: capitalizeTitle(ringDisplayName(st2.ringId)), value: "2" }
+    ]
+  });
+  if (choice === "")
+    return;
+  const stack = hero.inventory[slot];
+  if (!stack || !isRingId(stack.itemId))
+    return;
+  if (unequipRing(ctx, hero, choice === "1" ? 1 : 2)) {
+    if (useRingFromSlot(ctx, hero, slot) > 0) {
+      ctx.spendHero?.(1);
+    }
+  }
+}
+function dropSlot(ctx, hero, slot) {
+  if (slot === -1 || slot === -2) {
+    const equippedId = slot === -1 ? hero.weaponId : hero.armorId;
+    if (!equippedId) {
+      ctx.log("Nothing in that slot.");
+      return 1;
+    }
+    const inst = slot === -1 ? hero.weapon : hero.armor;
+    if (inst?.cursed) {
+      ctx.log(TXT_UNEQUIP_CURSED.replace("%s", inst.name));
+      return 1;
+    }
+    if (slot === -1) {
+      hero.weapon = null;
+      hero.weaponId = null;
+    } else {
+      hero.armor = null;
+      hero.armorId = null;
+    }
+    const def4 = getItem(equippedId);
+    ctx.level.items.push({
+      pos: hero.pos,
+      itemId: equippedId,
+      sprite: def4.sprite
+    });
+    ctx.log(`You drop the ${def4.name}.`);
+    return 0.5;
+  }
+  const stack = hero.inventory[slot];
+  if (!stack) {
+    ctx.log("Nothing in that slot.");
+    return 1;
+  }
+  const removed = removeFromInventory(hero, slot, stack.qty);
+  const def3 = getItem(removed.itemId);
+  ctx.level.items.push({
+    pos: hero.pos,
+    itemId: removed.itemId,
+    sprite: def3.sprite
+  });
+  ctx.log(`You drop the ${def3.name}.`);
+  return 0.5;
+}
+var chasmArmed = null;
+function stepTowardChasm(ctx, hero, nx, ny) {
+  const level = ctx.level;
+  const from = hero.pos;
+  const to = ny * level.w + nx;
+  if (hero.flying) {
+    hero.pos = to;
+    passiveSearch(ctx, hero);
+    return 1;
+  }
+  if (chasmArmed !== null && chasmArmed.from === from && chasmArmed.to === to) {
+    chasmArmed = null;
+    return heroFall(ctx, hero);
+  }
+  chasmArmed = { from, to };
+  ctx.log("Do you really want to jump into the chasm? You can probably die.");
+  return 0;
+}
+function heroFall(ctx, hero) {
+  chasmArmed = null;
+  ctx.log("You fall into the chasm!");
+  hero.buffs.cripple = { kind: "cripple", left: CRIPPLE_DURATION };
+  const dmg = ctx.rng.intRange(Math.floor(hero.ht / 3), Math.floor(hero.ht / 2));
+  const applied = applyDamage(ctx.rng, hero, dmg);
+  hero.hp = applied.hp;
+  applyFuryGain(hero);
+  if (applied.paralysisBroken) {
+    hero.paralysed = false;
+    delete hero.buffs.paralysis;
+  }
+  if (!hero.isAlive()) {
+    ctx.log("You fell to death...");
+  }
+  return 1;
+}
+function doorEnter(ctx, x, y) {
+  ctx.level.set(x, y, 40 /* OPEN_DOOR */);
+}
+function doorLeave(ctx, x, y) {
+  const level = ctx.level;
+  if (!level.items.some((it) => it.pos === level.idx(x, y))) {
+    level.set(x, y, 2 /* DOOR */);
+  }
+}
+function trampleHighGrass(ctx, hero, x, y) {
+  const level = ctx.level;
+  level.set(x, y, 10 /* GRASS */);
+  const herbalismLevel = 0;
+  if (ctx.rng.int(0, 18) <= ctx.rng.int(0, herbalismLevel + 1)) {
+    dropAt(ctx, level.idx(x, y), "seed");
+  }
+  if (ctx.rng.int(0, 6) <= ctx.rng.int(0, herbalismLevel + 1)) {
+    dropAt(ctx, level.idx(x, y), "dewdrop");
+  }
+  if (hero.subClass === "warden") {
+    const cur = hero.buffs.barkskin;
+    hero.buffs.barkskin = {
+      kind: "barkskin",
+      left: 0,
+      level: barkskinLevel(cur?.level ?? 0, wardenBarkskinLevel(hero.ht))
+    };
+  }
+}
+function dropAt(ctx, pos, itemId) {
+  ctx.level.items.push({ pos, itemId, sprite: getItem(itemId).sprite });
+}
+function pickupDewdrop(ctx, hero, qty) {
+  const level = ctx.level;
+  const value = 1 + Math.floor((level.depth - 1) / 5);
+  const effect = Math.min(hero.ht - hero.hp, value * qty);
+  if (effect > 0) {
+    hero.hp += effect;
+    ctx.log(`+${effect}HP`);
+  }
+  return 1;
+}
+function openLockedChest(ctx, hero, item) {
+  const level = ctx.level;
+  const keySlot = hero.inventory.findIndex((s) => s.itemId === "golden_key");
+  if (keySlot === -1) {
+    ctx.log("This chest is locked and you don't have matching key");
+    return 0;
+  }
+  removeFromInventory(hero, keySlot, 1);
+  level.items = level.items.filter((it) => it !== item);
+  const { defId, qty } = parseItemId(item.itemId);
+  const def3 = getItem(defId);
+  const label = qty > 1 ? `${qty}x ${def3.name}` : def3.name;
+  if (def3.type === "gold") {
+    hero.gold += qty;
+    ctx.log(`You unlock the chest and take ${qty} gold.`);
+  } else {
+    addToInventory(hero, defId, qty);
+    ctx.log(`You unlock the chest and take the ${label}.`);
+  }
+  return 1;
+}
+var SIGN_TIPS = [
+  "Wear the highest tier armor you can; do not rely on dodging alone.",
+  "Enchantments on weapons and armor are potent; identify items to find them.",
+  "Dewdrops heal a little; save potions of healing for emergencies.",
+  "Do not be afraid to run from a fight you cannot win.",
+  "Upgrade scrolls are precious; spend them on gear you will keep.",
+  "Mystery meat is risky; cook it at a stove if you can.",
+  "Strength potions let you wear heavier gear sooner.",
+  "Hidden traps and doors can be found by searching.",
+  "Blandfruit can be cooked with seeds for useful meals.",
+  "Flies are weak alone; do not let a swarm surround you.",
+  "Gnoll scouts hit hard; use doorways to fight them one at a time.",
+  "Crabs block a lot of damage; use wands or surprise attacks.",
+  "Goo is coming. Fire will keep it from healing.",
+  "Fire hurts Goo, but do not stand in it yourself.",
+  "Keep your distance from spinners and their webs.",
+  "Skeletons hit hard; blind or slow them first.",
+  "Thieves steal; kill them before they flee with your gear.",
+  "Shaman bolts hurt; break line of sight.",
+  "Brutes enrage when hurt; finish them quickly.",
+  "DM-300 is coming. Lightning hurts it most.",
+  "Lightning wands and surprise attacks bring DM-300 down.",
+  "The City awaits. Mind the monks and their disabling strikes."
+];
+var signCells = new WeakMap;
+function noteSignCells(level, cells) {
+  signCells.set(level, new Set(cells));
+}
+var wallDecoCells = new WeakMap;
+function noteWallDecoCells(level, cells) {
+  wallDecoCells.set(level, new Set(cells));
+}
+function mineDarkGold(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack || stack.itemId !== "pickaxe") {
+    ctx.log("Nothing to mine with.");
+    return 0;
+  }
+  if (ctx.level.depth < 11 || ctx.level.depth > 15) {
+    ctx.log(TXT_NO_VEIN);
+    return 0;
+  }
+  const veins = wallDecoCells.get(ctx.level);
+  const w = ctx.level.w;
+  const hx = hero.pos % w;
+  const hy = Math.floor(hero.pos / w);
+  let vein = null;
+  for (let dy = -1;dy <= 1 && vein === null; dy++) {
+    for (let dx = -1;dx <= 1; dx++) {
+      if (dx === 0 && dy === 0)
+        continue;
+      const pos = (hy + dy) * w + (hx + dx);
+      if (veins?.has(pos)) {
+        vein = pos;
+        break;
+      }
+    }
+  }
+  if (vein === null) {
+    ctx.log(TXT_NO_VEIN);
+    return 0;
+  }
+  veins.delete(vein);
+  addToInventory(hero, "darkgold", 1);
+  ctx.log("You now have dark gold ore");
+  if (hero.hungerLevel < STARVING) {
+    hero.hungerLevel = satisfy(hero.hungerLevel, -STARVING / 10);
+  }
+  return 2;
+}
+var TXT_NO_VEIN = "There is no dark gold vein near you to mine";
+function readSign(ctx, hero) {
+  const cells = signCells.get(ctx.level);
+  if (!cells || !cells.has(hero.pos))
+    return 1;
+  const index = ctx.level.depth - 1;
+  if (index < SIGN_TIPS.length) {
+    ctx.log(SIGN_TIPS[index]);
+  } else {
+    cells.delete(hero.pos);
+    ctx.level.set(hero.x, hero.y, 38 /* EMBERS */);
+    ctx.log("As you try to read the sign it bursts into greenish flames.");
+  }
+  return 0;
+}
+function waitTurn(ctx, hero) {
+  return readSign(ctx, hero);
+}
+function moveHero(ctx, hero, dx, dy) {
+  const level = ctx.level;
+  if (hero.rooted)
+    return 1;
+  let nx = hero.x + dx;
+  let ny = hero.y + dy;
+  if (!level.inBounds(nx, ny))
+    return 1;
+  const foe = ctx.mobs.find((m) => m.isAlive() && m.x === nx && m.y === ny);
+  if (foe) {
+    strikeHeroVsMob(ctx, hero, foe, heroAttackSkill(hero, { ranged: false, adjacent: false }), (r) => heroDamageRoll(r, hero, { ranged: false }), { ranged: false });
+    return 1;
+  }
+  if (hasBuff(hero, "vertigo")) {
+    const step = vertigoRedirect(ctx.rng, hero.pos, level.w, (p) => {
+      const px = p % level.w;
+      const py = Math.floor(p / level.w);
+      return !level.inBounds(px, py) || !level.isPassable(px, py) || ctx.mobs.some((m) => m.isAlive() && m.x === px && m.y === py);
+    });
+    if (step === null) {
+      passiveSearch(ctx, hero);
+      return 1;
+    }
+    nx = step % level.w;
+    ny = Math.floor(step / level.w);
+  }
+  const tile = level.get(nx, ny);
+  if (tile === 8 /* CHASM */)
+    return stepTowardChasm(ctx, hero, nx, ny);
+  if (tile === 3 /* DOOR_LOCKED */) {
+    const keySlot = hero.inventory.findIndex((s) => s.itemId === "iron_key");
+    if (keySlot === -1) {
+      ctx.log("You don't have a matching key");
+      return 0;
+    }
+    level.set(nx, ny, 2 /* DOOR */);
+    removeFromInventory(hero, keySlot, 1);
+    ctx.log("You unlock the door.");
+    return 1;
+  }
+  if (!level.isPassable(nx, ny))
+    return 1;
+  if (level.get(hero.x, hero.y) === 40 /* OPEN_DOOR */) {
+    doorLeave(ctx, hero.x, hero.y);
+  }
+  hero.pos = ny * level.w + nx;
+  pressHeroCell(ctx, hero);
+  passiveSearch(ctx, hero);
+  return 1;
+}
+function pressHeroCell(ctx, hero) {
+  const level = ctx.level;
+  const nx = hero.x;
+  const ny = hero.y;
+  const tile = level.get(nx, ny);
+  if (!hero.flying) {
+    pressTrapCell(ctx, hero.pos, hero, (mobId, pos) => {
+      const mob = buildMob(mobId, nextMobId(), pos, level.w);
+      mob.state = "wandering";
+      ctx.addMob(mob, 2);
+    });
+    if (ctx.level.depth === 10) {
+      pressArenaCell(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          const tengu = buildMob("tengu", nextMobId(), pos, level.w);
+          tengu.state = "hunting";
+          ctx.addMob(tengu);
+          tengu.notice(ctx);
+        }
+      });
+    } else if (ctx.level.depth === 15) {
+      pressArenaCell2(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          const dm300 = buildMob("dm300", nextMobId(), pos, level.w);
+          dm300.state = "hunting";
+          ctx.addMob(dm300);
+          dm300.notice(ctx);
+        }
+      });
+    } else if (ctx.level.depth === 20) {
+      setKingPedestals(pedestalCell(true), pedestalCell(false));
+      pressArenaCell3(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          spawnKingArena(ctx, pos);
+        }
+      });
+    }
+    enterCell(ctx, hero, nx, ny);
+  } else if (tile === 2 /* DOOR */) {
+    doorEnter(ctx, nx, ny);
+  }
+}
+function enterCell(ctx, hero, x, y) {
+  const t = ctx.level.get(x, y);
+  if (t === 39 /* HIGH_GRASS */)
+    trampleHighGrass(ctx, hero, x, y);
+  else if (t === 2 /* DOOR */)
+    doorEnter(ctx, x, y);
+  else if (t === 12 /* WELL */)
+    drinkWell(ctx, hero, y * ctx.level.w + x);
+}
+function searchIntentional(ctx, hero) {
+  const level = ctx.level;
+  const distance = 1;
+  const level_ = intentionalSearchLevel(hero.awareness);
+  let found = false;
+  for (let dy = -distance;dy <= distance; dy++) {
+    for (let dx = -distance;dx <= distance; dx++) {
+      const nx = hero.x + dx;
+      const ny = hero.y + dy;
+      if (!level.inBounds(nx, ny))
+        continue;
+      if (level.visible[level.idx(nx, ny)] === 0)
+        continue;
+      const t = level.get(nx, ny);
+      if (t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) {
+        if (t === 4 /* DOOR_SECRET */) {
+          level.revealSecretDoor(nx, ny);
+        } else {
+          level.revealTrap(nx, ny);
+        }
+        found = true;
+      }
+    }
+  }
+  if (found) {
+    ctx.log("You noticed something");
+  }
+  return searchTimeCost(ctx.rng, found, level_);
+}
+function passiveSearch(ctx, hero) {
+  const level = ctx.level;
+  const chance = passiveSearchLevel(hero.awareness);
+  for (let dy = -1;dy <= 1; dy++) {
+    for (let dx = -1;dx <= 1; dx++) {
+      const nx = hero.x + dx;
+      const ny = hero.y + dy;
+      if (!level.inBounds(nx, ny))
+        continue;
+      if (level.visible[level.idx(nx, ny)] === 0)
+        continue;
+      const t = level.get(nx, ny);
+      if ((t === 4 /* DOOR_SECRET */ || isHiddenTrap(t)) && ctx.rng.float(0, 1) < chance) {
+        if (t === 4 /* DOOR_SECRET */) {
+          level.revealSecretDoor(nx, ny);
+        } else {
+          level.revealTrap(nx, ny);
+        }
+      }
+    }
+  }
+}
+function tickHeroClock(rng, ctx, hero, cost) {
+  hero.hungerClock += cost;
+  while (hero.hungerClock >= HUNGER_STEP) {
+    hero.hungerClock -= HUNGER_STEP;
+    const t = hungerTick(rng, {
+      level: hero.hungerLevel,
+      hp: hero.hp,
+      paralysed: hero.paralysed
+    });
+    hero.hungerLevel = t.level;
+    if (t.becameStarving)
+      ctx.log(MSG_STARVING);
+    else if (t.becameHungry)
+      ctx.log(MSG_HUNGRY);
+    if (t.damage > 0) {
+      ctx.log(MSG_STARVING);
+      hero.hp = Math.max(hero.hp - t.damage, 0);
+      applyFuryGain(hero);
+      if (!hero.isAlive())
+        ctx.log(MSG_STARVED_TO_DEATH);
+    }
+    if (hero.isAlive()) {
+      hero.hp = regenTick(hero.hp, hero.ht, isStarving(hero.hungerLevel));
+    }
+  }
+  rechargeWands(hero, cost, false);
+  tickRingClocks(hero, cost);
+}
+function dartTrace(level, from, to) {
+  const w = level.w;
+  const x0 = from % w;
+  const y0 = Math.floor(from / w);
+  const x1 = to % w;
+  const y1 = Math.floor(to / w);
+  const cells = [];
+  const distances = new Map;
+  let dx = Math.abs(x1 - x0);
+  let dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  let x = x0;
+  let y = y0;
+  let dist = 0;
+  for (;; ) {
+    if (dist > 0) {
+      if (!level.inBounds(x, y) || level.isOpaque(x, y))
+        break;
+      const pos = y * w + x;
+      cells.push(pos);
+      distances.set(pos, dist);
+    }
+    if (x === x1 && y === y1)
+      break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+    dist++;
+    if (dist > 64)
+      break;
+  }
+  return {
+    cells,
+    distances,
+    landCell: cells.length > 0 ? cells[cells.length - 1] : from
+  };
+}
+
 // src/content/shopkeeper.ts
 function unitPriceOf(itemId) {
   try {
@@ -12651,6 +13317,23 @@ function initWandmakerQuest(rng, waterCells, levelLength) {
   const nonBattle = ["amok", "blink", "regrowth", "slowness", "reach"];
   wandmakerQuest.wand1 = createWandReward(rng, rng.pick(battle));
   wandmakerQuest.wand2 = createWandReward(rng, rng.pick(nonBattle));
+}
+function initImpQuest(rng) {
+  impQuest.spawned = true;
+  impQuest.alternative = rng.int(0, 2) === 0;
+  impQuest.given = false;
+  const generatable = RING_SPECS.filter((s) => s.id !== "haggler" && s.id !== "thorns").map((s) => s.id);
+  let ringId = rng.pick(generatable);
+  while (rng.float(0, 1) < 0.3) {
+    ringId = rng.pick(generatable);
+  }
+  const instanceId = createRing(rng, ringId);
+  const st = getRingState(instanceId);
+  if (st) {
+    st.level = rng.int(1, 3) + 2;
+    st.cursed = true;
+  }
+  impQuest.rewardRingId = instanceId;
 }
 function randomRespawnCell3(ctx) {
   const level = ctx.level;
@@ -13383,24 +14066,105 @@ function nextNpcId() {
 }
 
 class ImpMob extends NpcMob {
+  seenBefore = false;
   constructor(id, pos, w) {
     super(id, npcDef("imp", "ambitious imp", "mob_imp", 1, false), pos, w);
-    this.state = "wandering";
+    this.state = "passive";
+  }
+  takeTurn(ctx) {
+    if (!impQuest.given && ctx.level.visible[this.pos] !== 0) {
+      if (!this.seenBefore) {
+        ctx.log(fillClassName("The ambitious imp yells: Psst, %s!"));
+      }
+      this.seenBefore = true;
+    } else {
+      this.seenBefore = false;
+    }
+    return super.takeTurn(ctx);
   }
   onTalk(ctx) {
+    this.interact(ctx);
+  }
+  async interact(ctx) {
     if (!impQuest.given) {
+      await showDialog({
+        title: "Ambitious imp",
+        sprite: this.sprite,
+        text: impQuest.alternative ? TXT_MONKS1 : TXT_GOLEMS1,
+        choices: []
+      });
       impQuest.given = true;
-      const text = impQuest.alternative ? TXT_MONKS1 : TXT_GOLEMS1;
-      ctx.log(text);
-    } else if (!impQuest.completed) {
-      const text = impQuest.alternative ? TXT_MONKS2 : TXT_GOLEMS2;
-      ctx.log(text);
+      impQuest.completed = false;
+      return;
+    }
+    if (impQuest.completed) {
+      return;
+    }
+    const tokens = countItem(heroOf(ctx), "dwarf_token");
+    if (tokens >= (impQuest.alternative ? 8 : 6)) {
+      const choice = await showDialog({
+        title: "Dwarf token",
+        sprite: "item_token",
+        text: TXT_IMP_MESSAGE,
+        choices: [{ label: TXT_TAKE_RING, value: "take" }]
+      });
+      if (choice === "take")
+        takeImpReward(ctx, this);
     } else {
-      ctx.log("The imp is busy with his new shop.");
+      await showDialog({
+        title: "Ambitious imp",
+        sprite: this.sprite,
+        text: fillClassName(impQuest.alternative ? TXT_MONKS2 : TXT_GOLEMS2),
+        choices: []
+      });
     }
   }
   description() {
-    return "This imp is clearly up to something. He is being very polite, " + "which is suspicious.";
+    return "Imps are lesser demons. They are notable for neither their strength nor their magic talent, " + "but they are quite smart and sociable. Many imps prefer to live among non-demons.";
+  }
+}
+function takeImpReward(ctx, imp) {
+  const hero = heroOf(ctx);
+  for (let i = hero.inventory.length - 1;i >= 0; i--) {
+    if (hero.inventory[i]?.itemId === "dwarf_token") {
+      removeFromInventory(hero, i, hero.inventory[i].qty);
+    }
+  }
+  const rewardId = resolveImpRewardInstance(ctx.rng, impQuest.rewardRingId);
+  if (rewardId) {
+    const parsed = parseRingId(rewardId);
+    if (parsed)
+      identifyRingType(parsed.ringId);
+    addToInventory(hero, rewardId, 1);
+    if (parsed)
+      ctx.log(`You now have ${ringDisplayName(parsed.ringId)}.`);
+  }
+  ctx.log(fillClassName("The ambitious imp yells: See you, %s!"));
+  ctx.removeMob(imp);
+  impQuest.rewardRingId = null;
+  impQuest.completed = true;
+}
+function resolveImpRewardInstance(rng, rewardId) {
+  if (rewardId === null)
+    return null;
+  if (getRingState(rewardId))
+    return rewardId;
+  const parsed = parseRingId(rewardId);
+  if (!parsed)
+    return null;
+  const fresh = createRing(rng, parsed.ringId);
+  const st = getRingState(fresh);
+  if (st) {
+    st.level = rng.int(1, 3) + 2;
+    st.cursed = true;
+  }
+  return fresh;
+}
+function onImpKill(ctx, mob) {
+  if (!impQuest.spawned || !impQuest.given || impQuest.completed)
+    return;
+  if (impQuest.alternative && mob.def.id === "monk" || !impQuest.alternative && mob.def.id === "golem") {
+    dropItemAt(ctx, mob.pos, "dwarf_token");
   }
 }
 var TXT_GOLEMS1 = "Are you an adventurer? I love adventurers! You can always rely on them " + `if something needs to be killed. Am I right? For a bounty, of course ;)
@@ -13409,6 +14173,9 @@ var TXT_MONKS1 = "Are you an adventurer? I love adventurers! You can always rely
 ` + "In my case this is _monks_ who need to be killed. You see, I'm going to start a " + "little business here, but these lunatics don't buy anything themselves and " + "will scare away other customers. " + "So please, kill... let's say _8 of them_ and a reward is yours.";
 var TXT_GOLEMS2 = "How is your golem safari going?";
 var TXT_MONKS2 = "Oh, you are still alive! I knew that your kung-fu is stronger ;) " + "Just don't forget to grab these monks' tokens.";
+var TXT_IMP_MESSAGE = `Oh yes! You are my hero!
+` + "Regarding your reward, I don't have cash with me right now, but I have something better for you. " + "This is my family heirloom ring: my granddad took it off a dead paladin's finger.";
+var TXT_TAKE_RING = "Take the ring";
 function buildNpc(mobId, id, pos, w, depth) {
   switch (mobId) {
     case "ghost":
@@ -13431,6 +14198,7 @@ function buildNpc(mobId, id, pos, w, depth) {
 }
 registerNpcBuilder(buildNpc);
 registerSewersKillHook(onSewersKill);
+registerImpKillHook(onImpKill);
 
 // src/content/spawns.ts
 var SEWER_MOB_TABLE = {
@@ -13578,6 +14346,11 @@ function resolveMobSpawns(rng, depth, spawns, level) {
         blacksmithQuest.given = false;
         out.push({ pos: s.pos, mobId: "blacksmith" });
       }
+    } else if (s.kind === "imp") {
+      if (!impQuest.spawned) {
+        initImpQuest(rng);
+        out.push({ pos: s.pos, mobId: "imp" });
+      }
     }
   }
   return out;
@@ -13719,6 +14492,203 @@ var contentLevelGen = {
     return result.level;
   }
 };
+
+// src/mechanics/alchemy.ts
+var SEEDS_TO_POTION = 3;
+function seedAlchemyPotion(seedId) {
+  switch (seedId) {
+    case "seed_dreamweed":
+      return "potion_invisibility";
+    case "seed_earthroot":
+      return "potion_paralyticgas";
+    case "seed_fadeleaf":
+      return "potion_mindvision";
+    case "seed_firebloom":
+      return "potion_liquidflame";
+    case "seed_icecap":
+      return "potion_frost";
+    case "seed_rotberry":
+      return "potion_strength";
+    case "seed_sorrowmoss":
+      return "potion_toxicgas";
+    case "seed_sungrass":
+      return "potion_healing";
+    default:
+      return null;
+  }
+}
+var RANDOM_POTION = "RANDOM_POTION";
+function weightedChancePick(rng, chances2) {
+  let total = 0;
+  for (const c of chances2)
+    total += c;
+  let roll = rng.float(0, total);
+  for (let i = 0;i < chances2.length; i++) {
+    roll -= chances2[i];
+    if (roll < 0)
+      return i;
+  }
+  return chances2.length - 1;
+}
+function transmuteHeap(rng, items, randomPotionId) {
+  const chances2 = [];
+  let count = 0;
+  let allSeeds = true;
+  for (const item of items) {
+    if (item.isSeed) {
+      count += item.qty;
+      chances2.push(item.qty);
+    } else {
+      allSeeds = false;
+      break;
+    }
+  }
+  if (!allSeeds || count < SEEDS_TO_POTION) {
+    return { transmuted: false, potionId: null };
+  }
+  if (rng.int(0, count) === 0) {
+    return {
+      transmuted: true,
+      potionId: randomPotionId()
+    };
+  }
+  const proto = items[weightedChancePick(rng, chances2)];
+  const potion = seedAlchemyPotion(proto.itemId);
+  return {
+    transmuted: true,
+    potionId: potion ?? randomPotionId()
+  };
+}
+
+// src/content/alchemyflow.ts
+var ALCHEMY_SELECT_SEED = "Select a seed to throw";
+function isSeedItemId(itemId) {
+  const { defId } = parseItemId(itemId);
+  try {
+    return getItem(defId).type === "seed";
+  } catch {
+    return false;
+  }
+}
+function seedSlots(hero) {
+  const slots = [];
+  hero.inventory.forEach((stack, slot) => {
+    if (stack && isSeedItemId(stack.itemId))
+      slots.push(slot);
+  });
+  return slots;
+}
+function seedName(stack) {
+  const { defId, qty } = parseItemId(stack.itemId);
+  const def3 = getItem(defId);
+  return qty > 1 ? `${qty}x ${def3.name}` : def3.name;
+}
+function cookAt(ctx, hero, x, y) {
+  const level = ctx.level;
+  if (!level.inBounds(x, y))
+    return 0;
+  const cell = level.idx(x, y);
+  if (level.get(x, y) !== 13 /* ALCHEMY */ || cell === hero.pos)
+    return 0;
+  if (!level.visible[cell]) {
+    const step = stepTowardPot(ctx, hero, x, y);
+    if (!step)
+      return 0;
+    return moveOneStep(ctx, hero, step.dx, step.dy);
+  }
+  seedPickerFlow(ctx, hero, cell);
+  return 0;
+}
+function stepTowardPot(ctx, hero, tx, ty) {
+  const level = ctx.level;
+  let best = null;
+  for (let dy = -1;dy <= 1; dy++) {
+    for (let dx = -1;dx <= 1; dx++) {
+      if (dx === 0 && dy === 0)
+        continue;
+      const nx = hero.x + dx;
+      const ny = hero.y + dy;
+      if (!level.inBounds(nx, ny) || !level.isPassable(nx, ny))
+        continue;
+      if (ctx.mobs.some((m) => m.isAlive() && m.x === nx && m.y === ny))
+        continue;
+      const d = Math.max(Math.abs(nx - tx), Math.abs(ny - ty));
+      if (!best || d < best.d)
+        best = { dx, dy, d };
+    }
+  }
+  return best;
+}
+function moveOneStep(ctx, hero, dx, dy) {
+  return moveHero(ctx, hero, dx, dy);
+}
+async function seedPickerFlow(ctx, hero, potCell) {
+  const slots = seedSlots(hero);
+  if (slots.length === 0) {
+    await showDialog({
+      title: ALCHEMY_SELECT_SEED,
+      text: "You have no seeds.",
+      choices: [{ label: "Close", value: "" }]
+    });
+    return;
+  }
+  const picked = await showDialog({
+    title: ALCHEMY_SELECT_SEED,
+    text: ALCHEMY_SELECT_SEED,
+    choices: slots.map((slot2) => ({
+      label: seedName(hero.inventory[slot2]),
+      value: String(slot2)
+    }))
+  });
+  if (picked === "")
+    return;
+  const slot = Number(picked);
+  const stack = hero.inventory[slot];
+  if (!stack || !isSeedItemId(stack.itemId))
+    return;
+  const { defId } = parseItemId(stack.itemId);
+  removeFromInventory(hero, slot, 1);
+  addSeedToPot(ctx, potCell, defId);
+  brewIfReady(ctx, potCell);
+}
+function addSeedToPot(ctx, potCell, seedId) {
+  const level = ctx.level;
+  const existing = level.items.find((it) => it.pos === potCell && parseItemId(it.itemId).defId === seedId);
+  if (existing) {
+    const { qty } = parseItemId(existing.itemId);
+    existing.itemId = `${seedId}:${qty + 1}`;
+  } else {
+    const def3 = getItem(seedId);
+    level.items.push({ pos: potCell, itemId: seedId, sprite: def3.sprite });
+  }
+}
+function potHeapSeeds(ctx, potCell) {
+  return ctx.level.items.filter((it) => it.pos === potCell && isSeedItemId(it.itemId)).map((it) => {
+    const { defId, qty } = parseItemId(it.itemId);
+    return { itemId: defId, qty, isSeed: true };
+  });
+}
+function brewIfReady(ctx, potCell) {
+  const seeds = potHeapSeeds(ctx, potCell);
+  const total = seeds.reduce((n, s) => n + s.qty, 0);
+  if (total < SEEDS_TO_POTION)
+    return;
+  const depth = ctx.level.depth;
+  const result = transmuteHeap(ctx.rng, seeds, () => itemGenerator.randomFrom(ctx.rng, "potion", depth));
+  if (!result.transmuted || !result.potionId)
+    return;
+  ctx.level.items = ctx.level.items.filter((it) => !(it.pos === potCell && isSeedItemId(it.itemId)));
+  const potionId = result.potionId === RANDOM_POTION ? itemGenerator.randomFrom(ctx.rng, "potion", depth) : result.potionId;
+  const def3 = getItem(potionId);
+  ctx.level.items.push({ pos: potCell, itemId: potionId, sprite: def3.sprite });
+  let brewed;
+  try {
+    brewed = potionDisplayName(potionId, def3.name);
+  } catch {
+    brewed = def3.name;
+  }
+  ctx.log(`You brew a ${brewed}.`);
+}
 
 // src/content/bee.ts
 function beeDef(depth) {
@@ -13909,17 +14879,25 @@ function setInventoryAdapter(fn) {
 function readInventory(game) {
   return adapter(game);
 }
-function actionsFor(item) {
+function actionsFor(item, heroHp = 99) {
   if (item.id.startsWith("wand_of_"))
     return ["use", "drop"];
   if (item.id.startsWith("ring_of_"))
-    return ["equip", "drop"];
+    return item.equipped ? ["equip"] : ["equip", "drop"];
+  if (item.id === "tome_of_mastery")
+    return ["use", "drop"];
   if (item.id === "pickaxe")
     return ["mine", "equip", "drop"];
+  if (item.id === ARMOR_KIT_ID)
+    return ["apply", "drop"];
   switch (item.kind) {
     case "weapon":
+      return ["equip", "drop"];
     case "armor":
-      return item.equipped ? ["equip", "drop"] : ["equip", "drop"];
+      if (item.equipped && isClassArmorId(item.id) && heroHp >= 3) {
+        return ["special", "equip", "drop"];
+      }
+      return ["equip", "drop"];
     case "missile":
       return ["throw", "drop"];
     case "potion":
@@ -13936,10 +14914,12 @@ function actionLabel(action, item) {
     case "use":
       if (item.id.startsWith("wand_of_"))
         return "Zap";
+      if (item.id === "tome_of_mastery")
+        return "Read";
       return item.kind === "potion" ? "Drink" : item.kind === "food" ? "Eat" : item.kind === "scroll" ? "Read" : "Use";
     case "equip":
       if (item.id.startsWith("ring_of_"))
-        return "Wear";
+        return item.equipped ? "Unequip" : "Wear";
       return item.equipped ? item.kind === "armor" ? "Take off" : "Unwield" : item.kind === "armor" ? "Wear" : "Wield";
     case "drop":
       return "Drop";
@@ -13949,6 +14929,12 @@ function actionLabel(action, item) {
       return "Shatter";
     case "mine":
       return "Mine";
+    case "apply":
+      return "Apply";
+    case "special": {
+      const kind = classArmorKind(item.id);
+      return kind ? CLASS_ARMOR_SPECIAL[kind] : "Special";
+    }
   }
 }
 function doItemAction(game, item, action) {
@@ -13972,6 +14958,15 @@ function doItemAction(game, item, action) {
     case "mine":
       game.queueIntent({ kind: "mineItem", slot: item.slot });
       return "done";
+    case "apply":
+      game.queueIntent({ kind: "applyArmorKit", kitSlot: item.slot });
+      return "done";
+    case "special": {
+      if (classArmorKind(item.id) === "warrior")
+        return "leap-targeting";
+      game.queueIntent({ kind: "armorSpecial" });
+      return "done";
+    }
   }
 }
 var ROW_H = 56;
@@ -13981,6 +14976,7 @@ class InventoryPanel {
   selected = 0;
   onThrowRequest = () => {};
   onZapRequest = () => {};
+  onLeapRequest = () => {};
   toggle() {
     this.open = !this.open;
     this.selected = 0;
@@ -14004,7 +15000,7 @@ class InventoryPanel {
     }
     const actions = [];
     if (selected) {
-      const acts = actionsFor(selected);
+      const acts = actionsFor(selected, this.lastHeroHp);
       const bw = (pw - 20 - (acts.length - 1) * 8) / acts.length;
       acts.forEach((a, i) => {
         actions.push({
@@ -14026,6 +15022,7 @@ class InventoryPanel {
     if (!this.open)
       return false;
     const items = readInventory(game);
+    this.lastHeroHp = game.hero.hp;
     const sel = items[this.selected] ?? null;
     const view = InventoryPanel.lastView;
     if (!view)
@@ -14042,6 +15039,8 @@ class InventoryPanel {
           this.onThrowRequest(sel);
         else if (r === "zap-targeting")
           this.onZapRequest(sel);
+        else if (r === "leap-targeting")
+          this.onLeapRequest(sel);
         else
           this.close();
         return true;
@@ -14058,10 +15057,12 @@ class InventoryPanel {
     return true;
   }
   static lastView = null;
+  lastHeroHp = 99;
   draw(ctx, game, sprites, view) {
     if (!this.open)
       return;
     InventoryPanel.lastView = view;
+    this.lastHeroHp = game.hero.hp;
     const items = readInventory(game);
     if (this.selected >= items.length)
       this.selected = Math.max(0, items.length - 1);
@@ -14537,10 +15538,11 @@ function contentInventoryAdapter(game) {
     const potionInfo = potionUiInfo(s.itemId, def3.name, def3.sprite);
     const scrollInfo = potionInfo ? null : scrollUiInfo(s.itemId, def3.name, def3.sprite);
     const info = potionInfo ?? scrollInfo;
+    const tomeName = s.itemId === TOME_OF_MASTERY_ID ? tomeNameFor(hero.subClass) : null;
     return {
       slot,
       id: s.itemId,
-      name: info?.name ?? def3.name,
+      name: tomeName ?? info?.name ?? def3.name,
       sprite: info?.sprite ?? def3.sprite,
       qty: s.qty,
       kind: catalogKind(def3),
@@ -14572,6 +15574,28 @@ function contentInventoryAdapter(game) {
       kind: "armor",
       equipped: true,
       identified: true
+    });
+  }
+  const [ring1, ring2] = equippedRings();
+  const fingers = [
+    [-3, ring1],
+    [-4, ring2]
+  ];
+  for (const [slot, instanceId] of fingers) {
+    if (!instanceId)
+      continue;
+    const st = getRingState(instanceId);
+    if (!st)
+      continue;
+    items.push({
+      slot,
+      id: instanceId,
+      name: ringDisplayName(st.ringId),
+      sprite: ringDisplaySprite(st.ringId),
+      qty: 1,
+      kind: "misc",
+      equipped: true,
+      identified: isRingTypeKnown(st.ringId)
     });
   }
   return items;
@@ -14739,13 +15763,24 @@ var contentMechanics = {
           cost = 1;
           break;
         }
-        strikeHeroVsMob(ctx, hero, target, heroAttackSkill(hero, { ranged: false, adjacent: false }), (r) => heroDamageRoll(r, hero, { ranged: false }));
+        strikeHeroVsMob(ctx, hero, target, heroAttackSkill(hero, { ranged: false, adjacent: false }), (r) => heroDamageRoll(r, hero, { ranged: false }), { ranged: false });
         cost = 1;
         break;
       }
       case "useItem":
         cost = useInventorySlot(ctx, hero, intent.slot);
         break;
+      case "applyArmorKit":
+        cost = useArmorKitFromSlot(ctx, hero, intent.kitSlot);
+        break;
+      case "heroicLeap":
+        cost = resolveHeroicLeap(ctx, hero, intent.targetCell);
+        break;
+      case "armorSpecial": {
+        const r = executeArmorSpecial(ctx, hero);
+        cost = r === "target" ? 0 : r;
+        break;
+      }
       case "zapWand":
         cost = zapWandFromSlot(ctx, hero, intent.slot, intent.targetCell);
         break;
@@ -14781,6 +15816,10 @@ var contentMechanics = {
       }
       case "mineItem": {
         cost = mineDarkGold(ctx, hero, intent.slot);
+        break;
+      }
+      case "cook": {
+        cost = cookAt(ctx, hero, intent.x, intent.y);
         break;
       }
       case "talk": {
@@ -15072,7 +16111,8 @@ class Game {
         this.scheduler.add(mob);
         this.syncMobs();
       },
-      syncMobs: () => this.syncMobs()
+      syncMobs: () => this.syncMobs(),
+      spendHero: (t) => this.scheduler.spend(this.hero, t)
     };
   }
   logMsg(msg) {
@@ -15546,6 +16586,10 @@ class InputHandler {
       return;
     if (tx === hero.x && ty === hero.y) {
       game.queueIntent({ kind: "wait" });
+      return;
+    }
+    if (level.get(tx, ty) === 13 /* ALCHEMY */) {
+      game.queueIntent({ kind: "cook", x: tx, y: ty });
       return;
     }
     const mob = level.mobAt(tx, ty);
@@ -17024,6 +18068,7 @@ class UiManager {
   game = null;
   throwMode = null;
   zapMode = null;
+  leapMode = null;
   kills = 0;
   lastHeroAct = 0;
   view = { w: 390, h: 700 };
@@ -17049,6 +18094,11 @@ class UiManager {
     this.inventory.onZapRequest = (item) => {
       this.zapMode = { slot: item.slot };
       this.inventory.close();
+    };
+    this.inventory.onLeapRequest = (_item) => {
+      this.leapMode = true;
+      this.inventory.close();
+      this.game?.logMsg("Choose direction to leap");
     };
     this.effects.onMobDeath = () => {
       this.kills++;
@@ -17267,6 +18317,7 @@ class UiManager {
       }
       this.throwMode = null;
       this.zapMode = null;
+      this.leapMode = null;
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -17285,6 +18336,24 @@ class UiManager {
         g.logMsg("Zap cancelled.");
       }
       this.zapMode = null;
+      this.leapMode = null;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (this.leapMode) {
+      const t = this.renderer.screenToTile(e.clientX, e.clientY);
+      const w = g.level.w;
+      const h = g.level.h;
+      if (t.x >= 0 && t.y >= 0 && t.x < w && t.y < h) {
+        g.queueIntent({
+          kind: "heroicLeap",
+          targetCell: t.y * w + t.x
+        });
+      } else {
+        g.logMsg("Leap cancelled.");
+      }
+      this.leapMode = null;
       e.preventDefault();
       e.stopPropagation();
       return;
