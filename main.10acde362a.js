@@ -106,6 +106,13 @@ var REGION_LABELS = {
   ["city" /* CITY */]: "Metropolis",
   ["halls" /* HALLS */]: "Demon Halls"
 };
+var REGION_COLORS = {
+  ["sewers" /* SEWERS */]: { color1: 4748860, color2: 5871946 },
+  ["prison" /* PRISON */]: { color1: 6976061, color2: 8950348 },
+  ["caves" /* CAVES */]: { color1: 5459774, color2: 12179041 },
+  ["city" /* CITY */]: { color1: 4941366, color2: 15921906 },
+  ["halls" /* HALLS */]: { color1: 8393984, color2: 10913057 }
+};
 var DIRS4 = [
   { x: 1, y: 0 },
   { x: -1, y: 0 },
@@ -233,7 +240,9 @@ function newRunState() {
     dewVialNeeded: true,
     scrollsOfUpgrade: 0,
     wandmakerSpawned: false,
-    blacksmithSpawned: false
+    blacksmithSpawned: false,
+    impSpawned: false,
+    impAlternative: false
   };
 }
 
@@ -243,6 +252,8 @@ class Level extends Grid {
   visible;
   depth = 1;
   region = "sewers" /* SEWERS */;
+  color1 = 17408;
+  color2 = 8965188;
   get width() {
     return this.w;
   }
@@ -1692,14 +1703,6 @@ function paintTrapsRoom(ctx, room) {
   ctx.fillRoom(room, 0 /* WALL */);
   const trapTile = ctx.rng.pick(traps);
   ctx.fillRoomMargin(room, 1, trapTile);
-  if (trapTile !== 8 /* CHASM */) {
-    const trapIndex = TRAP_ORDER.indexOf(trapTile === 20 /* TRAP_TOXIC */ ? "toxic" : trapTile === 24 /* TRAP_PARALYTIC */ ? "paralytic" : "summoning");
-    for (let j = room.t + 1;j < room.b; j++) {
-      for (let i = room.l + 1;i < room.r; i++) {
-        ctx.out.traps.push({ x: i, y: j, trap: trapIndex, hidden: false });
-      }
-    }
-  }
   const door = entranceDoor(room);
   if (door)
     upgradeDoor(door, 2 /* REGULAR */);
@@ -1737,6 +1740,16 @@ function paintTrapsRoom(ctx, room) {
     } else {
       ctx.set(x, y, 14 /* PEDESTAL */);
       ctx.drop(pos, kind);
+    }
+  }
+  if (trapTile !== 8 /* CHASM */) {
+    const trapIndex = TRAP_ORDER.indexOf(trapTile === 20 /* TRAP_TOXIC */ ? "toxic" : trapTile === 24 /* TRAP_PARALYTIC */ ? "paralytic" : "summoning");
+    for (let j = room.t + 1;j < room.b; j++) {
+      for (let i = room.l + 1;i < room.r; i++) {
+        if (ctx.tiles[ctx.idx(i, j)] === trapTile) {
+          ctx.out.traps.push({ x: i, y: j, trap: trapIndex, hidden: false });
+        }
+      }
     }
   }
   ctx.out.spawnQueue.push(prize("levitation"));
@@ -2375,6 +2388,11 @@ function decorateCaves(ctx, rooms, entranceRoom, entranceCell) {
         }
       }
     }
+    const wallDeco = ctx.out.markers.wallDeco;
+    for (let k = wallDeco.length - 1;k >= 0; k--) {
+      if (ctx.tiles[wallDeco[k]] !== 0 /* WALL */)
+        wallDeco.splice(k, 1);
+    }
   }
 }
 function paintCavesBoss(ctx) {
@@ -2484,6 +2502,91 @@ function decorateCavesBoss(ctx, entrance) {
   ctx.out.markers.signs.push(sign);
 }
 
+// src/dungeon/cityLevel.ts
+function isCityDepth(depth) {
+  return depth >= 16 && depth <= 19;
+}
+var BOSS_W = 32;
+var CITY_BOSS_GEOMETRY = {
+  TOP: 2,
+  HALL_WIDTH: 7,
+  HALL_HEIGHT: 15,
+  CHAMBER_HEIGHT: 3,
+  get LEFT() {
+    return Math.floor((BOSS_W - 7) / 2);
+  },
+  get CENTER() {
+    return Math.floor((BOSS_W - 7) / 2) + Math.floor(7 / 2);
+  }
+};
+function pedestalCell(left) {
+  const g = CITY_BOSS_GEOMETRY;
+  const row = g.TOP + Math.floor(g.HALL_HEIGHT / 2);
+  return row * BOSS_W + g.CENTER + (left ? -2 : 2);
+}
+function arenaDoorCell() {
+  const g = CITY_BOSS_GEOMETRY;
+  return (g.TOP + g.HALL_HEIGHT) * BOSS_W + g.CENTER;
+}
+function bossExitCell() {
+  const g = CITY_BOSS_GEOMETRY;
+  return (g.TOP - 1) * BOSS_W + g.CENTER;
+}
+function paintCityBoss(ctx) {
+  const g = CITY_BOSS_GEOMETRY;
+  const W = ctx.width;
+  const rng = ctx.rng;
+  ctx.fillRect(g.LEFT, g.TOP, g.HALL_WIDTH, g.HALL_HEIGHT, 1 /* FLOOR */);
+  ctx.fillRect(g.CENTER, g.TOP, 1, g.HALL_HEIGHT, 11 /* WALKWAY */);
+  let y = g.TOP + 1;
+  while (y < g.TOP + g.HALL_HEIGHT) {
+    ctx.set(g.CENTER - 2, y, 15 /* STATUE */);
+    ctx.set(g.CENTER + 2, y, 15 /* STATUE */);
+    y += 2;
+  }
+  const left = pedestalCell(true);
+  const right = pedestalCell(false);
+  ctx.tiles[left] = 14 /* PEDESTAL */;
+  ctx.tiles[right] = 14 /* PEDESTAL */;
+  for (let i = left + 1;i < right; i++) {
+    ctx.tiles[i] = 11 /* WALKWAY */;
+  }
+  const exit = bossExitCell();
+  ctx.tiles[exit] = 5 /* EXIT_LOCKED */;
+  const door = arenaDoorCell();
+  ctx.tiles[door] = 2 /* DOOR */;
+  const chamberTop = g.TOP + g.HALL_HEIGHT + 1;
+  ctx.fillRect(g.LEFT, chamberTop, g.HALL_WIDTH, g.CHAMBER_HEIGHT, 1 /* FLOOR */);
+  ctx.fillRect(g.LEFT, chamberTop, 1, g.CHAMBER_HEIGHT, 17 /* BOOKSHELF */);
+  ctx.fillRect(g.LEFT + g.HALL_WIDTH - 1, chamberTop, 1, g.CHAMBER_HEIGHT, 17 /* BOOKSHELF */);
+  const entrance = (g.TOP + g.HALL_HEIGHT + 2 + rng.int(0, g.CHAMBER_HEIGHT - 1)) * W + g.LEFT + rng.int(0, g.HALL_WIDTH - 2);
+  ctx.tiles[entrance] = 6 /* ENTRANCE */;
+  decorateScatter(ctx);
+  ctx.out.markers.signs.push(door + W + 1);
+  return { entrance, exit, arenaDoor: door };
+}
+function decorateScatter(ctx) {
+  const rng = ctx.rng;
+  const n = ctx.tiles.length;
+  for (let i = 0;i < n; i++) {
+    if (ctx.tiles[i] === 1 /* FLOOR */ && rng.int(0, 10) === 0) {
+      ctx.out.markers.emptyDeco.push(i);
+    } else if (ctx.tiles[i] === 0 /* WALL */ && rng.int(0, 8) === 0) {
+      ctx.out.markers.wallDeco.push(i);
+    }
+  }
+}
+function decorateCity(ctx, entranceRoom, entranceCell) {
+  decorateScatter(ctx);
+  for (;; ) {
+    const pos = randomCell(ctx, entranceRoom);
+    if (pos !== entranceCell) {
+      ctx.out.markers.signs.push(pos);
+      break;
+    }
+  }
+}
+
 // src/dungeon/generator.ts
 function isBossDepth(depth) {
   return depth % 5 === 0;
@@ -2552,6 +2655,7 @@ function generateLevel(rng, depth, run) {
   const boss = isBossDepth(depth);
   const tengu = depth === 10;
   const dm300 = depth === 15;
+  const king = depth === 20;
   const queue = [];
   if (!boss) {
     queue.push(questItem("food"));
@@ -2585,6 +2689,7 @@ function generateLevel(rng, depth, run) {
   let exitCell = -1;
   let cavesArenaDoor = -1;
   let cavesArena = null;
+  let cityArenaDoor = -1;
   let secretDoors = 0;
   let trapAttempts = 0;
   let trapsPlaced = 0;
@@ -2596,6 +2701,14 @@ function generateLevel(rng, depth, run) {
     exitCell = built.exit;
     cavesArenaDoor = built.arenaDoor;
     cavesArena = built.arena;
+    rooms = [];
+    ctx = c;
+  } else if (king) {
+    const c = new PainterCtx(rng, W, H, depth, "none", true, false);
+    const built = paintCityBoss(c);
+    entranceCell = built.entrance;
+    exitCell = built.exit;
+    cityArenaDoor = built.arenaDoor;
     rooms = [];
     ctx = c;
   } else
@@ -2664,7 +2777,7 @@ function generateLevel(rng, depth, run) {
         const assign = assignRoomTypes(rng, built, depth, {
           prevWeakFloor: pitNeeded,
           nextIsBoss: isBossDepth(depth + 1),
-          tunnelsToPassages: isPrisonDepth(depth)
+          tunnelsToPassages: isPrisonDepth(depth) || isCityDepth(depth)
         });
         run.weakFloor = assign.weakFloor;
         if (isCavesDepth(depth) && depth > 11 && !run.blacksmithSpawned && rng.int(0, 15 - depth) === 0) {
@@ -2695,6 +2808,9 @@ function generateLevel(rng, depth, run) {
         } else if (isCavesDepth(depth)) {
           paintWaterGrass(c, built, feeling === "water" /* WATER */ ? 0.6 : 0.45, feeling === "grass" /* GRASS */ ? 0.55 : 0.35, 6, 3);
           decorateCaves(c, built, entranceRoom, entranceCell);
+        } else if (isCityDepth(depth)) {
+          paintWaterGrass(c, built, feeling === "water" /* WATER */ ? 0.65 : 0.45, feeling === "grass" /* GRASS */ ? 0.6 : 0.4, 4, 3);
+          decorateCity(c, entranceRoom, entranceCell);
         } else {
           paintWaterGrass(c, built);
           decorateSewers(c, entranceRoom, entranceCell);
@@ -2707,7 +2823,7 @@ function generateLevel(rng, depth, run) {
   if (!ctx || entranceCell < 0 || exitCell < 0) {
     throw new Error(`dungeon generation failed for depth ${depth}`);
   }
-  if (!dm300 && (!entranceRoom || !exitRoom)) {
+  if (!dm300 && !king && (!entranceRoom || !exitRoom)) {
     throw new Error(`dungeon generation failed for depth ${depth}`);
   }
   const tiles = ctx.tiles;
@@ -2739,7 +2855,7 @@ function generateLevel(rng, depth, run) {
     return -1;
   };
   if (boss) {
-    if (!tengu && !dm300 && exitRoom)
+    if (!tengu && !dm300 && !king && exitRoom)
       mobs.push({ pos: randomCell(ctx, exitRoom), kind: "boss" });
   } else {
     const nMobs = 2 + depth % 5 + rng.int(0, 3);
@@ -2799,20 +2915,23 @@ function generateLevel(rng, depth, run) {
         items.push({ pos: keyPos, heap: "CHEST", tag: "iron-key" });
     }
   } else {
-    const randomDropCell = (unlockedOnly = false, walkableOnly = false) => {
-      for (let guard = 0;guard < 1000; guard++) {
-        const room = randomStandardRoom();
-        if (!room)
-          continue;
-        if (unlockedOnly && room.doors.some((d) => d.type === 6 /* LOCKED */))
-          continue;
-        const pos = randomCell(ctx, room);
-        const t = tiles[pos];
-        if (!PASSABLE_SPAWN.has(t))
-          continue;
-        if (walkableOnly && t === 9 /* WATER */)
-          continue;
-        return pos;
+    const randomDropCell = (unlockedOnly = false) => {
+      for (let pass = 0;pass < 2; pass++) {
+        const allowWater = pass === 1;
+        for (let guard = 0;guard < 1000; guard++) {
+          const room = randomStandardRoom();
+          if (!room)
+            continue;
+          if (unlockedOnly && room.doors.some((d) => d.type === 6 /* LOCKED */))
+            continue;
+          const pos = randomCell(ctx, room);
+          const t = tiles[pos];
+          if (!PASSABLE_SPAWN.has(t))
+            continue;
+          if (!allowWater && t === 9 /* WATER */)
+            continue;
+          return pos;
+        }
       }
       throw new Error("randomDropCell failed: no standard room");
     };
@@ -2838,26 +2957,40 @@ function generateLevel(rng, depth, run) {
           heap = "HEAP";
           break;
       }
-      items.push({ pos: randomDropCell(false, true), heap, tag: "random" });
+      items.push({ pos: randomDropCell(false), heap, tag: "random" });
     }
     if (run.dewVialNeeded && depth < 5 && rng.int(0, 4 - depth) === 0) {
       ctx.out.spawnQueue.push(questItem("dew-vial"));
       run.dewVialNeeded = false;
     }
     for (const queued of ctx.out.spawnQueue) {
-      let cell = randomDropCell(true, true);
+      let cell = randomDropCell(true);
       if (queued.tag === "scroll-of-upgrade") {
         let guard = 1000;
         while ((tiles[cell] === 22 /* TRAP_FIRE */ || tiles[cell] === 23 /* TRAP_FIRE_HIDDEN */) && guard-- > 0) {
-          cell = randomDropCell(true, true);
+          cell = randomDropCell(true);
         }
       }
       items.push({ pos: cell, heap: queued.heap, tag: queued.tag });
     }
   }
+  if (!run.impSpawned && depth > 16 && depth < 20 && rng.int(0, 20 - depth) === 0) {
+    let pos = -1;
+    for (let t = 0;t < 50 && pos === -1; t++)
+      pos = randomRespawnCell();
+    if (pos !== -1) {
+      occupied.add(pos);
+      mobs.push({ pos, kind: "imp" });
+      run.impSpawned = true;
+    }
+    run.impAlternative = rng.int(0, 2) === 0;
+  }
   const level = new Level(W, H);
   level.depth = depth;
   level.region = regionForDepth(depth);
+  const regionColors = REGION_COLORS[level.region];
+  level.color1 = regionColors.color1;
+  level.color2 = regionColors.color2;
   level.tiles = tiles;
   level.feeling = feeling;
   level.bossLevel = boss;
@@ -2875,6 +3008,9 @@ function generateLevel(rng, depth, run) {
   if (dm300 && cavesArena) {
     level.bossArena = { ...cavesArena };
     level.arenaDoorCell = cavesArenaDoor;
+  }
+  if (king) {
+    level.arenaDoorCell = cityArenaDoor;
   }
   return { level, rooms, markers: ctx.out.markers, items, mobs, trapAttempts, trapsPlaced };
 }
@@ -3823,11 +3959,110 @@ var ORIGINAL_SPRITES = {
   bufficon_sacrifice: { w: 7, h: 7, rgba: "IkRm/yJEZv8iRGb/RIju/yJEZv8iRGb/IkRm/yJEZv8iRGb/u8z//yJEZv8iRGb/IkRm/yJEZv8iRGb/IkRm/yJEZv+7zP//RIju/yJEZv8iRGb/IkRm/0SI7v+7zP//u8z//7vM//9EiO7/IkRm/yJEZv9EiO7/u8z//7vM//+7zP//u8z//yJEZv8iRGb/RIju/7vM//+7zP//u8z//0SI7v8iRGb/IkRm/yJEZv9EiO7/RIju/0SI7v8iRGb/IkRm/w==" }
 };
 
+// src/assets/stage3_king_sprites.ts
+var STAGE3_KING_SPRITES = {
+  mob_king: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD/6UD/AAAAAP/pQP8AAAAAo18P/wAAAAD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A/+lA//+aA///mgP//5oD/6NfD/8AAAAA////AP///wD///8A////AP///wD///8A////AP///wD///8A//vm/+Xk2v/MnoX/zJ6F/8yehf+jYkX/AAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AM7Muv+zhGv/s4Rr/wAAAP+zhGv/AAAA/wAAAAD///8A////AP///wD///8A////AP///wD///8A////AKNiRf/OzLr/5eTa/7OEa/+zhGv/s4Rr/35ELf8AAAAA////AP///wD///8A////AP///wD///8A////AKNiRf+zhGv/zsy6///98v///fL///3y///98v/OzLr/AAAAAFwyIf9cMiH/XDIh/wAAAAD///8A////AI9WPP+zhGv/s4Rr/6Z7Y//OzLr///3y///98v///fL/zsy6/1wyIf+ZcVz/mXFc/1wyIf8AAAAA////AP///wB+RC3/s4Rr/2w7Jv+zhGv//+lA/87Muv///fL///3y/87Muv+ZcVz/mXFc/1wyIf9cMiH/AAAAAP///wD///8AbDsm/7OEa/+zhGv/bDsm//+aA/////////////////////////////////////////////////////8A////AKNfD/9sOyb/s4Rr/2w7Jv//mgP/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/+zs7P/s7Oz/35+fv8AAAAA////AP///wAAAAAAXDIh/1wyIf9cMiH/o18P/1xcXP9cXFz/XFxc/1xcXP9cXFz/XFxc/1xcXP8AAAAAAAAAAP///wD///8AAAAAAAAAAACjBAX/swkP/6NfD/+zCQ//swkP/7MJD/+jBAX/AAAAAAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wCjBAX/swkP/7MJD/+zCQ//YgAB/54LD/+zCQ//swkP/6MEBf8AAAAAAAAAAAAAAAD///8A////AP///wD///8AowQF/7MJD/+zCQ//YgAB/wAAAABiAAH/ngsP/7MJD/9+AAH/AAAAAP///wD///8A////AP///wD///8A////AKMEBf+zCQ//YgAB/wAAAAAAAAAAAAAAAJ4LD/+eCw//fgAB/wAAAAD///8A////AP///wD///8A////AP///wBsOyb/XDIh/1wyIf8AAAAAAAAAAAAAAABcMiH/XDIh/1wyIf9sOyb/AAAAAP///wD///8A////AA==" },
+  mob_undead: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAAAAAAAAAAAAAAAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wD///8Azs7O/87Ozv/Ozs7/zs7O/87Ozv/Ozs7/AAAAAP///wAAAAAAAAAAAAAAAAAAAAAA////AP///wD///8Azs7O/+Xl5f/l5eX/5eXl/+Xl5f/l5eX/5eXl/87Ozv////8AAAAAAAAAAAAAAAAAAAAAAP///wD///8A////AKOjo//l5eX/s7Oz/7Ozs/+zs7P/s7Oz/7Ozs/9+fn7/////AAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wCjo6P/5eXl/+Xl5f8AAAD/5eXl/+Xl5f8AAAD/zs7O/////wAAAAAAAAAAAAAAAAAAAAAA////AP///wCAgIAAAAAAAE0wHP+mfFL/5eXl/+Xl5f+zs7P/5eXl/2w8Gv////8AAAAAAAAAAAAAAAAAAAAAAP///wD///8AgICAAAAAAABNMBz/pnxS/6Z8Uv+mfFL/pnxS/6Z8Uv9NMBz/AAAAAAAAAAAAAAAAAAAAAAAAAAD///8A////AICAgAD///8AAAAAAE0wHP+Mb1T/jG9U/4xvVP+Mb1T/TTAc/wAAAAAAAAAAAAAAAAAAAAAAAAAA////AP///wCAgIAAzs7O/87Ozv/l5eX/TTAc/00wHP9NMBz/TTAc/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///8Azs7O/////wD///8As7Oz/8zMzP/MzMz/zMzM/wAAAAB+fn7/AAAAAAAAAAAAAAAAAAAAAAAAAAD///8A////AKOjo//Ozs7/////AP///wAAAAAAfn5+/wAAAAB+fn7/fn5+/////wAAAAAAAAAAAAAAAAAAAAAA////AP///wB+fn7/o6Oj/87Ozv/Ozs7/zs7O/87Ozv/Ozs7/zs7O/35+fv////8AAAAAAAAAAAAAAAAAAAAAAP///wD///8AAAAAAP///wCjo6P/////AP///wD///8Azs7O/////wD///8A////AAAAAAAAAAAAAAAAAAAAAAD///8A////AAAAAADOzs7/////AP///wD///8A////AM7Ozv////8A////AP///wAAAAAAAAAAAAAAAAAAAAAA////AP///wCjo6P/o6Oj/////wD///8A////AP///wCjo6P/o6Oj/////wD///8AAAAAAAAAAAAAAAAAAAAAAA==" }
+};
+
+// src/assets/stage3_city_sprites.ts
+var STAGE3_CITY_SPRITES = {
+  tile_city_chasm: { w: 16, h: 16, rgba: "AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAA/w==" },
+  tile_city_floor: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_grass: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/eJJM/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/1ZyPf8xNED/OT5N/zE0QP9LZjb/OkFR/z1EVP9okkz/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP8xNkP/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/1ZyPf94kkz/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/y40Qf9Wcj3/LjRB/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP9okkz/OkFR/z1EVP89RFT/OkFR/zE0QP8nKjP/LDA8/ycqM/85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/3iSTP89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/y4yPv9Wcj3/PURU/z1EVP89RFT/PURU/0tmNv8xNED/OT5N/zE0QP9Wcj3/OT5N/zpBUf86QVH/OT5N/zE0QP8xNkP/LjRB/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/S2Y2/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/aJJM/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP94kkz/MTRA/zE0QP86QVH/eJJM/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP9Wcj3/LjRB/zpBUf86QVH/MTRA/1ZyPf8nKjP/NzxL/z1EVP9okkz/OkFR/2iSTP86QVH/OT5N/zk+Tf86QVH/MTZD/zE2Q/89RFT/OkFR/zc8S/8nKjP/Jyoz/zE0QP86QVH/OkFR/3iSTP89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/VnI9/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/ycqM/9Wcj3/LjRB/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP8uMj7/Jyoz/ycqM/8xNED/OT5N/w==" },
+  tile_city_empty_sp: { w: 16, h: 16, rgba: "XwsY/1oHE/9aBxP/XwsY/18LGP9jDhz/WgcT/1oHE/9jDhz/XwsY/1oHE/9aBxP/WgcT/1oHE/9fCxj/XwsY/1oHE/+khgD/Yw4c/6SGAP9jDhz/h08A/1oHE/+khgD/WgcT/6SGAP9aBxP/pIYA/18LGP+HTwD/Yw4c/1oHE/9fCxj/Yw4c/6SGAP9jDhz/h08A/2MOHP+khgD/XwsY/4dPAP9aBxP/pIYA/1oHE/+HTwD/XwsY/4dPAP9fCxj/XwsY/4dPAP9aBxP/WgcT/2MOHP9aBxP/Yw4c/18LGP9aBxP/WgcT/2MOHP9aBxP/Yw4c/6SGAP9fCxj/XwsY/1oHE/9fCxj/h08A/18LGP9aBxP/XwsY/1oHE/9fCxj/Yw4c/1oHE/9jDhz/WgcT/2MOHP9fCxj/pIYA/18LGP9jDhz/h08A/18LGP9aBxP/WgcT/1oHE/9fCxj/WgcT/18LGP9fCxj/WgcT/1oHE/9fCxj/pIYA/18LGP9aBxP/XwsY/2MOHP+HTwD/Yw4c/2MOHP9aBxP/XwsY/18LGP9aBxP/Yw4c/1oHE/9aBxP/XwsY/1oHE/+khgD/WgcT/2MOHP+HTwD/WgcT/1oHE/9jDhz/XwsY/1oHE/9aBxP/Yw4c/1oHE/9jDhz/WgcT/18LGP+khgD/Yw4c/18LGP9aBxP/XwsY/6SGAP9aBxP/WgcT/18LGP9jDhz/WgcT/1oHE/9aBxP/WgcT/1oHE/9fCxj/XwsY/6SGAP9aBxP/XwsY/6SGAP9fCxj/XwsY/1oHE/9fCxj/Yw4c/2MOHP9fCxj/XwsY/1oHE/9fCxj/WgcT/4dPAP9aBxP/XwsY/2MOHP9fCxj/pIYA/18LGP9aBxP/WgcT/1oHE/9fCxj/WgcT/18LGP9fCxj/XwsY/2MOHP9jDhz/pIYA/1oHE/9fCxj/h08A/2MOHP9aBxP/XwsY/2MOHP9aBxP/Yw4c/18LGP9aBxP/WgcT/18LGP9jDhz/h08A/1oHE/9aBxP/XwsY/18LGP+HTwD/XwsY/1oHE/9aBxP/XwsY/1oHE/9jDhz/WgcT/18LGP9aBxP/WgcT/2MOHP+khgD/XwsY/2MOHP+HTwD/XwsY/6SGAP9aBxP/h08A/1oHE/+khgD/Yw4c/4dPAP9aBxP/pIYA/18LGP+khgD/XwsY/18LGP9fCxj/XwsY/4dPAP9fCxj/h08A/18LGP+HTwD/WgcT/6SGAP9aBxP/h08A/18LGP+HTwD/WgcT/6SGAP9aBxP/WgcT/1oHE/9fCxj/WgcT/2MOHP9fCxj/WgcT/1oHE/9aBxP/WgcT/2MOHP9aBxP/WgcT/1oHE/9fCxj/Yw4c/w==" },
+  tile_city_wall: { w: 16, h: 16, rgba: "spiK/9C8o//QvKP/yLKc/7KYiv/Ispz/yLKc/8iynP+7oZL/0Lyj/9C8o//QvKP/u6GS/9C8o//QvKP/0Lyj/5uDef/QvKP/u6GS/7uhkv+ymIr/yLKc/7KYiv+ymIr/o42B/9C8o/+7oZL/u6GS/5uDef/QvKP/spiK/7KYiv+bg3n/yLKc/7KYiv+7oZL/m4N5/8iynP+7oZL/u6GS/5uDef/Ispz/u6GS/7KYiv+bg3n/u6GS/7uhkv+7oZL/o42B/7uhkv+bg3n/m4N5/5uDef+7oZL/m4N5/6ONgf+bg3n/spiK/6ONgf+bg3n/m4N5/7KYiv+jjYH/m4N5/8iynP+7oZL/yLKc/9C8o//Ispz/u6GS/8iynP/Ispz/0Lyj/7KYiv/QvKP/0Lyj/9C8o/+7oZL/0Lyj/9C8o/+7oZL/spiK/8iynP+7oZL/spiK/7KYiv/Ispz/yLKc/7uhkv+jjYH/0Lyj/7KYiv+7oZL/spiK/9C8o/+7oZL/u6GS/6ONgf/Ispz/spiK/7uhkv+jjYH/yLKc/7KYiv+ymIr/o42B/8iynP+7oZL/spiK/6ONgf/QvKP/spiK/5uDef+bg3n/u6GS/6ONgf+jjYH/o42B/7uhkv+jjYH/m4N5/6ONgf+ymIr/o42B/5uDef+bg3n/u6GS/5uDef/QvKP/yLKc/7KYiv/QvKP/yLKc/9C8o/+7oZL/0Lyj/8iynP/Ispz/u6GS/9C8o//Ispz/0Lyj/7uhkv/QvKP/spiK/7uhkv+bg3n/yLKc/7KYiv+7oZL/spiK/9C8o/+7oZL/spiK/6ONgf/Ispz/u6GS/7KYiv+ymIr/yLKc/7uhkv+ymIr/m4N5/8iynP+ymIr/spiK/5uDef/Ispz/spiK/7KYiv+bg3n/yLKc/7uhkv+ymIr/m4N5/8iynP+bg3n/m4N5/5uDef/Ispz/o42B/6ONgf+bg3n/u6GS/6ONgf+bg3n/o42B/7uhkv+jjYH/m4N5/5uDef+ymIr/0Lyj/9C8o//QvKP/u6GS/8iynP/Ispz/yLKc/7KYiv/QvKP/0Lyj/8iynP+ymIr/0Lyj/8iynP/Ispz/spiK/9C8o/+ymIr/spiK/6ONgf/Ispz/u6GS/7uhkv+7oZL/0Lyj/7uhkv+ymIr/o42B/9C8o/+7oZL/u6GS/6ONgf/Ispz/spiK/7uhkv+bg3n/yLKc/7KYiv+ymIr/o42B/8iynP+ymIr/spiK/5uDef+7oZL/u6GS/7KYiv+jjYH/u6GS/5uDef+bg3n/m4N5/7uhkv+jjYH/m4N5/5uDef+7oZL/o42B/5uDef+jjYH/spiK/6ONgf+bg3n/m4N5/w==" },
+  tile_city_door: { w: 16, h: 16, rgba: "l4F1/7Ggi/+xoIv/qpeF/5eBdf+ql4X/qpeF/6qXhf+fiXz/saCL/7Ggi/+xoIv/n4l8/7Ggi/+xoIv/0Lyj/4RvZ/80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/72nm/+Eb2f/NC4s/1BHRP8/NzX/SkE+/z83Nf9QR0T/NC4s/zQuLP9QR0T/Pzc1/1BHRP8/NzX/UEdE/zQuLP/Fr6L/i3hu/zQuLP8/NzX/xaMB/z83Nf/FowH/UEdE/zQuLP80Liz/UEdE/8WjAf9KQT7/pWYH/1BHRP80Liz/qpWN/6qXhf80Liz/Pzc1/8WjAf9QR0T/xaMB/0pBPv80Liz/NC4s/0pBPv8/NzX/SkE+/z83Nf9KQT7/NC4s/9fGsf+fiXz/NC4s/1BHRP+lZgf/SkE+/z83Nf9QR0T/NC4s/zQuLP8/NzX/xaMB/z83Nf/FowH/SkE+/zQuLP/Fr6L/n4l8/zQuLP9KQT7/Pzc1/0pBPv/FowH/SkE+/zQuLP80Liz/Pzc1/6VmB/9QR0T/pWYH/0pBPv80Liz/vaeb/4RvZ/80Liz/Pzc1/6VmB/9QR0T/Pzc1/0pBPv8iHhz/Ih4c/0pBPv/FowH/UEdE/z83Nf9KQT7/NC4s/6qVjf+xoIv/NC4s/1BHRP/FowH/Pzc1/8WjAf9KQT7/Ih4c/yIeHP9KQT7/Pzc1/z83Nf/FowH/SkE+/zQuLP/XxrH/l4F1/zQuLP9QR0T/Pzc1/0pBPv+lZgf/SkE+/zQuLP80Liz/SkE+/8WjAf8/NzX/xaMB/1BHRP80Liz/0L2r/5+JfP80Liz/SkE+/6VmB/9KQT7/UEdE/0pBPv80Liz/NC4s/1BHRP8/NzX/SkE+/6VmB/9KQT7/NC4s/9C9q/+Eb2f/NC4s/0pBPv8/NzX/SkE+/0pBPv9KQT7/NC4s/zQuLP9QR0T/pWYH/0pBPv9KQT7/UEdE/zQuLP+9p5v/saCL/zQuLP9QR0T/xaMB/1BHRP9QR0T/SkE+/zQuLP80Liz/SkE+/1BHRP9KQT7/SkE+/0pBPv80Liz/vaeb/7Ggi/80Liz/UEdE/0pBPv9QR0T/UEdE/1BHRP80Liz/NC4s/1BHRP9QR0T/UEdE/0pBPv9QR0T/NC4s/7GelP+ql4X/NC4s/1BHRP9KQT7/SkE+/1BHRP9QR0T/NC4s/zQuLP9KQT7/SkE+/1BHRP9QR0T/UEdE/zQuLP+xnpT/n4l8/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/qpWN/w==" },
+  tile_city_entrance: { w: 16, h: 16, rgba: "o42B/6ONgf89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/6ONgf+ymIr/o42B/6ONgf89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf+jjYH/spiK/7KYiv+ymIr/o42B/6ONgf89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/o42B/7KYiv+ymIr/spiK/7KYiv+ymIr/o42B/6ONgf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/6ONgf+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/o42B/6ONgf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf+jjYH/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/o42B/6ONgf85Pk3/PURU/z1EVP86QVH/o42B/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/o42B/6ONgf89RFT/OkFR/6ONgf+jjYH/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/o42B/6ONgf9qW1j/YVRR/6ONgf+jjYH/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+jjYH/altY/2pbWP9qW1j/YVRR/6ONgf+jjYH/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/o42B/2pbWP9hVFH/YVRR/2FUUf9qW1j/altY/6ONgf+jjYH/spiK/7KYiv+ymIr/spiK/7KYiv+ymIr/spiK/6ONgf9hVFH/YVRR/2pbWP9hVFH/YVRR/2pbWP9hVFH/YVRR/6ONgf+jjYH/spiK/7KYiv+ymIr/spiK/7KYiv+jjYH/altY/2pbWP9hVFH/altY/2pbWP9hVFH/altY/2FUUf9hVFH/altY/6ONgf+jjYH/spiK/7KYiv+ymIr/o42B/2pbWP9qW1j/altY/2FUUf9hVFH/altY/2pbWP9qW1j/YVRR/2pbWP9qW1j/YVRR/6ONgf+jjYH/spiK/6ONgf9qW1j/YVRR/2pbWP9hVFH/altY/2FUUf9qW1j/YVRR/2FUUf9qW1j/YVRR/2pbWP9qW1j/YVRR/6ONgf+jjYH/YVRR/2FUUf9hVFH/YVRR/2FUUf9hVFH/YVRR/2FUUf9hVFH/YVRR/2FUUf9hVFH/YVRR/2FUUf9hVFH/YVRR/w==" },
+  tile_city_exit: { w: 16, h: 16, rgba: "inhy/4VybP+Bb2j/fGpk/3NjXv98amT/gW9o/4FvaP+Bb2j/hXJs/4VybP+Fcmz/hXJs/4FvaP+Bb2j/fGpk/4VybP+lkYf/pZGH/6mViv+ijoX/nYqA/52KgP+ijoX/pZGH/6mViv+lkYf/oo6F/66Zjv+dioD/pZGH/3NjXv+Fcmz/gW9o/3xqZP+Bb2j/inhy/4FvaP+Fcmz/fGpk/3xqZP+Bb2j/fGpk/4FvaP98amT/hXJs/6WRh/9zY17/pZGH/6KOhf9kVlb/ZFZW/2RWVv9VSkn/VUpJ/2RWVv9kVlb/VUpJ/1VKSf9VSkn/ZFZW/4VybP+ijoX/gW9o/6WRh/+umY7/nYqA/5OAef9kVlb/VUpJ/2RWVv9VSkn/ZFZW/1VKSf9kVlb/VUpJ/2RWVv+Fcmz/pZGH/4VybP+lkYf/rpmO/6mViv+plYr/inhy/4p4cv9VSkn/VUpJ/1VKSf9VSkn/VUpJ/1VKSf9VSkn/hXJs/6mViv+Bb2j/pZGH/66Zjv+plYr/qZWK/52KgP+dioD/fm5q/3xqZP9FOz3/RTs9/0U7Pf9FOz3/RTs9/4VybP+umY7/fGpk/6WRh/+umY7/qZWK/6mViv+dioD/nYqA/4p4cv+KeHL/c2Ne/3NjXv9FOz3/RTs9/0U7Pf98amT/qZWK/4FvaP+lkYf/rpmO/6mViv+plYr/nYqA/52KgP+KeHL/inhy/3xqZP98amT/VUpJ/1VKSf9FOz3/inhy/52KgP98amT/pZGH/66Zjv+plYr/qZWK/52KgP+dioD/inhy/4p4cv98amT/fGpk/2RWVv9kVlb/RTs9/3xqZP+lkYf/c2Ne/6WRh/+umY7/qZWK/6mViv+dioD/nYqA/4p4cv+KeHL/fGpk/3xqZP9kVlb/ZFZW/2RWVv98amT/nYqA/3xqZP+lkYf/rpmO/6mViv+plYr/nYqA/52KgP+KeHL/inhy/3xqZP98amT/ZFZW/2RWVv9kVlb/fGpk/52KgP98amT/pZGH/66Zjv+plYr/qZWK/52KgP+dioD/inhy/4p4cv98amT/fGpk/2RWVv9kVlb/ZFZW/3xqZP+lkYf/gW9o/3xqZP98amT/fGpk/4VybP+Fcmz/inhy/4VybP+Fcmz/c2Ne/3xqZP+Bb2j/gW9o/3xqZP98amT/rpmO/3xqZP+Fcmz/nYqA/6mViv+dioD/nYqA/6WRh/+plYr/oo6F/52KgP+lkYf/nYqA/6mViv+ijoX/qZWK/66Zjv+Bb2j/gW9o/3xqZP+Bb2j/hXJs/3xqZP9zY17/fGpk/3xqZP98amT/fGpk/4FvaP+Fcmz/fGpk/4FvaP+Fcmz/gW9o/w==" },
+  tile_city_embers: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/ycqM/8xNED/OT5N/z1EVP8AAAD/AAAA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP9NBQj/ngsP/wAAAP89RFT/OkFR/z1EVP86QVH/MTZD/wAAAP86QVH/MTRA/zpBUf89RFT/OkFR/zE2Q/8AAAD/AAAA/wAAAP8nKjP/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/y40Qf8XGiD/PURU/wAAAP8AAAD/AAAA/wAAAP8UFRr/NzxL/zE0QP8xNED/AAAA/wAAAP89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/AAAA/wAAAP8AAAD/OkFR/z1EVP89RFT/LjRB/54LD/9NBQj/NzxL/zE0QP85Pk3/GBsi/z1EVP86QVH/PURU/z1EVP8uMj7/Jyoz/zpBUf8AAAD/AAAA/wAAAP8AAAD/AAAA/zE0QP8xNED/Fxkf/wAAAP8AAAD/OkFR/zE2Q/89RFT/MTRA/zk+Tf86QVH/PURU/zE2Q/8AAAD/MTZD/z1EVP8xNED/OT5N/zE0QP8AAAD/AAAA/y40Qf86QVH/OT5N/zE0QP89RFT/OkFR/zE2Q/89RFT/PURU/zpBUf8AAAD/FBUa/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/TQUI/24ICv8xNkP/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/54LD/8AAAD/PURU/z1EVP86QVH/OT5N/zE0QP8AAAD/PURU/z1EVP89RFT/PURU/zpBUf8AAAD/Fhge/z1EVP86QVH/FBUa/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP8AAAD/LjRB/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8UFRr/AAAA/zE0QP8AAAD/AAAA/wAAAP89RFT/PURU/zE0QP89RFT/PURU/z1EVP8YGyL/OkFR/z1EVP86QVH/MTRA/wAAAP85Pk3/MTRA/ycqM/8AAAD/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_door_locked: { w: 16, h: 16, rgba: "l4F1/7Ggi/+xoIv/qpeF/5eBdf+ql4X/qpeF/6qXhf+fiXz/saCL/7Ggi/+xoIv/n4l8/7Ggi/+xoIv/0Lyj/4RvZ/80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/72nm/+Eb2f/NC4s/1BHRP8/NzX/SkE+/z83Nf9QR0T/NC4s/zQuLP9QR0T/Pzc1/1BHRP8/NzX/UEdE/zQuLP/Fr6L/i3hu/zQuLP8/NzX/xaMB/z83Nf+KcgH/ODIv/yQgH/8kIB//ODIv/4pyAf9KQT7/pWYH/1BHRP80Liz/qpWN/6qXhf80Liz/Pzc1/8WjAf84Mi//inIB/7qulP+yp43/sKOJ/46Dfv8sJiX/NC0r/z83Nf9KQT7/NC4s/9fGsf+fiXz/NC4s/1BHRP+lZgf/NC0r/7Gkiv+LgHv/YVVf/2daZv+LgHv/i4B7/ywmJf/FowH/SkE+/zQuLP/Fr6L/n4l8/zQuLP9KQT7/LCYl/zQtK/+LgHv/Zllk/yQgH/8kIB//in96/2hcZ/84Mi//c0cF/0pBPv80Liz/vaeb/4RvZ/80Liz/Pzc1/3NHBf+xpov/sqeN/7Knjf+4rZP/q56F/62hiP+yp43/uK2T/ywmJf9KQT7/NC4s/6qVjf+xoIv/NC4s/1BHRP+KcgH/tamP/2xjX/+Og37/j4R//5OGg/+LgHv/cWdj/2teaf+KcgH/SkE+/zQuLP/XxrH/l4F1/zQuLP9QR0T/LCYl/7Cjif+PhH//j4R//wIAAP8CAAD/jYF8/4l+ef9pXWj/inIB/1BHRP80Liz/0L2r/5+JfP80Liz/SkE+/3NHBf+yp43/iX55/5KGgf8DAAD/AgAA/5CFgP+NgXz/Yldh/3NHBf9KQT7/NC4s/9C9q/+Eb2f/NC4s/0pBPv8sJiX/s6iO/2tiXf+NgXz/koaB/4uAe/+PhH//cGdi/2daZv80LSv/UEdE/zQuLP+9p5v/saCL/zQuLP9QR0T/inIB/3BkcP9oXGf/ZFhj/2ZZZP9kWGP/aFxn/1xQWv9oXGf/NC0r/0pBPv80Liz/vaeb/7Ggi/80Liz/UEdE/zQtK/84Mi//ODIv/zgyL/8kIB//JCAf/zgyL/84Mi//ODIv/zQtK/9QR0T/NC4s/7GelP+ql4X/NC4s/1BHRP9KQT7/SkE+/1BHRP9QR0T/NC4s/zQuLP9KQT7/SkE+/1BHRP9QR0T/UEdE/zQuLP+xnpT/n4l8/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/qpWN/w==" },
+  tile_city_pedestal: { w: 16, h: 16, rgba: "Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP9CR1j/SFBi/0VNXv9CR1j/Oz5M/0RJWv9IUGL/SFBi/0hQYv9IUGL/RU1e/0hQYv9IUGL/REla/zs+TP87Pkz/SFBi/0VNXv9IUGL/SFBi/zs+TP9IUGL/RU1e/0hQYv9FTV7/SFBi/0VNXv9IUGL/RU1e/0hQYv87Pkz/Oz5M/0VNXv9IUGL/SFBi/0VNXv87Pkz/REla/0hQYv9IUGL/RU1e/0hQYv9FTV7/RU1e/0hQYv9ESVr/Oz5M/zs+TP9IUGL/RU1e/0hQYv9IUGL/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/SFBi/0VNXv9IUGL/RU1e/zs+TP9FTV7/SFBi/0hQYv9FTV7/Oz5M/0JHWP9IUGL/RU1e/0VNXv87Pkz/Oz5M/0JHWP9IUGL/SFBi/0JHWP87Pkz/RU1e/0hQYv9IUGL/RU1e/zs+TP9IUGL/SFBi/0VNXv9IUGL/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/SFBi/0hQYv9IUGL/SFBi/zs+TP87Pkz/REla/0hQYv9FTV7/RU1e/0hQYv9IUGL/RU1e/0hQYv9ESVr/Oz5M/0hQYv9FTV7/RU1e/0hQYv87Pkz/Oz5M/0hQYv9IUGL/RU1e/0hQYv9FTV7/SFBi/0hQYv9FTV7/SFBi/zs+TP9IUGL/SFBi/0hQYv9IUGL/Oz5M/zs+TP9ESVr/RU1e/0hQYv9FTV7/SFBi/0hQYv9FTV7/SFBi/0RJWv87Pkz/QkdY/0hQYv9IUGL/QkdY/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/Oz5M/zs+TP87Pkz/NC4s/0pBPv9KQT7/SkE+/0pBPv9KQT7/SkE+/0pBPv9KQT7/SkE+/0pBPv9KQT7/SkE+/0pBPv9KQT7/NC4s/zQuLP9QR0T/xaMB/1BHRP+lZgf/UEdE/1BHRP/FowH/pWYH/1BHRP9QR0T/UEdE/6VmB/9QR0T/UEdE/zQuLP80Liz/SkE+/0pBPv9KQT7/SkE+/0pBPv9KQT7/SkE+/0pBPv9KQT7/SkE+/0pBPv9KQT7/SkE+/0pBPv80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/zQuLP80Liz/NC4s/w==" },
+  tile_city_wall_deco: { w: 16, h: 16, rgba: "spiK/9C8o//QvKP/yLKc/7KYiv/Ispz/yLKc/8iynP+7oZL/0Lyj/9C8o//QvKP/u6GS/9C8o//QvKP/0Lyj/5uDef/QvKP/u6GS/7uhkv+ymIr/yLKc/7KYiv+ymIr/o42B/9C8o/+7oZL/u6GS/5uDef/QvKP/spiK/7KYiv+bg3n/yLKc/7KYiv+7oZL/m4N5/8iynP+7oZL/u6GS/5uDef/Ispz/u6GS/7KYiv+bg3n/u6GS/7uhkv+7oZL/o42B/7uhkv+bg3n/m4N5/5uDef+7oZL/m4N5/6ONgf+bg3n/spiK/6ONgf+bg3n/m4N5/7KYiv+jjYH/m4N5/8iynP+7oZL/XE1K/2ZVUv9mVVL/ZlVS/8iynP/Ispz/0Lyj/7KYiv/QvKP/0Lyj/9C8o/+7oZL/0Lyj/9C8o/+7oZL/spiK/2ZVUv9zYFz/c2Bc/3NgXP/Ispz/yLKc/7uhkv+jjYH/0Lyj/7KYiv+7oZL/spiK/9C8o/+7oZL/u6GS/6ONgf9mVVL/gGpm/3NgXP+Aamb/yLKc/7KYiv+ymIr/o42B/8iynP+7oZL/spiK/6ONgf/QvKP/spiK/5uDef+bg3n/ZlVS/3NgXP+Aamb/gGpm/7uhkv+jjYH/m4N5/6ONgf+ymIr/o42B/5uDef+bg3n/u6GS/5uDef/QvKP/yLKc/7KYiv/QvKP/yLKc/9C8o/+7oZL/0Lyj/8iynP/Ispz/u6GS/2ZVUv9cTUr/ZlVS/1xNSv/QvKP/spiK/7uhkv+bg3n/yLKc/7KYiv+7oZL/spiK/9C8o/+7oZL/spiK/6ONgf9mVVL/gGpm/4BqZv+Aamb/yLKc/7uhkv+ymIr/m4N5/8iynP+ymIr/spiK/5uDef/Ispz/spiK/7KYiv+bg3n/ZlVS/3NgXP+Aamb/gGpm/8iynP+bg3n/m4N5/5uDef/Ispz/o42B/6ONgf+bg3n/u6GS/6ONgf+bg3n/o42B/2ZVUv+Aamb/c2Bc/4BqZv+ymIr/0Lyj/9C8o//QvKP/u6GS/8iynP/Ispz/yLKc/7KYiv9mVVL/XE1K/2ZVUv9cTUr/0Lyj/8iynP/Ispz/spiK/9C8o/+ymIr/spiK/6ONgf/Ispz/u6GS/7uhkv+7oZL/ZlVS/4BqZv+Aamb/gGpm/9C8o/+7oZL/u6GS/6ONgf/Ispz/spiK/7uhkv+bg3n/yLKc/7KYiv+ymIr/o42B/2ZVUv9zYFz/c2Bc/4BqZv+7oZL/u6GS/7KYiv+jjYH/u6GS/5uDef+bg3n/m4N5/7uhkv+jjYH/m4N5/5uDef9mVVL/gGpm/4BqZv9zYFz/spiK/6ONgf+bg3n/m4N5/w==" },
+  tile_city_high_grass: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/eJJM/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/2iSTP9okkz/MTRA/2iSTP89RFT/PURU/zVmNf86QVH/eJJM/zpBUf8xNED/OT5N/zpBUf89RFT//+Xq/+rT2f8xNED/aJJM/2iSTP9Ta1D/U5M9/z1EVP86QVH/PURU/1ZyPf86QVH/MTRA/0tmNv89RFT/OkFR/+vV2//RzLr/NzxL/zE0QP94kkz/OT5N/zpBUf89RFT/PURU/zpBUf8xNkP/MTRA/zpBUf8uNEH/PURU/zpBUf86QVH/eJJM/0KAQv8nKjP/VnI9/ycqM/8nKjP/aJJM/1OTPf89RFT/sKOt///l6v+wo63/U5M9/zpBUf9CYz//OkFR/1ZyPf8xNED/LjRB/zE2Q/8xNkP/U5M9/zVmNf81ZjX/U5M9///l6v/y8vL//+Xq/1OTPf86QVH/PURU/z1EVP85Pk3/S2Y2/zpBUf89RFT/UWpO/2iSTP86QVH/NzxL/1OTPf+tnqb//+Xq/7Cjrf9Tkz3/OkFR/z1EVP89RFT/MTRA/7Ciq///5er/saWu/2iSTP81ZjX/S2Y2/z1EVP8xNED/OT5N/2iSTP9Tkz3/U5M9/zpBUf86QVH/U5M9/0JjP///5er/8vLy///l6v94kkz/PURU/zpBUf86QVH/MTRA/z1EVP81ZjX/aJJM/0JjP/8xNED/QmM//zE0QP9Tkz3/usSl///l6v+wo63/VnI9/zE2Q/9LY0f/U5M9/7Ciq///5er/sKOt/1OTPf89RFT/S2Y2/3iSTP8xNED/NWY1/2iSTP9RaEz/PURU/zE2Q/8uNEH/LjI+/0KAQv//5er/8vLy///l6v9okkz/PURU/zpBUf8xNED/NzxL/z1EVP81ZjX/aJJM/zE0QP86QVH/NzxL/zE0QP85Pk3/w8Sr///l6v+wo63/aJJM/z1EVP89RFT/MTRA/0tmNv89RFT/OkFR/2iSTP86QVH/MTRA/zE0QP94kkz/NzxL/2iSTP89RFT/OkFR/3iSTP8uNEH/OT5N/zk+Tf8uNEH/PURU/z1EVP94kkz/OkFR/zc8S/8xNED/VnI9/zE0QP94kkz/OkFR/zpBUf9Wcj3/MTZD/zE0QP89RFT/PURU/zE2Q/8xNkP/VnI9/zE2Q/86QVH/MTRA/ywwPP8uMj7/VnI9/zE0QP86QVH/LjRB/ywwPP8xNED/PURU/zpBUf86QVH/LjRB/y40Qf8uNEH/QoBC/zpBUf89RFT/MTZD/zE2Q/85Pk3/S2Y2/zE0QP8xNED/OT5N/w==" },
+  tile_city_door_secret: { w: 16, h: 16, rgba: "spiK/9C8o//QvKP/yLKc/7KYiv/Ispz/yLKc/8iynP+7oZL/0Lyj/9C8o//QvKP/u6GS/9C8o//QvKP/0Lyj/5uDef/QvKP/u6GS/7uhkv+ymIr/yLKc/7KYiv+ymIr/o42B/9C8o/+7oZL/u6GS/5uDef/QvKP/spiK/7KYiv+bg3n/yLKc/7KYiv+7oZL/m4N5/8iynP+7oZL/u6GS/5uDef/Ispz/u6GS/7KYiv+bg3n/u6GS/7uhkv+7oZL/o42B/7uhkv+bg3n/m4N5/5uDef+7oZL/m4N5/6ONgf+bg3n/spiK/6ONgf+bg3n/m4N5/7KYiv+jjYH/m4N5/8iynP+7oZL/yLKc/9C8o//Ispz/u6GS/8iynP/Ispz/0Lyj/7KYiv/QvKP/0Lyj/9C8o/+7oZL/0Lyj/9C8o/+7oZL/spiK/8iynP+7oZL/spiK/7KYiv/Ispz/yLKc/7uhkv+jjYH/0Lyj/7KYiv+7oZL/spiK/9C8o/+7oZL/u6GS/6ONgf/Ispz/spiK/7uhkv+jjYH/yLKc/7KYiv+ymIr/o42B/8iynP+7oZL/spiK/6ONgf/QvKP/spiK/5uDef+bg3n/u6GS/6ONgf+jjYH/o42B/7uhkv+jjYH/m4N5/6ONgf+ymIr/o42B/5uDef+bg3n/u6GS/5uDef/QvKP/yLKc/7KYiv/QvKP/yLKc/9C8o/+7oZL/0Lyj/8iynP/Ispz/u6GS/9C8o//Ispz/0Lyj/7uhkv/QvKP/spiK/7uhkv+bg3n/yLKc/7KYiv+7oZL/spiK/9C8o/+7oZL/spiK/6ONgf/Ispz/u6GS/7KYiv+ymIr/yLKc/7uhkv+ymIr/m4N5/8iynP+ymIr/spiK/5uDef/Ispz/spiK/7KYiv+bg3n/yLKc/7uhkv+ymIr/m4N5/8iynP+bg3n/m4N5/5uDef/Ispz/o42B/6ONgf+bg3n/u6GS/6ONgf+bg3n/o42B/7uhkv+jjYH/m4N5/5uDef+ymIr/0Lyj/9C8o//QvKP/u6GS/8iynP/Ispz/yLKc/7KYiv/QvKP/0Lyj/8iynP+ymIr/0Lyj/8iynP/Ispz/spiK/9C8o/+ymIr/spiK/6ONgf/Ispz/u6GS/7uhkv+7oZL/0Lyj/7uhkv+ymIr/o42B/9C8o/+7oZL/u6GS/6ONgf/Ispz/spiK/7uhkv+bg3n/yLKc/7KYiv+ymIr/o42B/8iynP+ymIr/spiK/5uDef+7oZL/u6GS/7KYiv+jjYH/u6GS/5uDef+bg3n/m4N5/7uhkv+jjYH/m4N5/5uDef+7oZL/o42B/5uDef+jjYH/spiK/6ONgf+bg3n/m4N5/w==" },
+  tile_city_trap_toxic: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP89yVL/SNRd/yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj/RtJb/0TQWf9K1l//Qs5X/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj/RdFa/zbCS/9dZHP/SdVe/znFTv9Dz1j/P8tU/x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o/znFTv9Dz1j/WmFx/1phcf9aYXH/OcVO/zfDTP9Dz1j/N8NM/1phcf89RFT/OkFR/z1EVP89RFT/HR8o/zfDTP9F0Vr/XWRz/z1EVP89RFT/PURU/z1EVP8xNED/Q89Y/z3JUv9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP83w0z/N8NM/11kc/89RFT/PURU/zpBUf8jKTX/RdFa/0fTXP9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP9G0lv/OsZP/zpBUf86QVH/PURU/z1EVP86QVH/HR8o/0HNVv9K1l//WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj/NsJL/0DMVf83w0z/RdFa/yYrOP8jKTX/IyYy/zzIUf9K1l//XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/Qc1W/0fTXP9K1l//RtJb/x0fKP9K1l//OsZP/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH/Qc1W/0bSW/89yVL/OcVO/11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD/P8tU/z7KU/9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_toxic_secret: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_fire: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP//hBX/8WkA/yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj//3oL//x0Bf//gRL//3kK/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj/7WUA//+LHP9dZHP//3oL//dvAP//hBX/8WkA/x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o//tzBP/tZQD/WmFx/1phcf9aYXH//3oL//+BEv//gRL//3oL/1phcf89RFT/OkFR/z1EVP89RFT/HR8o//+KG///hRb/XWRz/z1EVP89RFT/PURU/z1EVP8xNED/82sA//lxAv9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP//dwj//4ES/11kc/89RFT/PURU/zpBUf8jKTX//30O/+9nAP9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP/xaQD//3gJ/zpBUf86QVH/PURU/z1EVP86QVH/HR8o//94Cf/0bAD/WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj//4IT//+JGv//hxj//3oL/yYrOP8jKTX/IyYy//lxAv//eQr/XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/9m4A//+AEf/waAD/9GwA/x0fKP//fQ7/8moA/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH//4AR/+1lAP//hBX//3gJ/11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD//4UW//VtAP9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_fire_secret: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_paralytic: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP/JwlT/1NZW/yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj/0s9X/9DUUv/WzFj/zsxQ/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj/0cJY/8LOWP9dZHP/1c1b/8XCXP/PyFH/y9BW/x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o/8XEV//P0k//WmFx/1phcf9aYXH/xdZb/8PLUP/PwlL/w9NW/1phcf89RFT/OkFR/z1EVP89RFT/HR8o/8PIVv/Rxl//XWRz/z1EVP89RFT/PURU/z1EVP8xNED/z8lQ/8nHX/9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP/D1Ff/w9VO/11kc/89RFT/PURU/zpBUf8jKTX/0cNM/9PTWP9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP/S0lv/xsdQ/zpBUf86QVH/PURU/z1EVP86QVH/HR8o/83MVv/WxUz/WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj/wtVP/8zHTP/DzV7/0clP/yYrOP8jKTX/IyYy/8jCWf/W0Ez/XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/zc5X/9PUVv/W1kz/0tRM/x0fKP/Wx1f/xsZV/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH/zc9X/9LHWf/J0F3/xcJY/11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD/y8ZR/8rHXf9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_paralytic_secret: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_inactive: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP8AAAD/AAAA/yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj/AAAA/wAAAP8AAAD/AAAA/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj/AAAA/wAAAP9dZHP/AAAA/wAAAP8AAAD/AAAA/x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o/wAAAP8AAAD/WmFx/1phcf9aYXH/AAAA/wAAAP8AAAD/AAAA/1phcf89RFT/OkFR/z1EVP89RFT/HR8o/wAAAP8AAAD/XWRz/z1EVP89RFT/PURU/z1EVP8xNED/AAAA/wAAAP9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP8AAAD/AAAA/11kc/89RFT/PURU/zpBUf8jKTX/AAAA/wAAAP9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP8AAAD/AAAA/zpBUf86QVH/PURU/z1EVP86QVH/HR8o/wAAAP8AAAD/WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj/AAAA/wAAAP8AAAD/AAAA/yYrOP8jKTX/IyYy/wAAAP8AAAD/XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/AAAA/wAAAP8AAAD/AAAA/x0fKP8AAAD/AAAA/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH/AAAA/wAAAP8AAAD/AAAA/11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD/AAAA/wAAAP9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_floor_deco: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/yksNv8pLDb/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8pLDb/MDM//yksNv8pLDb/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8pLDb/MzZC/zQ3Q/80N0P/NDdD/yksNv8oKjT/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/KSw2/y4xPf8xNED/LjE9/zAzP/8uMT3/MTRA/yksNv8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/KSw2/y4xPf8uMT3/NDdD/zE0QP8yNUH/MTRA/zQ3Q/8tMDv/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/yksNv8yNUH/MDM//zM2Qv8zNkL/MjVB/y4xPf8xNED/LTA7/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/yksNv8xNED/LjE9/y4xPf8uMT3/MTRA/zQ3Q/8vMj7/LTA7/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8pLDb/LTA7/y0wO/8wMz//NDdD/zI1Qf8wMz//LjE9/y0wO/89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/LTA7/ysuOf8xNED/LjE9/y0wO/85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/LTA7/y0wO/8tMDv/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8tMDv/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_locked_exit: { w: 16, h: 16, rgba: "y76s/7uqm/+3ppf/tqWW/7Kfkv+2pZb/uaiZ/7momf+2pZb/uaiZ/7ysnP+7qpv/rpuO/87Brv+8rJz/rZqN/6uYi/+ijYL/oo2C/6SQhP+nkob/rZqN/6iTh/+lkYX/o46D/6eShv+nkob/pJCE/6WRhf+rmIv/pJCE/6OOg/+4p5j/rZqN/wEBAf8BAQL/enJy/0lCR/8EBAX/BAQF/wQFBv8FBAb/gHh3/01FR/8EAwT/AgID/8/Cr/+rmIv/u6qb/6KNgv8DAgP/BAQF/5uUkv9hWVn/BwgJ/wgICv8ICQz/CQoM/6Kbmf9lXVz/BgYI/wUGB/+3ppf/qJOH/7ysnP+kkIT/BAUG/wcICv+moZ//YVlb/wkJDP8JCgz/CwwP/wwNEf+ln53/WFBR/wkJDP8HCAr/t6aX/6GLgf+2pZb/pJCE/4J6ef+akpP/0czO/7u1tP/BvLr/v7m7/8G8u/+6tLX/vLW1/4B4d/91cXb/mZKR/7eml/+kkIT/t6aX/6OOg/9DP0b/ZFxc/7SxtP9SSkv/eHBz/4J7ef95cXP/eXB0/1xUVf9XUVf/TkZH/15XVv+4p5j/oYuB/6yZjP+ijYL/CgoN/xASFv+/ubr/f3d2/3tydf+Ce3n/e3N1/4iDgv+Gf37/QTs+/xMUGf8PDxP/q5iL/6WRhf/QxLD/sZ6R/wwMD/8VFx3/vLa0/3dyd/+Gf33/AAAA/wAAAP94cHX/e3N2/0dAQf8bHiX/FBYc/7eml/+tmo3/t6aX/6SQhP8PERX/Fxoh/8K+u/+Ce3n/gXp5/wAAAP8AAAD/gnp5/4J6ef9FPUD/HyIr/xkbIv+2pZb/pJCE/7inmP+lkYX/EBEV/xcYHv/FwL3/e3Ry/394dv99dXj/d29z/394dv98dHP/QDo+/yUpMv8bHib/uqma/6SQhP+6qZr/pJCE/3Zyd/+YkJP/wry6/1VOTv+AeXf/f3d2/3x0df92bXL/VU5Q/0hAQv92bnL/opya/7eml/+lkYX/uqma/6KNgv9UTE3/X1dZ/393dv89Nz7/Rj5B/0A5Pf86NDr/PDY5/0Y/QP9BOz3/SEFE/11WWP+4p5j/oYuB/7allv+ijYL/Gh0j/yUpMv+Ce3n/Rj9E/ysvO/8oKzX/Kiw2/yotN/+Ce3r/TkdI/y0zP/8jKDH/t6aX/6KNgv+2pZb/qJOH/xseJv8nKzX/nJSU/1xVWP8wNkP/Ky04/zI2RP80OUf/o5ub/2FZWv8wNkP/JCgy/7eml/+nkob/rZqN/6GLgf8bHiX/Jio0/5yUl/9jXFv/Kiw2/zQ7Sf86QE//O0JR/5iSlv9UTFP/Kiw2/yAhKP+wnZD/pJCE/w==" },
+  tile_city_trap_poison: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP/CbfX/w272/yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj/r1ri/7Rf5/+rVt7/xG/3/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj/qlXd/8Br8/9dZHP/vWjw/6tW3v+3Yur/zXj//x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o/7lk7P/CbfX/WmFx/1phcf9aYXH/sl3l/7xn7//Tfv//vmnx/1phcf89RFT/OkFR/z1EVP89RFT/HR8o/8Br8//BbPT/XWRz/z1EVP89RFT/PURU/z1EVP8xNED/t2Lq/6hT2/9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP+6Ze3/uGPr/11kc/89RFT/PURU/zpBUf8jKTX/wm31/69a4v9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP+2Yen/xG/3/zpBUf86QVH/PURU/z1EVP86QVH/HR8o/896//+8Z+//WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj/r1ri/8Fs9P+tWOD/umXt/yYrOP8jKTX/IyYy/7Rf5/+8Z+//XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/vmnx/8Nu9v+4Y+v/ynX9/x0fKP+/avL/umXt/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH/w272/7Jd5f/Hcvr/vmnx/11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD/wGvz/8Zx+f9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_poison_secret: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_sign: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf8xNkP/MTZD/zE2Q/8uNEH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/LjRB/ycqM/8nKjP/LjI+/ycqM/8xNkP/LjRB/6KJV/+JbEX/MTZD/y40Qf8uNEH/Jyoz/y40Qf89RFT/OkFR/zE2Q/+YgVX/moNV/5iBVf+YgVX/nIRY/5uFVv+YgVX/m4VW/5iBVf+ag1X/n4db/56GWv8uNEH/MTZD/zpBUf8uNEH/mIFV/4JnRf+BZkT/hmtJ/4RqRv+Ga0n/hWtI/4VrSP+Ga0n/g2lF/4dsSv91YUT/dWFE/y40Qf89RFT/LjRB/5+HW/+Eakb/W0kw/3djRv9TRTH/hmtJ/1NEMP91YUT/UkQv/3VhRP9cSjH/d2JF/3diRf8uNEH/PURU/zE2Q/+dhVn/dGBD/1RGMv93YkX/UEIu/3djRv9dSzL/gWZE/3diRf93YkX/UkQw/3VhRP9yX0L/LjRB/z1EVP8xNkP/nIRY/3RgQ/9SRC//dWFE/3JfQv91YUT/VEYy/3ZiRf9SRDD/dWFE/3RgQ/91YUT/d2NG/y40Qf86QVH/LjI+/5yEWP92YkX/eWRI/3RgQ/9SRC//cl9C/1FDL/91YUT/UkQv/4RqRv+HbEr/hGpG/3JfQv8nKjP/MTRA/ycqM/+bhVb/dmJF/3lkSP+DaUX/W0kw/4NpRf+Eakb/hWtI/4JnRf+DaUX/g2lF/4FmRP95ZEj/LjI+/zc8S/8nKjP/nIRY/4VrSP+CZ0X/hGpG/4VrSP+Eakb/hmtJ/4NpRf+Ga0n/gmdF/4ZrSf+Ga0n/dmJF/y40Qf8xNED/LDA8/zE2Q/93YkX/dWFE/3VhRP90YEP/cl9C/3JfQv95ZEj/dGBD/3VhRP93Y0b/d2JF/3ZiRf8xNkP/MTRA/z1EVP8xNkP/LjRB/y40Qf8uNEH/Jyoz/ycqM/9+aUT/ZlQ6/zE2Q/8xNkP/LjRB/zE2Q/8uNEH/LjI+/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8nKjP/oYhW/3NdPv8uNEH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/Jyoz/6WKWf95YkL/Jyoz/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/y40Qf8xNkP/MTZD/zE2Q/85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_alarm: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP/HOCj/3Tg1/yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj/3iY8/9M6Iv/cOjn/0iw7/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj/2TUz/+wqKf9dZHP/4TM4/9QxQf/cPTr/2i8r/x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o/9o2Jf/sMDj/WmFx/1phcf9aYXH/+EA3/90eMv/kMy3/4C8q/1phcf89RFT/OkFR/z1EVP89RFT/HR8o/9UvL//XMyf/XWRz/z1EVP89RFT/PURU/z1EVP8xNED/zz8z/+c2Pf9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP/jLyz/5EEw/11kc/89RFT/PURU/zpBUf8jKTX/3DYz//sqOv9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP/gPzH/4y8t/zpBUf86QVH/PURU/z1EVP86QVH/HR8o/846M//IJSz/WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj/zzYv/9o2K//dUCv/5TUl/yYrOP8jKTX/IyYy/9lARP/TMTH/XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/0UU0/+cvRf/aLCr/5jI4/x0fKP/jPB3/yDMy/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH/8EAr/9ctNf/aL0D/1Tg1/11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD/5C4//80uJf9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_alarm_secret: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_lightning: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP9YvuD/btT2/yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj/W8Hj/1G32f9r0fP/WL7g/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj/ed///1rA4v9dZHP/Vrze/1vB4/9u1Pb/W8Hj/x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o/1/F5/9iyOr/WmFx/1phcf9aYXH/ZMrs/23T9f9hx+n/WsDi/1phcf89RFT/OkFR/z1EVP89RFT/HR8o/13D5f9u1Pb/XWRz/z1EVP89RFT/PURU/z1EVP8xNED/Y8nr/13D5f9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP9nze//Wb/h/11kc/89RFT/PURU/zpBUf8jKTX/VLrc/1a83v9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP9Uutz/atDy/zpBUf86QVH/PURU/z1EVP86QVH/HR8o/3DW+P9v1ff/WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj/WL7g/2nP8f9iyOr/ddv9/yYrOP8jKTX/IyYy/2XL7f9jyev/XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/W8Hj/3nf//9hx+n/W8Hj/x0fKP984v//YMbo/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH/W8Hj/3LY+v9w1vj/Zszu/11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD/a9Hz/2DG6P9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_lightning_secret: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_well: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/s6CQ/7urmP+zoJD/q5iI/7OgkP+6qpf/q5iI/7urmP+rmIj/uqqX/zk+Tf8xNED/MTRA/zE0QP8xNED/u6uY/6eSg/+nkoP/p5KD/6eSg/+nkoP/q5iI/6uYiP+nkoP/p5KD/6eSg/+bhXn/OT5N/zpBUf89RFT/s6CQ/6uYiP+nkoP/YVNZ/1hLWP9YS1j/WEtY/1NGVP9YS1j/U0ZU/11QVv+nkoP/p5KD/6eSg/89RFT/OkFR/7OgkP+nkoP/VUhR/0s/S/9eUV7/U0ZU/15RXv9TRlT/WEtY/1hLWP9LP0v/VUhR/7OgkP+nkoP/PURU/zpBUf+rmIj/p5KD/0E1RP9PQ0//WEtY/1NGVP9TRlT/U0ZU/1NGVP9TRlT/T0NP/0E1RP+zoJD/m4V5/zpBUf89RFT/u6uY/5uFef9BNUT/Sz9L/1hLWP9YS1j/XlFe/1hLWP9YS1j/U0ZU/0s/S/9BNUT/s6CQ/6eSg/86QVH/PURU/7qql/+rmIj/Oi88rQAAADMAAAAzAAAAMwAAADMAAAAzAAAAMwAAADMAAAAzOi88rbOgkP+bhXn/OkFR/z1EVP+7q5j/p5KD/wAAADMAAAAzAAAAMwAAADMAAAAzAAAAMwAAADMAAAAzAAAAMwAAADO7q5j/p5KD/zpBUf86QVH/s6CQ/6eSg/8AAAAzAAAAMwAAADMAAAAzAAAAMwAAADMAAAAzAAAAMwAAADMAAAAzq5iI/6eSg/8xNED/MTRA/7OgkP+rmIj/AAAAMwAAADMAAAAzAAAAMwAAADMAAAAzAAAAMwAAADMAAAAzAAAAM7OgkP+nkoP/OT5N/zc8S/+zoJD/m4V5/4l2a60AAAAzAAAAMwAAADMAAAAzAAAAMwAAADMAAAAzAAAAM4l2a626qpf/p5KD/zpBUf8xNED/bWBr/5uFef+6qpf/s6CQ/7urmP+zoJD/uqqX/6uYiP+zoJD/s6CQ/7qql/+6qpf/p5KD/15RXv89RFT/MTRA/2JWYP9eUV7/q5iI/5uFef+bhXn/p5KD/6eSg/+nkoP/q5iI/6eSg/+rmIj/q5iI/21ga/9USVT/OT5N/zk+Tf86QVH/VElU/21ga/9tYGv/bWBr/15RXv9tYGv/bWBr/21ga/9eUV7/bWBr/21ga/9USVT/PURU/zE0QP89RFT/PURU/z1EVP9USVT/VElU/09DT/9USVT/VElU/1RJVP9PQ0//VElU/1RJVP9USVT/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_statue: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/z72u//bx2P/28dj/9vHY//bx2P/28dj/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/rZGL/8+9rv/28dj/9vHY//bx2P/28dj/9vHY/8+9rv86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/62Ri//Pva7/z72u//bx2P/28dj/9vHY//bx2P/Pva7/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf+tkYv/rZGL/62Ri/+HZGb/rZGL/62Ri/+HZGb/rZGL/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP/Vx7T/5dvE/62Ri//Pva7/rZGL/8+9rv/Pva7/rZGL/8+9rv85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/rZKM/9XHtP+HZGb/z72u/5Nxcf+TcXH/k3Fx/5Nxcf/Pva7/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/7Obkf/v6dH/s5uR/4dkZv+TcXH/k3Fx/5Nxcf+TcXH/k3Fx/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP+zm5H/7+nR/+/p0f+zm5H/h2Rm/4dkZv+HZGb/h2Rm/7Obkf86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/7Obkf/v6dH/7+nR/+/p0f/v6dH/7+nR/+/p0f/Vx7T/1ce0/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP+zm5H/7+nR/7Obkf+zm5H/s5uR/7Obkf+zm5H/rZKM/62SjP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/s5uR/7Obkf/v6dH/7+nR/+/p0f/v6dH/s5uR/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/7Obkf+zm5H/h2Rm/4dkZv/v6dH/7+nR/7Obkf89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/7Obkf+Tc3P/h2Rm/zc8S/8xNED/k3Nz/7Obkf+zm5H/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/zE2Q/+HZGb/h2Rm/4dkZv8uNEH/Jyoz/4dkZv+HZGb/h2Rm/ycqM/8uNEH/OkFR/zc8S/8xNED/PURU/zpBUf8uNEH/LjRB/y40Qf8uNEH/Jyoz/y40Qf8xNkP/MTZD/zE2Q/8uMj7/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_statue_sp: { w: 16, h: 16, rgba: "XwsY/1oHE/9aBxP/XwsY/18LGP9jDhz/WgcT/1oHE/9jDhz/XwsY/1oHE/9aBxP/WgcT/1oHE/9fCxj/XwsY/1oHE/+khgD/Yw4c/6SGAP9jDhz/z72u//bx2P/28dj/9vHY//bx2P/28dj/pIYA/18LGP+HTwD/Yw4c/1oHE/9fCxj/Yw4c/6SGAP9jDhz/rZGL/8+9rv/28dj/9vHY//bx2P/28dj/9vHY/8+9rv+HTwD/XwsY/4dPAP9fCxj/XwsY/4dPAP9aBxP/WgcT/62Ri//Pva7/z72u//bx2P/28dj/9vHY//bx2P/Pva7/Yw4c/6SGAP9fCxj/XwsY/1oHE/9fCxj/h08A/18LGP+tkYv/rZGL/62Ri/+HZGb/rZGL/62Ri/+HZGb/rZGL/2MOHP9fCxj/pIYA/18LGP9jDhz/h08A/18LGP/Vx7T/5dvE/62Ri//Pva7/rZGL/8+9rv/Pva7/rZGL/8+9rv9fCxj/pIYA/18LGP9aBxP/XwsY/2MOHP+HTwD/rZKM/9XHtP+HZGb/z72u/5Nxcf+TcXH/k3Fx/5Nxcf/Pva7/XwsY/1oHE/+khgD/WgcT/2MOHP+HTwD/WgcT/7Obkf/v6dH/s5uR/4dkZv+TcXH/k3Fx/5Nxcf+TcXH/k3Fx/18LGP+khgD/Yw4c/18LGP9aBxP/XwsY/6SGAP+zm5H/7+nR/+/p0f+zm5H/h2Rm/4dkZv+HZGb/h2Rm/7Obkf9fCxj/XwsY/6SGAP9aBxP/XwsY/6SGAP9fCxj/XwsY/7Obkf/v6dH/7+nR/+/p0f/v6dH/7+nR/+/p0f/Vx7T/1ce0/4dPAP9aBxP/XwsY/2MOHP9fCxj/pIYA/18LGP+zm5H/7+nR/7Obkf+zm5H/s5uR/7Obkf+zm5H/rZKM/62SjP9jDhz/pIYA/1oHE/9fCxj/h08A/2MOHP9aBxP/s5uR/7Obkf/v6dH/7+nR/+/p0f/v6dH/s5uR/18LGP9jDhz/h08A/1oHE/9aBxP/XwsY/18LGP+HTwD/XwsY/7Obkf+zm5H/h2Rm/4dkZv/v6dH/7+nR/7Obkf9aBxP/WgcT/2MOHP+khgD/XwsY/2MOHP+HTwD/XwsY/7Obkf+Tc3P/h2Rm/1oHE/+khgD/k3Nz/7Obkf+zm5H/pIYA/18LGP+khgD/XwsY/18LGP9fCxj/XwsY/2w/AP+HZGb/h2Rm/4dkZv9sPwD/SAYP/4dkZv+HZGb/h2Rm/0wJE/9sPwD/WgcT/6SGAP9aBxP/WgcT/1oHE/9MCRP/SAYP/08LFv9MCRP/SAYP/0gGD/9IBg//SAYP/08LFv9IBg//WgcT/1oHE/9fCxj/Yw4c/w==" },
+  tile_city_trap_gripping: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP+UlJT/oKCg/yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj/lpaW/6mpqf+Ghob/paWl/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj/i3Vq/4ODg/9dZHP/rq6u/6GAbf+yg2r/mX1t/x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o/5qamv9qamr/WmFx/1phcf9aYXH/yINe/7h0UP/ChWT/yHBB/1phcf89RFT/OkFR/z1EVP89RFT/HR8o/56env+enp7/XWRz/z1EVP89RFT/PURU/z1EVP8xNED/0msy/7B0Vf9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP+ug2v/q4Jt/11kc/89RFT/PURU/zpBUf8jKTX/s3RS/9VpLv9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP+ffm3/x4Nf/zpBUf86QVH/PURU/z1EVP86QVH/HR8o/7J0VP+ug2v/WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj/t4Vp/6+Da/+WfG3/np6e/yYrOP8jKTX/IyYy/9JrMv+yg2r/XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/uYVo/7p1T/+tdFb/yHJD/x0fKP+gc1v/voVl/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH/0msy/9JkKP/Cc0j/v3NK/11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD/y4Jb/7SFav9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_gripping_secret: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_summoning: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/x0fKP8mKzj/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/x0fKP+n2tr/4v///yMpNf8mKzj/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8dHyj/r+Li/5PGxv/Z////p9ra/yMpNf8mKzj/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8dHyj//f///6ve3v9dZHP/o9bW/67h4f/i////r+Li/x0fKP8jJjL/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/HR8o/7ns7P/B9PT/WmFx/1phcf9aYXH/x/r6/93///++8fH/rN/f/1phcf89RFT/OkFR/z1EVP89RFT/HR8o/7Tn5//i////XWRz/z1EVP89RFT/PURU/z1EVP8xNED/xfj4/7Pm5v9RVGD/OT5N/zpBUf86QVH/OT5N/x0fKP/O////qdzc/11kc/89RFT/PURU/zpBUf8jKTX/ndDQ/6LV1f9aYXH/OkFR/zE0QP8xNED/MTRA/x0fKP+d0ND/2P///zpBUf86QVH/PURU/z1EVP86QVH/HR8o/+b////j////WmFx/z1EVP89RFT/OT5N/zc8S/8dHyj/p9ra/9X////C9fX/8////yYrOP8jKTX/IyYy/8v+/v/D9vb/XWRz/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/11kc/9aYXH/ruHh//////++8fH/sOPj/x0fKP//////u+7u/11kc/86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/1phcf9aYXH/ruHh/+z////n////zP///11kc/89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/1dca/9RVGD/2f///73w8P9aYXH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/1dca/9ZXm3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_trap_summoning_secret: { w: 16, h: 16, rgba: "OkFR/z1EVP89RFT/PURU/zpBUf85Pk3/MTRA/z1EVP86QVH/PURU/zpBUf89RFT/PURU/zk+Tf8xNED/MTRA/zE0QP8xNED/OT5N/z1EVP89RFT/MTRA/zpBUf89RFT/PURU/z1EVP86QVH/PURU/zpBUf8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP8xNED/OT5N/zE0QP89RFT/OkFR/z1EVP86QVH/PURU/zpBUf86QVH/MTRA/zpBUf89RFT/OkFR/z1EVP89RFT/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/PURU/zpBUf89RFT/MTRA/zpBUf86QVH/PURU/zpBUf86QVH/OkFR/zpBUf8xNED/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/zE0QP86QVH/PURU/zpBUf89RFT/OkFR/z1EVP8xNED/OkFR/z1EVP89RFT/OkFR/zE0QP8xNED/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/PURU/z1EVP85Pk3/MTRA/zpBUf89RFT/OkFR/zpBUf86QVH/NzxL/zE0QP8xNED/OT5N/zpBUf89RFT/OkFR/z1EVP89RFT/MTRA/zk+Tf86QVH/PURU/z1EVP89RFT/PURU/z1EVP8xNED/OT5N/zE0QP8xNED/OT5N/zpBUf86QVH/OT5N/zE0QP89RFT/OkFR/z1EVP89RFT/PURU/zpBUf86QVH/MTRA/z1EVP86QVH/OkFR/zE0QP8xNED/MTRA/zE0QP83PEv/OkFR/zpBUf86QVH/PURU/z1EVP86QVH/MTRA/zk+Tf89RFT/OkFR/z1EVP89RFT/OT5N/zc8S/8xNED/MTRA/zE0QP85Pk3/PURU/z1EVP86QVH/OT5N/zE0QP89RFT/PURU/z1EVP89RFT/PURU/zpBUf8xNED/NzxL/z1EVP86QVH/MTRA/zE0QP86QVH/NzxL/zE0QP85Pk3/PURU/z1EVP86QVH/OkFR/z1EVP89RFT/MTRA/z1EVP89RFT/OkFR/zpBUf86QVH/MTRA/zE0QP8xNED/NzxL/z1EVP89RFT/OkFR/z1EVP86QVH/OT5N/zk+Tf86QVH/PURU/z1EVP89RFT/OkFR/zc8S/8xNED/MTRA/zE0QP86QVH/OkFR/zpBUf89RFT/PURU/zE0QP89RFT/PURU/z1EVP89RFT/OkFR/z1EVP86QVH/MTRA/zc8S/85Pk3/MTRA/zE0QP86QVH/OkFR/zc8S/8xNED/PURU/zpBUf86QVH/OkFR/zpBUf86QVH/MTRA/zpBUf89RFT/PURU/z1EVP85Pk3/MTRA/zE0QP8xNED/OT5N/w==" },
+  tile_city_bookshelf: { w: 16, h: 16, rgba: "lXJQ/5BtS/+JZkT/lnNR/5FuTP+YdVP/iWZE/4xpR/+ZdlT/lnNR/4xpR/+KZ0X/kG1L/4pnRf+UcU//lXJQ/4lmRP8mGRr/Jhka/yYZGv8mGRr/Jhka/yYZGv8mGRr/Jhka/yYZGv8cOin/HDop/yYZGv8mGRr/Jhka/4lmRP+VclD/fDM5/ysdHv9STHT/Kx0e/ysdHv8rHR7/Kx0e/8fEt/8rHR7/Wlg5/1pYOf+vq6H/Kx0e/1wdM/+Wc1H/km9N/3wzOf9+dpH/Ukx0/0RNL/8wISD/MCEg/zAhIP/HxLf/eCpG/xw6Kf8cOin/r6uh/zAhIP9cHTP/k3BO/4lmRP98Mzn/fnaR/1JMdP9ETS//Ozoo/zAhIP8wISD/x8S3/3gqRv8cOin/HDop/6+rof8fLkX/XB0z/5RxT/+ZdlT/mltI/352kf9STHT/Ozoo/0RNL/8wISD/MCEg/8fEt/94Kkb/Wlg5/1pYOf+vq6H/Hy5F/1wdM/+PbEr/lXJQ/28sMv9xaYL/SkNo/ysdHv8+RSv/Kx0e/ysdHv+yr6T/ayQ+/xkzJf8ZMyX/nZmR/xwoPv9UGi//jGlH/5h1U/+MaUf/kG1L/41qSP+YdVP/km9N/49sSv+PbEr/l3RS/4xpR/+YdVP/kG1L/5ZzUf+MaUf/mHVT/5ZzUf+PbEr/Jhka/yYZGv8mGRr/Jhka/yYZGv8mGRr/Jhka/yYZGv8mGRr/Jhka/yYZGv8mGRr/Jhka/yYZGv+LaEb/kW5M/6+rof8rHR7/ybym/ysdHv9dH0H/XR9B/ysdHv8rHR7/Kx0e/ysdHv8rHR7/Kx0e/ysdHv8rHR7/lnNR/5h1U/+vq6H/Y1gn/8m8pv8wISD/XR9B/10fQf99hZv/MCEg/zAhIP8wISD/MCEg/yVPOP8lTzj/JU84/4lmRP+UcU//r6uh/2NYJ//JvKb/Ukx0/10fQf9dH0H/fYWb/zAhIP8wISD/r6uh/6+rof+vq6H/r6uh/6+rof+Nakj/k3BO/6+rof9jWCf/ybym/1JMdP+VXFn/lVxZ/32Fm/9jWCf/MCEg/zAhIP9STHT/Ukx0/1JMdP9STHT/km9N/5l2VP+vq6H/Y1gn/8m8pv9STHT/XR9B/10fQf99hZv/Y1gn/zAhIP9qSnP/akpz/2pKc/+Wb3H/akpz/5VyUP+VclD/nZmR/1lOI/+0qJX/SkNo/1QaOv9UGjr/cHaL/1lOI/8rHR7/vbqu/726rv+9uq7/vbqu/726rv+PbEr/kG1L/41qSP+TcE7/jWpI/5l2VP+TcE7/kG1L/45rSf+QbUv/jWpI/5d0Uv+KZ0X/jGlH/45rSf+Wc1H/mXZU/w==" },
+  tile_city_alchemy: { w: 16, h: 16, rgba: "XwsY/1oHE/9aBxP/XwsY/18LGP9jDhz/SAYP/0gGD/9PCxb/TAkT/1oHE/9aBxP/WgcT/1oHE/9fCxj/XwsY/1oHE/+khgD/Yw4c/6SGAP9PCxb/bD8A/+HW2P/h1tj/4dbY/+HW2P9IBg//g2sA/18LGP+HTwD/Yw4c/1oHE/9fCxj/Yw4c/6SGAP9PCxb/4dbY/+HW2P9/eXz/PjtA/z47QP9/eXz/4dbY/7Cps/9sPwD/XwsY/4dPAP9fCxj/XwsY/4dPAP9IBg//4dbY/z47QP8+O0D/PjtA/z47QP8+O0D/PjtA/z47QP8+O0D/sKmz/4NrAP9fCxj/XwsY/1oHE/9MCRP/4dbY/395fP8+O0D/PjtA/z47QP8+O0D/PjtA/z47QP8+O0D/PjtA/2tnbv+wqbP/g2sA/18LGP9jDhz/bD8A/+HW2P8+O0D/PjtA/////wD///8A////AP///wD///8A////AD47QP8+O0D/sKmz/0wJE/9aBxP/TAkT/6eHYf/h1tj/////AP///wD///8A////AP///wD///8A////AP///wD///8A////ALCps/+nh2H/SAYP/08LFv+nh2H/4dbY/+HW2Gbh1tgA////AP///wD///8A////AP///wD///8A////ALCps2awqbP/p4dh/0wJE/9IBg//blRH/6eHYf/h1tj/4dbYAP///wD///8A////AP///wD///8A////AP///wCwqbP/p4dh/25UR/9IBg//TAkT/25UR/+nh2H/p4dh/7Cps/+wqbP/sKmzZrCpswD///8AsKmzZrCps/+wqbP/p4dh/6eHYf9uVEf/TAkT/2MOHP9MCRP/blRH/6eHYf+nh2H/p4dh/7Cps/+wqbP/sKmz/7Cps/+nh2H/p4dh/6eHYf9uVEf/g2sA/1oHE/9fCxj/bD8A/25UR/9uVEf/blRH/6eHYf+nh2H/p4dh/6eHYf+nh2H/p4dh/25UR/9uVEf/blRH/0gGD/9aBxP/XwsY/18LGP9sPwD/blRH/25UR/9uVEf/blRH/25UR/9uVEf/blRH/25UR/9uVEf/blRH/08LFv+khgD/XwsY/2MOHP+HTwD/XwsY/4NrAP9uVEf/blRH/25UR/9uVEf/blRH/25UR/9uVEf/blRH/0wJE/+khgD/XwsY/18LGP9fCxj/XwsY/4dPAP9fCxj/bD8A/0wJE/9eQTD/XkEw/15BMP9eQTD/bD8A/0wJE/+HTwD/WgcT/6SGAP9aBxP/WgcT/1oHE/9fCxj/WgcT/2MOHP9fCxj/SAYP/0gGD/9IBg//SAYP/2MOHP9aBxP/WgcT/1oHE/9fCxj/Yw4c/w==" },
+  tile_city_water: { w: 16, h: 16, rgba: "QR4e/0EeHv9BHh7/QR4e/zgcIf84HCH/OBwh/zgcIf84HCH/OBwh/zgcIf84HCH/QR4e/0EeHv9BHh7/QR4e/0EeHv9BHh7/QR4e/0EeHv9BHh7/OBwh/zgcIf9BHh7/QR4e/0EeHv9BHh7/QR4e/0omJv9KJib/SiYm/0omJv9BHh7/QR4e/0EeHv9BHh7/QR4e/zgcIf84HCH/QR4e/0omJv9KJib/SiYm/0omJv9KJib/SiYm/0omJv9KJib/QR4e/0EeHv9BHh7/QR4e/0EeHv84HCH/QR4e/0omJv9XKyv/SiYm/0omJv9KJib/QR4e/0EeHv9KJib/Vysr/0omJv9BHh7/QR4e/0EeHv9BHh7/QR4e/0EeHv9KJib/SiYm/0omJv9KJib/SiYm/0EeHv9BHh7/SiYm/1crK/9XKyv/SiYm/0EeHv9BHh7/QR4e/0omJv9KJib/SiYm/0omJv9KJib/SiYm/0omJv9BHh7/SiYm/1crK/9XKyv/Vysr/0omJv9BHh7/QR4e/0omJv9XKyv/Vysr/0omJv9KJib/SiYm/0EeHv9BHh7/SiYm/0omJv9XKyv/Vysr/0omJv9KJib/SiYm/0omJv9XKyv/SiYm/1crK/9XKyv/SiYm/0omJv9BHh7/QR4e/0omJv9KJib/SiYm/1crK/9BHh7/QR4e/0omJv9XKyv/Vysr/0omJv9KJib/Vysr/0omJv9BHh7/QR4e/0EeHv9KJib/SiYm/0omJv9KJib/QR4e/0EeHv9BHh7/Vysr/1crK/9XKyv/Vysr/0omJv9BHh7/QR4e/0EeHv9KJib/SiYm/0omJv9KJib/QR4e/0EeHv9BHh7/QR4e/0EeHv9XKyv/Vysr/0omJv9BHh7/OBwh/zgcIf9BHh7/SiYm/0omJv9KJib/SiYm/0EeHv9KJib/QR4e/0omJv9KJib/SiYm/0omJv9BHh7/OBwh/zgcIf84HCH/QR4e/0omJv9KJib/SiYm/0omJv9KJib/SiYm/0omJv9KJib/SiYm/0EeHv9KJib/QR4e/zgcIf84HCH/QR4e/0EeHv9KJib/SiYm/0omJv9XKyv/Vysr/0EeHv9BHh7/QR4e/0EeHv9BHh7/SiYm/0EeHv84HCH/OBwh/0EeHv9BHh7/QR4e/0omJv9KJib/Vysr/1crK/9BHh7/QR4e/0EeHv9BHh7/QR4e/0EeHv84HCH/OBwh/zgcIf84HCH/QR4e/0EeHv9BHh7/QR4e/1crK/9XKyv/QR4e/0EeHv9BHh7/QR4e/0EeHv9BHh7/OBwh/0UXG/84HCH/OBwh/zgcIf84HCH/QR4e/0EeHv9KJib/Vysr/w==" }
+};
+
+// src/assets/stage3_workerE_sprites.ts
+var STAGE3_WORKERE_SPRITES = {
+  mob_imp: { w: 16, h: 16, rgba: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wD///8A////AP///wD///8AoFwu/wAAAAD///8AoFwu/wAAAAD///8A////AAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wCUDAz/viQk/6BcLv++JCT/viQk/6BcLv8AAAAA////AP///wAAAAAAAAAAAAAAAAAAAAAA////AP///wBJBwf/zkVF/+dmZv/nZmb/52Zm/+dmZv/nZmb/lAwM/wAAAAD///8AAAAAAAAAAAAAAAAAAAAAAP///wD///8ASQcH/85FRf/ORUX/52Zm/+dmZv/nZmb/52Zm/5QMDP8AAAAA////AAAAAAAAAAAAAAAAAAAAAAD///8ASQcH/5I+Pv+SPj7/kj4+/3T/AP+SPj7/kj4+/3T/AP9JBwf/AAAAAP///wAAAAAAAAAAAAAAAAAAAAAA////AAAAAABJBwf/kj4+/85FRf+SPj7/zkVF/85FRf+SPj7/lAwM/wAAAAD///8AAAAAAAAAAAAAAAAAAAAAAP///wAAAAAAAAAAAEkHB//ORUX/AAAA/85FRf/ORUX/AAAA/wAAAAAAAAAA////AAAAAAAAAAAAAAAAAAAAAAD///8A////AAAAAAAAAAAASQcH/0kHB/8AAAD/AAAA/wAAAP8AAAAAAAAAAP///wAAAAAAAAAAAAAAAAAAAAAA////AP///wCUDAz/lAwM/85FRf/ORUX/zkVF/85FRf+UDAz/SQcH/wAAAAD///8AAAAAAAAAAAAAAAAAAAAAAP///wCUDAz/lAwM/wAAAABJBwf/zkVF/+dmZv/nZmb/viQk/0kHB/9JBwf/SQcH/wAAAAAAAAAAAAAAAAAAAAD///8AlAwM/wAAAAAAAAAASQcH/5QMDP9JBwf/SQcH/0kHB/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////AAAAAAAAAAAAAAAAAEkHB/8AAAAAAAAAAAAAAABJBwf/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wAAAAAAAAAAAJQMDP9JBwf/AAAAAAAAAACUDAz/SQcH/wAAAAD///8A////AAAAAAAAAAAAAAAAAAAAAAD///8A////AP///wCgXC7/AAAAAAAAAAD///8AoFwu/wAAAAAAAAAA////AP///wAAAAAAAAAAAA==" },
+  item_token: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZtK/o//Sv6P/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZtK/o/+hh3P/oYdz/6GHc/8AAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZtK/o/+hh3P/h3Bm/4dwZv+hh3P/oYdz/wAAAGYAAABm////AP///wD///8A////AP///wAAAABmAAAAZtK/o/+hh3P/h3Bm/6GHc/+hh3P/oYdz/6GHc/+hh3P/AAAAZgAAAGb///8A////AP///wD///8AAAAAZtK/o/+hh3P/h3Bm/6GHc///5lv/0qQA/6GHc//Sv6P/oYdz/6GHc/8AAABm////AP///wD///8A////AAAAAGahh3P/oYdz/4dwZv+hh3P/0qQA/7lmAP+hh3P/0r+j/6GHc/+HcGb/AAAAZv///wD///8A////AP///wAAAABmAAAAZqGHc/+hh3P/oYdz/6GHc/+hh3P/0r+j/6GHc/+HcGb/AAAAZgAAAGb///8A////AP///wD///8A////AAAAAGYAAABmoYdz/6GHc//Sv6P/0r+j/6GHc/+HcGb/AAAAZgAAAGaHcGYA////AP///wD///8A////AP///wD///8AAAAAZgAAAGahh3P/oYdz/6GHc/+HcGb/AAAAZgAAAGaHcGYA////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZodwZv+HcGb/AAAAZgAAAGaHcGYA////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_armor_kit: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wAAAABmAAAAZgAAAGb///8AAAAAZjAwMP8wMDD/MDAw/zAwMP8wMDD/AAAAZgAAAGb///8A////AP///wD///8AAAAAZubm5v8AAABm////AAAAAGYwMDD/MDAw/zAwMP8wMDD/MDAw/zAwMP8AAABm////AP///wD///8A////AAAAAGbm5ub/AAAAZv///wAAAABmAAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAAZv///wD///8A////AAAAAGYAAABm5ubm/wAAAGYAAABmAAAAZgAAAGYAAABmbFlI/2xZSP8AAABmAAAAZgAAAGb///8A////AP///wAAAABm5ubm/83Nzf+ampr/AAAAZv///wD///8AAAAAZqKGcP9sWUj/AAAAZv///wD///8A////AP///wD///8AAAAAZubm5v/Nzc3/mpqa/wAAAGb///8A////AAAAAGaihnD/bFlI/wAAAGb///8A////AP///wD///8A////AAAAAGbm5ub/mpqa/5qamv8AAABm////AP///wAAAABmooZw/2xZSP8AAABm////AP///wD///8AAAAAZgAAAGYAAABm5ubm/5qamv/Nzc3/AAAAZgAAAGYAAABmAAAAZqKGcP9sWUj/AAAAZv///wD///8AAAAAZgAAAGbdmmP/3Zpj/6xcOf+CQDb/rFw5/6xcOf+sXDn/AAAAZgAAAGaihnD/bFlI/wAAAGb///8A////AAAAAGbdmmP/AAAAZgAAAGYAAABmgkA2/wAAAGYAAABmAAAAZoJANv8AAABmooZw/2xZSP8AAABm////AP///wAAAABm3Zpj/wAAAGb///8AAAAAZoJANv8AAABm////AAAAAGaCQDb/AAAAZqKGcP9sWUj/AAAAZv///wD///8AAAAAZt2aY/8AAABmAAAAZgAAAGaCQDb/AAAAZgAAAGYAAABmgkA2/wAAAGaihnD/bFlI/wAAAGb///8A////AAAAAGYAAABmgkA2/4JANv+CQDb/AAAAZoJANv+CQDb/gkA2/wAAAGYAAABmooZw/2xZSP8AAABm////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  armor_warrior: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmSWeD/wAAAGYAAABmSWeD/wAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8AAAAAZv///////////94A/9////+lw8//pcPP/9//////ix7//94A///eAP8AAABm////AP///wD///8A////AAAAAGb/3gD//94A/6XDz//f////3////9/////f////pcPP//+LHv//ix7/AAAAZv///wD///8A////AP///wAAAABmAAAAZv+LHv+lw8//pcPP/6XDz/+lw8//pcPP/0lng///ix7/AAAAZgAAAGb///8A////AP///wD///8A////AAAAAGYAAABmSWeD/0lng/+lw8//pcPP/0lng/8mIz//AAAAZgAAAGb/ix4A////AP///wD///8A////AP///wD///8AAAAAZiYjP/9JZ4P/SWeD/0lng/85RWH/JiM//wAAAGb/ix4A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmJiM//yYjP/8mIz//JiM//wAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmSWeD/6XDz//f////3////0lng/8mIz//AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZjlFYf9JZ4P/SWeD/0lng/85RWH/JiM//wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGY5RWH/JiM//yYjP/8mIz//JiM//yYjP/8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  armor_mage: { w: 16, h: 16, rgba: "////AP///wD///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wD///8A////AAAAAGaAGwr/gBsK/4AbCv+AGwr/gBsK/4AbCv+AGwr/AAAAZv///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAZoAbCv+AGwr/gBsK/4AbCv+AGwr/AAAAZgAAAGYAAABm////AP///wD///8A////AAAAAGYAAABm4x8A/92aAP/FXgD/gBsK/4AbCv+AGwr/xV4A/7SBAP+nHgT/AAAAZgAAAGb///8A////AP///wAAAABm4x8A/+MfAP/jHwD/3ZoA/8VeAP8wMP//xV4A/7SBAP/jHwD/px4E/4AbCv8AAABm////AP///wAAAABmAAAAZuMfAP/jHwD/4x8A/+MfAP/dmgD/4x8A/7SBAP/jHwD/4x8A/+MfAP+AGwr/AAAAZgAAAGb///8AAAAAZuMfAP/jHwD/gBsK/6ceBP/jHwD/4x8A/+MfAP/jHwD/4x8A/4AbCv/jHwD/px4E/4AbCv8AAABm////AAAAAGbFXgD/xV4A/4AbCv+nHgT/4x8A/+MfAP/jHwD/4x8A/+MfAP+AGwr/xV4A/6ceBP+AGwr/AAAAZv///wAAAABm3ZoA/92aAP+0gQD/px4E/+MfAP/jHwD/4x8A/+MfAP+nHgT/gBsK/7SBAP+0gQD/tIEA/wAAAGb///8AAAAAZgAAAGYAAABmAAAAZqceBP/jHwD/4x8A/+MfAP/jHwD/px4E/4AbCv8AAABmAAAAZgAAAGYAAABm////AP///wDdmgAA3ZoAAAAAAGbjHwD/4x8A/+MfAP/jHwD/4x8A/6ceBP+AGwr/AAAAZrSBAAC0gQAAtIEAAP///wD///8A////AOMfAAAAAABm4x8A/+MfAP/jHwD/4x8A/6ceBP+nHgT/gBsK/wAAAGb///8A////AP///wD///8A////AP///wDjHwAAAAAAZuMfAP/jHwD/px4E/6ceBP+nHgT/px4E/4AbCv8AAABm////AP///wD///8A////AP///wD///8A////AAAAAGanHgT/gBsK/4AbCv+AGwr/gBsK/4AbCv+AGwr/AAAAZv///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  armor_rogue: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AP///wD///8A////AP///wAAAABmAAAAZoGBgf9MTEz/ZmZm/2ZmZv9mZmb/ZmZm/0xMTP99fX3/AAAAZgAAAGb///8A////AP///wAAAABmAAAAZoGBgf+BgYH/gYGB/0xMTP9MTEz/TExM/0xMTP+BgYH/fX19/4GBgf8AAABmAAAAZv///wD///8AAAAAZn19ff99fX3/gYGB/4GBgf+BgYH/ZmZm/4GBgf+BgYH/fX19/319ff99fX3/ZmZm/wAAAGb///8A////AAAAAGaBgYH/fX19/2ZmZv+BgYH/ZmZm/4GBgf+BgYH/fX19/319ff9mZmb/fX19/2ZmZv8AAABm////AP///wAAAABmZmZm/2ZmZv8AAABmgYGB/2ZmZv+BgYH/fX19/319ff9mZmb/AAAAZmZmZv9mZmb/AAAAZv///wD///8AAAAAZgAAAGYAAABmAAAAZoGBgf9mZmb/gYGB/4GBgf+BgYH/ZmZm/wAAAGYAAABmAAAAZgAAAGb///8A////AP///wBmZmYAZmZmAAAAAGZ9fX3/ZmZm/4GBgf+BgYH/fX19/2ZmZv8AAABmZmZmAGZmZgBmZmYA////AP///wD///8A////AP///wAAAABmTExM/0xMTP/m5ub/5ubm/0xMTP8wMDD/AAAAZv///wD///8A////AP///wD///8A////AP///wD///8AAAAAZn19ff9mZmb/fX19/319ff99fX3/ZmZm/wAAAGb///8A////AP///wD///8A////AP///wD///8A////AAAAAGZ9fX3/ZmZm/2ZmZv9mZmb/ZmZm/0xMTP8AAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  armor_huntress: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgCJo/8AiaP/AImj/wAAAGYAAABm////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgCJo/8AcJb/AHCW/wBwlv8AcJb/AAAAZgAAAGb///8A////AP///wD///8A////AP///wAAAABmAAAAZgCJo/8AcJb/AERo/wBEaP8ARGj/AHCW/wBwlv8AAABmAAAAZv///wD///8A////AP///wD///8AAAAAZgCJo/8ARGj/AERo/wBEaP8ARGj/AERo/wBEaP8ARGj/AHCW/wAAAGYAcJYA////AP///wD///8A////AAAAAGYAcJb/AERo/wBEaP8ARGj/AERo/wBEaP8ARGj/AERo/wBwlv8AAABm////AABwlgD///8A////AP///wAAAABmAAAAZgBwlv8ARGj/AERo/wBEaP8ARGj/AERo/wBwlv8AAABmAAAAZv///wAAcJYA////AP///wD///8A////AAAAAGYAAABmAHCW/wBwlv8ARGj/AHCW/wBwlv8AAABmAAAAZgBwlgAAcJYAAHCWAP///wD///8A////AAAAAGYAAABmAImj/wBwlv8ARGj/AERo/wBEaP8AcJb/AHCW/wAAAGYAAABmAHCWAABwlgD///8A////AAAAAGYAAABmAImj/wBwlv8ARGj/AERo/wBEaP8ARGj/AERo/wBwlv8AcJb/AAAAZgAAAGb///8A////AP///wAAAABmAImj/wBwlv8AcJb/AERo/wBEaP8ARGj/AERo/wBEaP8AcJb/AHCW/wBwlv8AAABmAHCWAP///wD///8AAAAAZgCJo/8AcJb/AERo/wBEaP8ARGj/AERo/wBEaP8ARGj/AERo/wBwlv8AcJb/AAAAZgBwlgD///8A////AAAAAGYAcJb/AHCW/wBEaP8ARGj/AERo/wBEaP8ARGj/AERo/wBEaP8AcJb/AHCW/wAAAGYAcJYA////AP///wAAAABmAAAAZgBwlv8ARGj/AAAAZgAAAGYAAABmAAAAZgAAAGYARGj/AHCW/wAAAGYAAABmAHCWAP///wD///8A////AAAAAGYAAABmAAAAZgAAAGYAVn8AAFZ/AABWfwAAAABmAAAAZgAAAGYAAABmAHCWAABwlgD///8A////AP///wD///8A////AABwlgAAVn8AAFZ/AABWfwAAVn8AAFZ/AABWfwAAVn8AAFZ/AABwlgAAcJYA////AA==" },
+  item_beacon: { w: 16, h: 16, rgba: "////AP///wAAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv+aY/8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAADCAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAAwgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABm////AAAAAGYAAABm3Zpj/92aY//dmmP/3Zpj/92aY//dmmP/3Zpj/92aY//dmmP/3Zpj/92aY//dmmP/AAAAZgAAAGYAAABm3Zpj/6xcOf+sXDn/rFw5/6xcOf+sXDn/rFw5/6xcOf+sXDn/rFw5/6xcOf+sXDn/rFw5/4JANv8AAABmAAAAZt2aY/+sXDn/gkA2/4JANv+CQDb/gkA2/6xcOf+sXDn/w8PD/8PDw//Dw8P/w8PD/8Z8T/+CQDb/AAAAZgAAAGbdmmP/gkA2/8KcZ//r14f/69eH/9SnaP/dmmP/rFw5/+Li4v/Dw8P/4uLi/8PDw//GfE//gkA2/wAAAGYAAABm3Zpj/4JANv/r14f//////+vXh///////3Zpj/6xcOf/GfE//xnxP/8Z8T//GfE//xnxP/4JANv8AAABmAAAAZt2aY/+CQDb//////+vXh///////69eH/92aY/+sXDn/rFw5/6xcOf+sXDn/rFw5/6xcOf+CQDb/AAAAZgAAAGbdmmP/gkA2/9SnaP/r14f/69eH/+a/ef/dmmP/rFw5/4JANv+sXDn/gkA2/6xcOf+sXDn/gkA2/wAAAGYAAABm3Zpj/6xcOf/dmmP/3Zpj/92aY//dmmP/rFw5/4JANv+sXDn/gkA2/6xcOf+CQDb/rFw5/4JANv8AAABmAAAAZt2aY/+sXDn/rFw5/6xcOf+sXDn/rFw5/6xcOf+sXDn/rFw5/6xcOf+sXDn/rFw5/6xcOf+CQDb/AAAAZgAAAGYAAABmgkA2/4JANv+CQDb/gkA2/4JANv+CQDb/gkA2/4JANv+CQDb/gkA2/4JANv+CQDb/AAAAZgAAAGb///8AAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_bomb: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8AAAAAZv///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZv9MAP8AAABm////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAA/5YADv8AAABm/0wAAP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAA/wAAAGYAAABm/0wAAP9MAAD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAP8AAAD/AAAA/wAAAP8AAABmAAAAZpYADgDuHAAA////AP///wD///8A////AP///wAAAABmAAAAZgAAAP8qKjH/Kiox/yoqMf8AAAD/AAAA/wAAAGYAAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAP8qKjH/hZqa/3F6gf8qKjH/Kiox/wAAAP8AAAD/AAAAZv///wD///8A////AP///wD///8A////AAAAAGYAAAD/Kiox/3F6gf8qKjH/Kiox/yoqMf8AAAD/AAAA/wAAAGb///8A////AP///wD///8A////AP///wAAAABmAAAA/yoqMf8qKjH/Kiox/yoqMf8qKjH/AAAA/wAAAP8AAABm////AP///wD///8A////AP///wD///8AAAAAZgAAAP8AAAD/Kiox/yoqMf8qKjH/AAAA/wAAAP8AAAD/AAAAZv///wD///8A////AP///wD///8A////AAAAAGYAAABmAAAA/wAAAP8AAAD/AAAA/wAAAP8AAAD/AAAAZgAAAGb///8A////AP///wD///8A////AP///wD///8AAAAAZgAAAGYAAAD/AAAA/wAAAP8AAAD/AAAAZgAAAGYTExMA////AP///wD///8A////AP///wD///8A////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYTExMA////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  item_tome_mastery: { w: 16, h: 16, rgba: "////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGbs7OwA7OzsAP///wAAAABmAAAAZocQEP+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/4cQEP8AAABm7OzsAOzs7AD///8AAAAAZmwLC/+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/AAAAZuzs7ADs7OwA////AAAAAGZsCwv/oxUW///HAP//xwD//50A//+dAP//xwD//8cA//+dAP//xwD/oxUW/wAAAGbs7OwA7OzsAP///wAAAABmbAsL/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv8AAABm7OzsAOzs7AD///8AAAAAZmwLC/+jFRb/oxUW/6MVFv//xwD//50A///HAP//nQD/oxUW/6MVFv+jFRb/AAAAZuzs7ADs7OwA////AAAAAGZsCwv/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/wAAAGbs7OwA7OzsAP///wAAAABmbAsL/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv8AAABm7OzsAOzs7AD///8AAAAAZmwLC/+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/AAAAZuzs7ADs7OwA////AAAAAGZsCwv/oxUW/6MVFv+HEBD/hxAQ/4cQEP+HEBD/hxAQ/4cQEP+jFRb/oxUW/wAAAGbs7OwA7OzsAP///wAAAABmbAsL/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv8AAABm7OzsAOzs7AD///8AAAAAZmwLC/+HEBD/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+HEBD/AAAAZuzs7ADs7OwA////AAAAAGZsCwv/y8u+/8vLvv/Ly77/y8u+/8vLvv/Ly77/y8u+/8vLvv/Ly77/u4mB/wAAAGbs7OwA7OzsAP///wAAAABmbAsL/8vLvv/9/e3//f3t//397f/9/e3//f3t//397f/9/e3//f3t/7uJgf8AAABm7OzsAOzs7AD///8AAAAAZgAAAGaHEBD/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+HEBD/AAAAZuzs7ADs7OwA////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGbs7OwA7OzsAA==" }
+};
+
+// src/assets/stage3_workerF_sprites.ts
+var WORKER_F_SPRITES = {
+  item_tome_mastery: { w: 16, h: 16, rgba: "////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGbs7OwA7OzsAP///wAAAABmAAAAZocQEP+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/4cQEP8AAABm7OzsAOzs7AD///8AAAAAZmwLC/+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/AAAAZuzs7ADs7OwA////AAAAAGZsCwv/oxUW///HAP//xwD//50A//+dAP//xwD//8cA//+dAP//xwD/oxUW/wAAAGbs7OwA7OzsAP///wAAAABmbAsL/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv8AAABm7OzsAOzs7AD///8AAAAAZmwLC/+jFRb/oxUW/6MVFv//xwD//50A///HAP//nQD/oxUW/6MVFv+jFRb/AAAAZuzs7ADs7OwA////AAAAAGZsCwv/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/wAAAGbs7OwA7OzsAP///wAAAABmbAsL/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv8AAABm7OzsAOzs7AD///8AAAAAZmwLC/+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/AAAAZuzs7ADs7OwA////AAAAAGZsCwv/oxUW/6MVFv+HEBD/hxAQ/4cQEP+HEBD/hxAQ/4cQEP+jFRb/oxUW/wAAAGbs7OwA7OzsAP///wAAAABmbAsL/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv8AAABm7OzsAOzs7AD///8AAAAAZmwLC/+HEBD/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+HEBD/AAAAZuzs7ADs7OwA////AAAAAGZsCwv/y8u+/8vLvv/Ly77/y8u+/8vLvv/Ly77/y8u+/8vLvv/Ly77/u4mB/wAAAGbs7OwA7OzsAP///wAAAABmbAsL/8vLvv/9/e3//f3t//397f/9/e3//f3t//397f/9/e3//f3t/7uJgf8AAABm7OzsAOzs7AD///8AAAAAZgAAAGaHEBD/oxUW/6MVFv+jFRb/oxUW/6MVFv+jFRb/oxUW/6MVFv+HEBD/AAAAZuzs7ADs7OwA////AP///wAAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGbs7OwA7OzsAA==" }
+};
+
+// src/assets/stage3_city_mobs_sprites.ts
+var STAGE3_CITY_MOBS_SPRITES = {
+  mob_warlock: { w: 16, h: 16, rgba: "////AP///wD///8AAAAAAP///wD///8A////AP///wD///8AAAAAAP///wD///8A////AP///wD///8AAAAAAP///wD///8A////AP///wD///8A////AAAAAAD///8A////AP///wCjo6P/AAAAAP///wD///8A////AP///wCjo6P/AAAAAP///wD///8A////AP///wCjo6P/AAAAAP///wD///8A////AP///wCjo6P/AAAAAP///wD///8A////AP///wCjo6P/AAAAAP///wD///8A////AP///wCjo6P/AAAAAP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  mob_golem: { w: 16, h: 16, rgba: "////AP///wD///8A////AP///wD///8AgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAP///wD///8A////AP///wD///8AgICAAICAgACAgIAAgICAAICAgACAgIAAgICAAP///wD///8A////AP///wD///8A////AP///wD///8A////AAoIB/8zLCv/ZlpX/2ZaV/9mWlf/////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8ACggH/zMsK/9mWlf/ZlpX/2ZaV/////8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wAKCAf/Mywr/zMsK/8zLCv/Mywr/zMsK/9mWlf/////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" },
+  mob_succubus: { w: 16, h: 16, rgba: "////AICAgACAgIAAgICAAFdxrf9Xca3/V3Gt/1dxrf9Xca3/AAAAAICAgAD///8AgICAAICAgACAgIAAgICAAFdxrf9Xca3/V3Gt/1dxrf9Xca3/AAAAAICAgACAgIAA////AICAgACAgIAAgICAAICAgABXca3/V3Gt/1dxrf9Xca3/V3Gt/wAAAACAgIAA////AICAgACAgIAAgICAAFdxrf9Xca3/V3Gt/1dxrf9Xca3/AAAAAICAgAD///8A////AICAgACAgIAAgICAAFdxrf9Xca3/V3Gt/1dxrf9Xca3/AAAAAICAgAD///8A////AICAgACAgIAAgICAAFdxrf9Xca3/V3Gt/1dxrf9Xca3/AAAAAICAgAD///8A////AICAgACAgIAAgICAAFdxrf9Xca3/V3Gt/1dxrf9Xca3/AAAAAICAgAD///8A////AP///wD///8A////AFdxrf9Xca3/V3Gt/1dxrf9Xca3/////AP///wD///8A////AICAgACAgIAAgICAAFdxrf9Xca3/V3Gt/1dxrf9Xca3/AAAAAICAgAD///8AgICAAICAgACAgIAAV3Gt/1dxrf9Xca3/V3Gt/1dxrf8AAAAAgICAAP///wD///8A////AICAgACAgIAAgICAAFdxrf9Xca3/V3Gt/1dxrf9Xca3/AAAAAICAgAD///8A////AP///wCAgIAAgICAAICAgABXca3/V3Gt/1dxrf9Xca3/V3Gt/wAAAACAgIAA////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AP///wD///8A////AA==" }
+};
+
+// src/assets/all_original_sprites.ts
+var ALL_ORIGINAL_SPRITES = {
+  ...WORKER_F_SPRITES,
+  ...STAGE3_WORKERE_SPRITES,
+  ...STAGE3_CITY_MOBS_SPRITES,
+  ...STAGE3_CITY_SPRITES,
+  ...STAGE3_KING_SPRITES,
+  ...ORIGINAL_SPRITES
+};
+
 // src/mechanics/buffs.ts
 var BURNING_DURATION = 8;
 var POISON_TRAP_BASE = 4;
 var PARALYSIS_DURATION = 10;
 var CRIPPLE_DURATION = 10;
+var SLOW_DURATION = 10;
+var VERTIGO_DURATION = 10;
+function elementsDurationFactor(elementsLevel) {
+  if (elementsLevel === null || elementsLevel < 0)
+    return 1;
+  return (2 + 0.5 * elementsLevel) / (2 + elementsLevel);
+}
+function slowDuration(elementsLevel) {
+  return elementsDurationFactor(elementsLevel) * SLOW_DURATION;
+}
+function vertigoDuration(elementsLevel) {
+  return elementsDurationFactor(elementsLevel) * VERTIGO_DURATION;
+}
 var OOZE_DAMAGE = 1;
 function burningTick(rng, hp, ht, left, inWater, flying) {
   const damage = rng.int(1, 5);
@@ -3898,6 +4133,11 @@ function burningInventoryTick(rng, stacks, isScroll, isMysteryMeat) {
     }
   }
   return null;
+}
+var MARKED_DURATION = 5;
+var HUNGER_STARVING = 360;
+function hasGasesImmunity(buffs) {
+  return buffs.gasesimmunity != null;
 }
 
 // src/mechanics/blobs.ts
@@ -4099,6 +4339,195 @@ class WebBlob extends Blob {
     }
   }
 }
+
+class ConfusionGasBlob extends Blob {
+  constructor(length) {
+    super("confusion", length);
+  }
+  evolve(rng, world) {
+    super.evolve(rng, world);
+    for (let i = 0;i < world.length; i++) {
+      if (this.cur[i] > 0) {
+        const ch = world.charAt(i);
+        if (ch !== null) {
+          world.prolongVertigo(ch, vertigoDuration(world.elementsLevel(ch)));
+        }
+      }
+    }
+  }
+  tileDesc() {
+    return "A cloud of confusion gas is swirling here.";
+  }
+}
+class RegrowthBlob extends Blob {
+  constructor(length) {
+    super("regrowth", length);
+  }
+  evolve(_rng, world) {
+    super.evolve(_rng, world);
+    if (this.volume <= 0)
+      return;
+    let mapUpdated = false;
+    for (let i = 0;i < world.length; i++) {
+      if (this.off[i] > 0) {
+        const c = world.tileAt(i);
+        let c1 = c;
+        if (c === 1 /* FLOOR */ || c === 38 /* EMBERS */ || c === 41 /* EMPTY_DECO */) {
+          c1 = this.cur[i] > 9 ? 39 /* HIGH_GRASS */ : 10 /* GRASS */;
+        } else if (c === 10 /* GRASS */ && this.cur[i] > 9) {
+          c1 = 39 /* HIGH_GRASS */;
+        }
+        if (c1 !== c) {
+          world.setTile(i, 39 /* HIGH_GRASS */);
+          mapUpdated = true;
+        }
+        const ch = world.charAt(i);
+        if (ch !== null) {
+          world.prolongRoots(ch);
+        }
+      }
+    }
+    if (mapUpdated) {
+      world.observe();
+    }
+  }
+}
+class SacrificialFireBlob extends Blob {
+  pos = 0;
+  constructor(length) {
+    super("sacrificial", length);
+  }
+  evolve(_rng, world) {
+    this.volume = this.off[this.pos] = this.cur[this.pos];
+    const ch = world.charAt(this.pos);
+    if (ch !== null) {
+      world.prolongSacrificeMarked(ch, MARKED_DURATION);
+    }
+    if (world.visibleAt(this.pos)) {
+      world.noteFeature?.("sacrificial_fire", true);
+    }
+  }
+  seed(cell, amount) {
+    this.cur[this.pos] = 0;
+    this.pos = cell;
+    this.volume = this.cur[cell] = amount;
+  }
+  tileDesc() {
+    return "Sacrificial fire burns here. Every creature touched by this fire is " + "marked as an offering for the spirits of the dungeon.";
+  }
+}
+class AlchemyBlob extends Blob {
+  pos = 0;
+  constructor(length) {
+    super("alchemy", length);
+  }
+  evolve(_rng, world) {
+    this.volume = this.off[this.pos] = this.cur[this.pos];
+    if (world.visibleAt(this.pos)) {
+      world.noteFeature?.("alchemy", true);
+    }
+  }
+  seed(cell, amount) {
+    this.cur[this.pos] = 0;
+    this.pos = cell;
+    this.volume = this.cur[cell] = amount;
+  }
+}
+
+class FoliageBlob extends Blob {
+  constructor(length) {
+    super("foliage", length);
+  }
+  evolve(_rng, world) {
+    const { w, length } = world;
+    const from = w + 1;
+    const to = length - w - 1;
+    let regrowth = false;
+    let visible = false;
+    for (let pos = from;pos < to; pos++) {
+      if (this.cur[pos] > 0) {
+        this.off[pos] = this.cur[pos];
+        this.volume += this.off[pos];
+        if (world.tileAt(pos) === 38 /* EMBERS */) {
+          world.setTile(pos, 10 /* GRASS */);
+          regrowth = true;
+        }
+        visible = visible || world.visibleAt(pos);
+      } else {
+        this.off[pos] = 0;
+      }
+    }
+    const hero = world.hero();
+    if (hero !== null && hero.isAlive() && hero.visibleEnemies === 0 && this.cur[hero.pos] > 0) {
+      world.prolongShadows(hero);
+    }
+    if (visible) {
+      world.noteFeature?.("garden", true);
+    }
+  }
+  tileDesc() {
+    return "Shafts of light pierce the gloom of the underground garden.";
+  }
+}
+
+class WellWaterBlob extends Blob {
+  pos = 0;
+  constructor(kind, length) {
+    super(kind, length);
+  }
+  evolve(_rng, world) {
+    this.volume = this.off[this.pos] = this.cur[this.pos];
+    if (world.visibleAt(this.pos)) {
+      const f = this.journalFeature();
+      if (f)
+        world.noteFeature?.(f, true);
+    }
+  }
+  journalFeature() {
+    return null;
+  }
+  seed(cell, amount) {
+    this.cur[this.pos] = 0;
+    this.pos = cell;
+    this.volume = this.cur[cell] = amount;
+  }
+}
+
+class WaterOfAwarenessBlob extends WellWaterBlob {
+  constructor(length) {
+    super("awareness", length);
+  }
+  journalFeature() {
+    return "well_awareness";
+  }
+  tileDesc() {
+    return "Power of knowledge radiates from the water of this well. " + "Take a sip from it to reveal all secrets of equipped items.";
+  }
+}
+
+class WaterOfHealthBlob extends WellWaterBlob {
+  constructor(length) {
+    super("health", length);
+  }
+  journalFeature() {
+    return "well_health";
+  }
+  tileDesc() {
+    return "Power of health radiates from the water of this well. " + "Take a sip from it to heal your wounds and satisfy hunger.";
+  }
+}
+
+class WaterOfTransmutationBlob extends WellWaterBlob {
+  constructor(length) {
+    super("transmutation", length);
+  }
+  journalFeature() {
+    return "well_transmutation";
+  }
+  tileDesc() {
+    return "Power of change radiates from the water of this well. " + "Throw an item into the well to turn it into something else.";
+  }
+}
 function createBlob(kind, length) {
   switch (kind) {
     case "fire":
@@ -4109,6 +4538,22 @@ function createBlob(kind, length) {
       return new ParalyticGasBlob(length);
     case "web":
       return new WebBlob(length);
+    case "confusion":
+      return new ConfusionGasBlob(length);
+    case "regrowth":
+      return new RegrowthBlob(length);
+    case "sacrificial":
+      return new SacrificialFireBlob(length);
+    case "alchemy":
+      return new AlchemyBlob(length);
+    case "foliage":
+      return new FoliageBlob(length);
+    case "awareness":
+      return new WaterOfAwarenessBlob(length);
+    case "health":
+      return new WaterOfHealthBlob(length);
+    case "transmutation":
+      return new WaterOfTransmutationBlob(length);
   }
 }
 function blobOf(blobs, kind) {
@@ -4442,6 +4887,9 @@ var MOB_EXP = {
   spinner: { exp: 9, maxLvl: 16 },
   elemental: { exp: 10, maxLvl: 20 },
   monk: { exp: 11, maxLvl: 21 },
+  warlock: { exp: 11, maxLvl: 21 },
+  golem: { exp: 12, maxLvl: 22 },
+  succubus: { exp: 12, maxLvl: 25 },
   dm300: { exp: 30, maxLvl: 30 }
 };
 function expForKill(mobId, heroLvl) {
@@ -4858,12 +5306,199 @@ function wandSpec(id) {
     throw new Error(`wands: unknown wand id ${id}`);
   return spec;
 }
+function magicMissileDamage(rng, power) {
+  return rng.int(1, 6 + 2 * power);
+}
+function fireboltDamage(rng, power) {
+  return rng.int(1, 8 + power * power);
+}
+function lightningInitialDamage(rng, power) {
+  return rng.int(5 + Math.floor(power / 2), 10 + power);
+}
+function lightningChainDamage(rng, damage) {
+  return rng.int(Math.floor(damage / 2), damage);
+}
+function disintegrationMaxDistance(rawLevel) {
+  return rawLevel + 4;
+}
+function disintegrationDamage(rng, power, targets) {
+  const lvl = power + targets;
+  return rng.normalIntRange(lvl, 8 + Math.floor(lvl * lvl / 3));
+}
+function avalancheSize(power) {
+  return 1 + Math.floor(power / 3);
+}
+function avalancheDamage(rng, size, dist) {
+  return rng.int(2, 6 + (size - dist) * 2);
+}
+function avalancheParalyzes(rng, dist) {
+  return rng.int(0, 2 + dist) === 0;
+}
+function avalancheParalysisDuration(rng) {
+  return rng.intRange(2, 6);
+}
+function poisonWandDuration(power) {
+  return 5 + power;
+}
+function amokDuration(power) {
+  return 3 + power;
+}
+function blinkDestinationCell(trace, distance, power, impactCellOccupied) {
+  let cell;
+  if (distance > power + 4) {
+    cell = trace[power + 3];
+  } else {
+    cell = trace[distance - 1];
+    if (impactCellOccupied && distance > 1) {
+      cell = trace[distance - 2];
+    }
+  }
+  return cell;
+}
+function flockSheepCount(power) {
+  return power + 2;
+}
+function flockLifespan(power, rng) {
+  return power + 3 + rng.float(0, 2);
+}
+function flockSheepPositions(w, h, cell, passable, occupiedAt, n) {
+  const trav = (pos) => passable(pos) && !occupiedAt(pos);
+  const dist = buildDistanceMap2(w, h, cell, trav, n);
+  let d = 0;
+  if (occupiedAt(cell)) {
+    dist[cell] = Infinity;
+    d = 1;
+  }
+  const placed = [];
+  const length = w * h;
+  sheepLoop:
+    for (let i = 0;i < n; i++) {
+      while (d < n) {
+        for (let j = 0;j < length; j++) {
+          if (dist[j] === d) {
+            placed.push(j);
+            dist[j] = Infinity;
+            continue sheepLoop;
+          }
+        }
+        d++;
+      }
+    }
+  return placed;
+}
+function reachDistance(ballisticaDistance, power) {
+  return Math.min(ballisticaDistance, power + 4);
+}
+function regrowthSeedAmount(power) {
+  return (power + 2) * 20;
+}
+var TXT_SELF_TARGET = "You can't target yourself";
+var TXT_FIZZLES = "your wand fizzles; it must be out of charges for now";
 function txtWandIdentified(wandName) {
   return `You are now familiar enough with your ${wandName}.`;
 }
+function txtReachTransported(itemName) {
+  return `You have magically transported ${itemName} into your backpack`;
+}
+var TXT_NOTHING_HAPPENED = "nothing happened";
 var USAGES_TO_KNOW = 40;
 function wandMaxCharges(initialCharges, level) {
   return Math.min(initialCharges + level, 9);
+}
+function wandRechargeTurns(isMage, effectiveLevel2) {
+  return isMage ? 40 / Math.sqrt(1 + effectiveLevel2) : 40;
+}
+function wandPower(effectiveLevel2, ringPowerLevel, charging) {
+  if (!charging)
+    return effectiveLevel2;
+  if (ringPowerLevel === null)
+    return effectiveLevel2;
+  return Math.max(effectiveLevel2 + ringPowerLevel, 0);
+}
+function ballisticaCast(world, from, to, magic, hitChars) {
+  const w = world.w;
+  const x0 = from % w;
+  const x1 = to % w;
+  const y0 = Math.floor(from / w);
+  const y1 = Math.floor(to / w);
+  let dx = x1 - x0;
+  let dy = y1 - y0;
+  const stepX = dx > 0 ? 1 : -1;
+  const stepY = dy > 0 ? 1 : -1;
+  dx = Math.abs(dx);
+  dy = Math.abs(dy);
+  let stepA;
+  let stepB;
+  let dA;
+  let dB;
+  if (dx > dy) {
+    stepA = stepX;
+    stepB = stepY * w;
+    dA = dx;
+    dB = dy;
+  } else {
+    stepA = stepY * w;
+    stepB = stepX;
+    dA = dy;
+    dB = dx;
+  }
+  const trace = [from];
+  let distance = 1;
+  let cell = from;
+  let err = Math.floor(dA / 2);
+  while (cell !== to || magic) {
+    cell += stepA;
+    err += dB;
+    if (err >= dA) {
+      err = err - dA;
+      cell = cell + stepB;
+    }
+    trace.push(cell);
+    distance++;
+    if (!world.beamPassableAt(cell)) {
+      distance--;
+      return { trace, distance, cell: trace[distance - 1] };
+    }
+    if (world.losBlockingAt(cell) || hitChars && world.charAt(cell)) {
+      return { trace, distance, cell };
+    }
+  }
+  trace.push(cell);
+  distance++;
+  return { trace, distance, cell: to };
+}
+function buildDistanceMap2(w, h, from, passable, maxDistance) {
+  const length = w * h;
+  const dist = new Float64Array(length).fill(Infinity);
+  if (from < 0 || from >= length)
+    return dist;
+  dist[from] = 0;
+  let frontier = [from];
+  let d = 0;
+  while (frontier.length > 0 && d < maxDistance) {
+    d++;
+    const next = [];
+    for (const pos of frontier) {
+      const x = pos % w;
+      const y = Math.floor(pos / w);
+      const push = (n) => {
+        if (dist[n] === Infinity && passable(n)) {
+          dist[n] = d;
+          next.push(n);
+        }
+      };
+      if (x > 0)
+        push(pos - 1);
+      if (x < w - 1)
+        push(pos + 1);
+      if (y > 0)
+        push(pos - w);
+      if (y < h - 1)
+        push(pos + w);
+    }
+    frontier = next;
+  }
+  return dist;
 }
 
 // src/mechanics/combat.ts
@@ -4945,6 +5580,12 @@ function damageFromTrap(ctx, rng, ch, dmg, sourceTag, onHeroDeath) {
   };
   const applied = applyDamage(rng, target, dmg, sourceTag);
   ch.hp = applied.hp;
+  if (sourceTag === "toxic_gas") {
+    const mobId = ch.def?.id;
+    if (mobId === "king_undead") {
+      ctx.level.blobs.find((b) => b.kind === "toxic")?.clear(ch.pos);
+    }
+  }
   if (applied.paralysisBroken) {
     ch.paralysed = false;
     delete ch.buffs.paralysis;
@@ -5027,6 +5668,48 @@ function makeBlobWorld(ctx, hero, mobs) {
       const { x, y } = level.xy(pos);
       level.set(x, y, burned);
     },
+    elementsLevel: (ch) => {
+      const lvl = ch.buffs.ring_elements?.level;
+      return lvl == null ? null : lvl;
+    },
+    prolongVertigo: (ch, duration) => {
+      if (ch.invulnerable)
+        return;
+      if (hasGasesImmunity(ch.buffs))
+        return;
+      const cur = ch.buffs.vertigo?.left ?? 0;
+      ch.buffs.vertigo = { kind: "vertigo", left: Math.max(cur, duration) };
+    },
+    prolongFrost: (ch, duration) => {
+      if (ch.invulnerable)
+        return;
+      const cur = ch.buffs.frost?.left ?? 0;
+      ch.buffs.frost = { kind: "frost", left: Math.max(cur, duration) };
+      ch.paralysed = true;
+      delete ch.buffs.burning;
+    },
+    clearFireAt: (cell) => {
+      const fire = level.blobs.find((b) => b.kind === "fire");
+      if (fire)
+        fire.clear(cell);
+    },
+    freezeHeapAt: (cell) => {},
+    prolongSacrificeMarked: (ch, duration) => {
+      if (ch.invulnerable)
+        return;
+      const cur = ch.buffs.sacrificeMarked?.left ?? 0;
+      ch.buffs.sacrificeMarked = {
+        kind: "sacrificeMarked",
+        left: Math.max(cur, duration)
+      };
+    },
+    prolongShadows: (ch) => {},
+    hero: () => {
+      if (!hero.isAlive())
+        return null;
+      return { ...hero, visibleEnemies: 1 };
+    },
+    observe: () => {},
     log: (msg) => ctx.log(msg)
   };
 }
@@ -5486,7 +6169,7 @@ function reigniteBurning(ch, duration) {
     return;
   ch.buffs["burning"] = { kind: "burning", left: duration };
 }
-var VERTIGO_DURATION = 10;
+var VERTIGO_DURATION2 = 10;
 var TERROR_DURATION = 10;
 var FROST_DURATION = 5;
 function deathProc(fx, _attacker, defender, level) {
@@ -5509,7 +6192,7 @@ function fireProc(fx, _attacker, defender, _damage, level) {
 function horrorProc(fx, attacker, defender, level) {
   if (fx.rng.int(0, level + 5) >= 4) {
     if (defender.kind === "hero") {
-      affectBuff(defender, "vertigo", VERTIGO_DURATION);
+      affectBuff(defender, "vertigo", VERTIGO_DURATION2);
     } else {
       affectBuff(defender, "terror", TERROR_DURATION, {
         sourceId: attacker.id
@@ -6334,6 +7017,67 @@ var MOB_DEFS = {
     attackDelay: 0.5,
     immunities: ["amok", "terror"],
     resistances: []
+  },
+  warlock: {
+    id: "warlock",
+    name: "dwarf warlock",
+    sprite: "mob_warlock",
+    hp: 70,
+    atk: 25,
+    def: 18,
+    dmgMin: 12,
+    dmgMax: 20,
+    triangular: true,
+    dr: 8,
+    exp: MOB_EXP.warlock.exp,
+    maxLvl: MOB_EXP.warlock.maxLvl,
+    speed: 1,
+    flying: false,
+    ability: null,
+    attackDelay: 1,
+    immunities: [],
+    resistances: ["death"]
+  },
+  golem: {
+    id: "golem",
+    name: "golem",
+    sprite: "mob_golem",
+    hp: 85,
+    atk: 28,
+    def: 18,
+    dmgMin: 20,
+    dmgMax: 40,
+    triangular: true,
+    dr: 12,
+    exp: MOB_EXP.golem.exp,
+    maxLvl: MOB_EXP.golem.maxLvl,
+    speed: 1,
+    flying: false,
+    ability: null,
+    attackDelay: 1.5,
+    immunities: ["amok", "terror", "sleep"],
+    resistances: ["psionic_blast"]
+  },
+  succubus: {
+    id: "succubus",
+    name: "succubus",
+    sprite: "mob_succubus",
+    hp: 80,
+    atk: 40,
+    def: 25,
+    dmgMin: 15,
+    dmgMax: 25,
+    triangular: true,
+    dr: 10,
+    exp: MOB_EXP.succubus.exp,
+    maxLvl: MOB_EXP.succubus.maxLvl,
+    speed: 1,
+    flying: false,
+    ability: null,
+    attackDelay: 1,
+    viewDistance: 4,
+    immunities: ["sleep"],
+    resistances: ["leech"]
   }
 };
 var mobIdCounter = 1;
@@ -6606,6 +7350,7 @@ class ContentMob extends Actor {
   enemySeen = false;
   target = -1;
   justAlerted = false;
+  enemy = null;
   paralysed = false;
   rooted = false;
   flying;
@@ -6704,8 +7449,11 @@ class ContentMob extends Actor {
         return this.waitCost();
     }
   }
+  aggro(chaser) {
+    this.enemy = chaser;
+  }
   selectEnemy(ctx) {
-    return heroOf(ctx);
+    return this.enemy != null && this.enemy.isAlive() ? this.enemy : heroOf(ctx);
   }
   onNotice(_ctx) {}
   notice(ctx) {
@@ -6731,7 +7479,7 @@ class ContentMob extends Actor {
   canSee(ctx, pos) {
     const level = ctx.level;
     const out = new Uint8Array(level.w * level.h);
-    computeFov(level, (x, y) => level.isOpaque(x, y), this.x, this.y, 8, out);
+    computeFov(level, (x, y) => level.isOpaque(x, y), this.x, this.y, this.def.viewDistance ?? 8, out);
     return out[pos] === 1;
   }
   actSleeping(ctx, heroPos, enemyInFOV) {
@@ -6771,13 +7519,13 @@ class ContentMob extends Actor {
     this.target = randomDestination(rng, ctx.level);
     return this.waitCost();
   }
-  actHunting(ctx, hero, enemyInFOV) {
+  actHunting(ctx, enemy, enemyInFOV) {
     this.enemySeen = enemyInFOV;
-    if (enemyInFOV && hero != null && this.canAttack(ctx, hero.pos)) {
-      return this.doAttack(ctx, hero);
+    if (enemyInFOV && enemy != null && this.canAttack(ctx, enemy.pos)) {
+      return this.doAttack(ctx, enemy);
     }
-    if (enemyInFOV && hero != null) {
-      this.target = hero.pos;
+    if (enemyInFOV && enemy != null) {
+      this.target = enemy.pos;
     }
     const oldPos = this.pos;
     if (this.target !== -1 && this.getCloser(ctx, this.target)) {
@@ -6818,11 +7566,16 @@ class ContentMob extends Actor {
     this.pos = step;
     return true;
   }
-  doAttack(ctx, hero) {
-    strikeMobVsHero(ctx, this, hero, this.def.atk, (rng) => this.mobDamageRoll(rng), (_rng, damage) => this.attackProc(ctx, hero, damage));
+  doAttack(ctx, enemy) {
+    const proc = (rng, damage) => this.attackProc(ctx, enemy, damage);
+    if (enemy instanceof ContentHero) {
+      strikeMobVsHero(ctx, this, enemy, this.def.atk, (rng) => this.mobDamageRoll(rng), proc);
+    } else {
+      strikeMobVsMob(ctx, this, enemy, this.def.atk, (rng) => this.mobDamageRoll(rng), proc);
+    }
     return this.attackCost();
   }
-  attackProc(_ctx, _hero, damage) {
+  attackProc(_ctx, _enemy, damage) {
     return damage;
   }
   onDamaged(_ctx) {}
@@ -6873,8 +7626,9 @@ class ThiefMob extends ContentMob {
   nowhereToRun(_ctx) {
     this.state = "hunting";
   }
-  attackProc(ctx, hero, damage) {
-    thiefSteal(ctx, this, hero);
+  attackProc(ctx, enemy, damage) {
+    if (enemy instanceof ContentHero)
+      thiefSteal(ctx, this, enemy);
     return damage;
   }
 }
@@ -6883,7 +7637,7 @@ class BatMob extends ContentMob {
   defenseVerb() {
     return "evaded";
   }
-  attackProc(_ctx, _hero, damage) {
+  attackProc(_ctx, _enemy, damage) {
     const reg = Math.min(damage, this.ht - this.hp);
     if (reg > 0)
       this.hp += reg;
@@ -6895,37 +7649,50 @@ class ShamanMob extends ContentMob {
   canAttack(ctx, targetPos) {
     return rangedCanAttack(ctx, this, targetPos);
   }
-  doAttack(ctx, hero) {
-    if (chebyshevPos(this.pos, hero.pos, this.w) > 1) {
-      return this.zap(ctx, hero);
+  doAttack(ctx, enemy) {
+    if (chebyshevPos(this.pos, enemy.pos, this.w) > 1) {
+      return this.zap(ctx, enemy);
     }
-    return super.doAttack(ctx, hero);
+    return super.doAttack(ctx, enemy);
   }
-  zap(ctx, hero) {
+  zap(ctx, target) {
     const rng = ctx.rng;
-    if (hitRoll(rng, this.def.atk, heroDefenseSkill(hero), true)) {
+    const evasion = target instanceof ContentHero ? heroDefenseSkill(target) : target.mobDefenseSkill();
+    if (hitRoll(rng, this.def.atk, evasion, true)) {
       let dmg = rng.int(2, 12);
-      if (ctx.level.getAt(hero.pos) === 9 /* WATER */ && !hero.flying) {
+      if (ctx.level.getAt(target.pos) === 9 /* WATER */ && !target.flying) {
         dmg = Math.floor(dmg * 1.5);
       }
       const applied = applyDamage(rng, {
-        hp: hero.hp,
-        ht: hero.ht,
-        paralysed: hero.paralysed,
+        hp: target.hp,
+        ht: target.ht,
+        paralysed: target.paralysed,
         immunities: [],
         resistances: []
       }, dmg, "lightning");
-      hero.hp = applied.hp;
+      target.hp = applied.hp;
       if (applied.paralysisBroken) {
-        hero.paralysed = false;
-        delete hero.buffs.paralysis;
+        target.paralysed = false;
+        delete target.buffs.paralysis;
       }
-      ctx.log(`The ${this.name}'s lightning hits you for ${dmg}.`);
-      if (applied.died) {
-        ctx.log(`${this.name}'s lightning bolt killed you...`);
+      if (target instanceof ContentHero) {
+        ctx.log(`The ${this.name}'s lightning hits you for ${dmg}.`);
+        if (applied.died) {
+          ctx.log(`${this.name}'s lightning bolt killed you...`);
+        }
+      } else {
+        ctx.log(`The ${this.name}'s lightning hits the ${target.name} for ${dmg}.`);
+        if (applied.died) {
+          killMob(ctx, target, {});
+        } else {
+          if (target.state === "sleeping")
+            target.state = "wandering";
+          target.justAlerted = true;
+          target.onDamaged(ctx);
+        }
       }
     } else {
-      ctx.log(`The ${this.name}'s lightning misses you.`);
+      ctx.log(target instanceof ContentHero ? `The ${this.name}'s lightning misses you.` : `The ${this.name}'s lightning misses the ${target.name}.`);
     }
     return 2 * this.getSpeed();
   }
@@ -6963,29 +7730,31 @@ class ShieldedMob extends BruteMob {
 }
 
 class AlbinoMob extends ContentMob {
-  attackProc(ctx, hero, damage) {
+  attackProc(ctx, enemy, damage) {
     if (ctx.rng.int(0, 2) === 0) {
-      hero.buffs.bleeding = { kind: "bleeding", left: 0, level: damage };
+      enemy.buffs.bleeding = { kind: "bleeding", left: 0, level: damage };
     }
     return damage;
   }
 }
 
 class BanditMob extends ThiefMob {
-  attackProc(ctx, hero, damage) {
-    if (thiefSteal(ctx, this, hero)) {
+  attackProc(ctx, enemy, damage) {
+    if (!(enemy instanceof ContentHero))
+      return damage;
+    if (thiefSteal(ctx, this, enemy)) {
       const left = ctx.rng.int(5, 12);
-      const cur = hero.buffs.blindness?.left ?? 0;
-      hero.buffs.blindness = { kind: "blindness", left: Math.max(cur, left) };
+      const cur = enemy.buffs.blindness?.left ?? 0;
+      enemy.buffs.blindness = { kind: "blindness", left: Math.max(cur, left) };
     }
     return damage;
   }
 }
 
 class SpinnerMob extends ContentMob {
-  attackProc(ctx, hero, damage) {
+  attackProc(ctx, enemy, damage) {
     if (ctx.rng.int(0, 2) === 0) {
-      hero.buffs.poison = {
+      enemy.buffs.poison = {
         kind: "poison",
         left: ctx.rng.int(7, 9) * 1
       };
@@ -7015,9 +7784,9 @@ class SpinnerMob extends ContentMob {
 }
 
 class ElementalMob extends ContentMob {
-  attackProc(_ctx, hero, damage) {
+  attackProc(_ctx, enemy, damage) {
     if (_ctx.rng.int(0, 2) === 0) {
-      hero.buffs.burning = { kind: "burning", left: 8 };
+      enemy.buffs.burning = { kind: "burning", left: 8 };
     }
     return damage;
   }
@@ -7027,12 +7796,14 @@ class MonkMob extends ContentMob {
   defenseVerb() {
     return "parried";
   }
-  attackProc(ctx, hero, damage) {
-    if (ctx.rng.int(0, 6) === 0 && hero.weaponId !== null && hero.weaponId !== "knuckles") {
-      const def = getItem(hero.weaponId);
-      dropItemAt(ctx, hero.pos, hero.weaponId);
-      hero.weapon = null;
-      hero.weaponId = null;
+  attackProc(ctx, enemy, damage) {
+    if (!(enemy instanceof ContentHero))
+      return damage;
+    if (ctx.rng.int(0, 6) === 0 && enemy.weaponId !== null && enemy.weaponId !== "knuckles") {
+      const def = getItem(enemy.weaponId);
+      dropItemAt(ctx, enemy.pos, enemy.weaponId);
+      enemy.weapon = null;
+      enemy.weaponId = null;
       ctx.log(`${this.name} has knocked the ${def.name} from your hands!`);
     }
     return damage;
@@ -7044,6 +7815,12 @@ function buildMob(mobId, id, pos, w, depth = 0) {
     if (!ctor)
       throw new Error("goo-boss not registered (import src/content/goo-boss.js)");
     return new ctor(id, pos, w);
+  }
+  if (mobId === "bee") {
+    const ctor = beeCtor;
+    if (!ctor)
+      throw new Error("bee not registered (import src/content/bee.js)");
+    return new ctor(id, pos, w, depth);
   }
   if (npcBuilder) {
     const npc = npcBuilder(mobId, id, pos, w, depth);
@@ -7093,6 +7870,10 @@ function buildMob(mobId, id, pos, w, depth = 0) {
 var gooCtor = null;
 function registerGoo(ctor) {
   gooCtor = ctor;
+}
+var beeCtor = null;
+function registerBee(ctor) {
+  beeCtor = ctor;
 }
 var tenguCtor = null;
 function registerTengu(ctor) {
@@ -7475,6 +8256,46 @@ function strikeHeroVsMob(ctx, hero, mob, accuracy, damageRoll) {
     mob.onDamaged(ctx);
   }
 }
+function strikeMobVsMob(ctx, attacker, defender, accuracy, damageRoll, onAttackProc) {
+  const rng = ctx.rng;
+  const seq = runAttackSequence(rng, {
+    accuracy,
+    evasion: defender.mobDefenseSkill(),
+    defenderDr: defender.def.dr,
+    damageRoll,
+    onAttackProc,
+    onDefenseProc: (_r, dmg) => mobDefenseProc(ctx, defender, dmg)
+  });
+  if (!seq.hit) {
+    ctx.log(`The ${attacker.name} misses the ${defender.name}.`);
+    return;
+  }
+  if (defender.invulnerable) {
+    ctx.log(`The ${attacker.name} hits the ${defender.name}, but does no damage.`);
+    return;
+  }
+  const applied = applyDamage(rng, {
+    hp: defender.hp,
+    ht: defender.ht,
+    paralysed: defender.paralysed,
+    immunities: defender.immunities,
+    resistances: defender.resistances
+  }, seq.damageDealt);
+  defender.hp = applied.hp;
+  if (applied.paralysisBroken) {
+    defender.paralysed = false;
+    delete defender.buffs.paralysis;
+  }
+  ctx.log(seq.damageDealt > 0 ? `The ${attacker.name} hits the ${defender.name} for ${seq.damageDealt}.` : `The ${attacker.name} hits the ${defender.name}, but does no damage.`);
+  if (applied.died) {
+    killMob(ctx, defender, {});
+  } else {
+    if (defender.state === "sleeping")
+      defender.state = "wandering";
+    defender.justAlerted = true;
+    defender.onDamaged(ctx);
+  }
+}
 function strikeMobVsHero(ctx, mob, hero, accuracy, damageRoll, onAttackProc) {
   const rng = ctx.rng;
   const seq = runAttackSequence(rng, {
@@ -7661,7 +8482,10 @@ var RING_GEMS = [
   "agate"
 ];
 var RING_PRICE_BASE = 80;
+var TICKS_TO_KNOW = 200;
 var ringStates = new Map;
+var ringSeq = 0;
+var ringSlots = [null, null];
 function parseRingId(itemId) {
   const hash = itemId.indexOf("#");
   const base = hash === -1 ? itemId : itemId.slice(0, hash);
@@ -7674,6 +8498,39 @@ function parseRingId(itemId) {
 }
 function isRingId(itemId) {
   return parseRingId(itemId) !== null;
+}
+function getRingState(instanceId) {
+  return ringStates.get(instanceId);
+}
+function createRing(rng, ringId, opts = {}) {
+  const spec = ringSpec(ringId);
+  const instanceId = `ring_of_${ringId}#${++ringSeq}`;
+  let level = 0;
+  let cursed = false;
+  if (spec.fixedPlusOne) {
+    level = 1;
+  } else if (opts.randomize) {
+    const lvl = rng.int(1, 3);
+    if (rng.float(0, 1) < 0.3) {
+      level = -lvl;
+      cursed = true;
+    } else {
+      level = lvl;
+    }
+  }
+  const st = {
+    instanceId,
+    ringId,
+    level,
+    cursed,
+    cursedKnown: false,
+    ticksToKnow: TICKS_TO_KNOW,
+    regenAcc: 0
+  };
+  ringStates.set(instanceId, st);
+  if (spec.fixedPlusOne)
+    identifyRingType(ringId);
+  return instanceId;
 }
 function ringEffectiveLevel(state) {
   return state.level;
@@ -7696,6 +8553,11 @@ function isRingTypeKnown(ringId) {
   ensureLocalLabels();
   return localKnown.has(spec.javaClass);
 }
+function identifyRingType(ringId) {
+  const spec = ringSpec(ringId);
+  ensureLocalLabels();
+  localKnown.add(spec.javaClass);
+}
 function ringGemLabel(ringId) {
   ensureLocalLabels();
   return localGemLabels.get(ringSpec(ringId).javaClass) ?? "diamond";
@@ -7706,6 +8568,83 @@ function registerRingIdClasses() {
     labels: RING_GEMS,
     images: RING_SPECS.map((s) => s.spriteKey)
   });
+}
+function equippedRingStates() {
+  return [
+    ringSlots[0] ? ringStates.get(ringSlots[0]) ?? null : null,
+    ringSlots[1] ? ringStates.get(ringSlots[1]) ?? null : null
+  ];
+}
+function equippedRingLevels(hero, ringId) {
+  const out = [];
+  for (const st of equippedRingStates()) {
+    if (st && st.ringId === ringId)
+      out.push(ringEffectiveLevel(st));
+  }
+  return out;
+}
+function ringBonus(hero, ringId) {
+  return equippedRingLevels(hero, ringId).reduce((s, l) => s + l, 0);
+}
+function syncRingBuffs(hero) {
+  for (const spec of RING_SPECS) {
+    const key = spec.buffKind;
+    const levels = equippedRingLevels(hero, spec.id);
+    if (levels.length === 0) {
+      delete hero.buffs[key];
+    } else {
+      hero.buffs[key] = {
+        kind: key,
+        left: Infinity,
+        level: levels.reduce((s, l) => s + l, 0)
+      };
+    }
+  }
+}
+function equipRing(ctx, hero, slot) {
+  const stack = hero.inventory[slot];
+  if (!stack || !isRingId(stack.itemId))
+    return 0;
+  const st = getRingState(stack.itemId);
+  if (!st)
+    return 0;
+  const finger = ringSlots[0] === null ? 1 : ringSlots[1] === null ? 2 : 0;
+  if (finger === 0)
+    return 0;
+  removeFromInventory(hero, slot, 1);
+  ringSlots[finger - 1] = st.instanceId;
+  st.cursedKnown = true;
+  if (st.cursed) {
+    ctx.log(`your ${ringDisplayName(st.ringId)} tightens around your finger painfully`);
+  }
+  syncRingBuffs(hero);
+  return finger;
+}
+function tickRingClocks(hero, cost) {
+  for (const st of equippedRingStates()) {
+    if (!st)
+      continue;
+    const spec = ringSpec(st.ringId);
+    if (!isRingTypeKnown(st.ringId)) {
+      st.ticksToKnow -= cost;
+      if (st.ticksToKnow <= 0) {
+        identifyRingType(st.ringId);
+        st.ticksToKnow = TICKS_TO_KNOW;
+      }
+    }
+    if (spec.id === "mending") {
+      const interval = 10 / Math.pow(1.2, ringBonus(hero, "mending"));
+      st.regenAcc += cost;
+      while (st.regenAcc >= interval) {
+        st.regenAcc -= interval;
+        if (hero.hp < hero.ht)
+          hero.hp = Math.min(hero.ht, hero.hp + 1);
+      }
+    }
+  }
+}
+function powerRingBonus(hero) {
+  return ringBonus(hero, "power");
 }
 function ringDisplayName(ringId) {
   const spec = ringSpec(ringId);
@@ -7756,6 +8695,17 @@ function ringItemDefFor(defId) {
     stackable: false,
     price: ringPrice(st)
   };
+}
+function normalizeRingPickup(rng, itemId) {
+  const parsed = parseRingId(itemId);
+  if (!parsed)
+    return itemId;
+  if (parsed.instanceId)
+    return parsed.instanceId;
+  return createRing(rng, parsed.ringId, { randomize: true });
+}
+function useRingFromSlot(ctx, hero, slot) {
+  return equipRing(ctx, hero, slot);
 }
 registerRingIdClasses();
 
@@ -7816,6 +8766,13 @@ function createWand(rng, wandId, opts = {}) {
     rechargeAcc: 0
   });
   return instanceId;
+}
+function wandEffectiveLevel(state) {
+  return state.level;
+}
+function wandZapPower(hero, state, charging) {
+  const eLevel = wandEffectiveLevel(state);
+  return wandPower(eLevel, powerRingBonus(hero), charging);
 }
 var WAND_WOODS = [
   "holly",
@@ -7884,6 +8841,14 @@ function wandItemDef(instanceId) {
     price: wandPrice(st)
   };
 }
+function normalizeWandPickup(rng, itemId) {
+  const parsed = parseWandId(itemId);
+  if (!parsed)
+    return itemId;
+  if (parsed.instanceId)
+    return parsed.instanceId;
+  return createWand(rng, parsed.wandId, { randomize: true });
+}
 function identifyWandType(wandId, log = () => {}) {
   const spec = wandSpec(wandId);
   if (spec.wood === null || isWandKnown(spec.className))
@@ -7891,10 +8856,565 @@ function identifyWandType(wandId, log = () => {}) {
   knowWand(spec.className);
   log(txtWandIdentified(spec.name));
 }
+function rechargeWand(hero, state, timeUnits, mageClass) {
+  if (state.curCharges >= state.maxCharges) {
+    state.rechargeAcc = 0;
+    return 0;
+  }
+  const delay = wandRechargeTurns(mageClass, wandEffectiveLevel(state));
+  state.rechargeAcc += timeUnits;
+  let gained = 0;
+  while (state.rechargeAcc >= delay && state.curCharges < state.maxCharges) {
+    state.rechargeAcc -= delay;
+    state.curCharges++;
+    gained++;
+  }
+  return gained;
+}
+function beginZap(ctx, hero, state) {
+  if (state.curCharges <= 0) {
+    ctx.log(TXT_FIZZLES);
+    return { fizzled: true };
+  }
+  return { fizzled: false };
+}
+function resolveZap(ctx, hero, state, targetCell, fx) {
+  if (targetCell === hero.pos) {
+    ctx.log(TXT_SELF_TARGET);
+    return { ok: false, reason: "self-target" };
+  }
+  const spec = wandSpec(state.wandId);
+  const ball = ballisticaCast(ballisticaWorldOf(ctx), hero.pos, targetCell, true, spec.hitChars);
+  applyZapEffect(ctx, hero, state, ball, fx);
+  if (!(state.levelKnown && state.cursedKnown) && --state.usagesToKnow <= 0) {
+    state.levelKnown = true;
+    state.cursedKnown = true;
+    ctx.log(txtWandIdentified(wandDisplayName(state.wandId)));
+  }
+  state.curCharges--;
+  state.chargeKnown = true;
+  delete hero.buffs.invisibility;
+  return { ok: true, spent: 1 };
+}
 function createWandReward(rng, wandId) {
   return createWand(rng, wandId, { randomize: true, upgrades: 1 });
 }
+var WandFxNoop = () => {};
+function beamPassable(t) {
+  switch (t) {
+    case 0 /* WALL */:
+    case 8 /* CHASM */:
+    case 4 /* DOOR_SECRET */:
+    case 3 /* DOOR_LOCKED */:
+    case 5 /* EXIT_LOCKED */:
+    case 37 /* BARRICADE */:
+    case 15 /* STATUE */:
+    case 17 /* BOOKSHELF */:
+    case 14 /* PEDESTAL */:
+    case 13 /* ALCHEMY */:
+    case 18 /* CHEST */:
+    case 19 /* CHEST_LOCKED */:
+    case 16 /* TOMB */:
+      return false;
+    default:
+      return true;
+  }
+}
+function beamLosBlocking(t) {
+  switch (t) {
+    case 0 /* WALL */:
+    case 2 /* DOOR */:
+    case 4 /* DOOR_SECRET */:
+    case 3 /* DOOR_LOCKED */:
+    case 39 /* HIGH_GRASS */:
+    case 37 /* BARRICADE */:
+      return true;
+    default:
+      return false;
+  }
+}
+function solidAt(level, pos) {
+  const t = level.tiles[pos];
+  return !beamPassable(t) && t !== 2 /* DOOR */ && t !== 4 /* DOOR_SECRET */;
+}
+function ballisticaWorldOf(ctx) {
+  const level = ctx.level;
+  const w = level.w;
+  const hero = heroOf(ctx);
+  const len = level.tiles.length;
+  const inBounds = (pos) => pos >= 0 && pos < len;
+  return {
+    w,
+    h: level.h,
+    beamPassableAt: (pos) => inBounds(pos) && beamPassable(level.tiles[pos]),
+    losBlockingAt: (pos) => inBounds(pos) && beamLosBlocking(level.tiles[pos]),
+    charAt: (pos) => hero.isAlive() && hero.pos === pos || ctx.mobs.some((m) => m.isAlive() && m.y * w + m.x === pos)
+  };
+}
+function isZapCharAlive(ch) {
+  return ch.isAlive();
+}
+function asTrapChar(ch) {
+  if (ch instanceof ContentHero)
+    return ch;
+  return Object.assign(ch, { kind: "mob" });
+}
+function damageZapChar(ctx, target, amount, source) {
+  if (target instanceof ContentHero) {
+    const applied = applyDamage(ctx.rng, {
+      hp: target.hp,
+      ht: target.ht,
+      paralysed: target.paralysed,
+      immunities: [],
+      resistances: []
+    }, amount, source);
+    target.hp = applied.hp;
+    if (applied.paralysisBroken)
+      target.paralysed = false;
+  } else {
+    damageMobDirect(ctx, target, amount, source);
+  }
+}
+function prolongBuff2(target, kind, duration) {
+  const cur = target.buffs[kind];
+  target.buffs[kind] = { kind, left: (cur ? cur.left : 0) + duration };
+}
+function elementsLevelOf(ch) {
+  if (ch instanceof ContentHero) {
+    const b = ch.buffs["ring_elements"];
+    return b ? b.level ?? 0 : null;
+  }
+  return null;
+}
+function randomRespawnCell(ctx, hero) {
+  const level = ctx.level;
+  const n = level.w * level.h;
+  for (let i = 0;i < 10; i++) {
+    const cell = ctx.rng.int(0, n);
+    const x = cell % level.w;
+    const y = Math.floor(cell / level.w);
+    if (!isRespawnPassable(level, x, y))
+      continue;
+    if (level.visible[cell])
+      continue;
+    if (hero.pos === cell)
+      continue;
+    if (charAtPos(ctx, cell))
+      continue;
+    return cell;
+  }
+  return -1;
+}
+function isRespawnPassable(level, x, y) {
+  if (x < 0 || y < 0 || x >= level.w || y >= level.h)
+    return false;
+  return beamPassable(level.tiles[y * level.w + x]);
+}
+function healDewdrop(ctx, hero, qty) {
+  const value = 1 + Math.floor((ctx.level.depth - 1) / 5);
+  const effect = Math.min(hero.ht - hero.hp, value * qty);
+  if (effect > 0) {
+    hero.hp += effect;
+    ctx.log(`+${effect}HP`);
+  }
+}
+function effectMagicMissile(ctx, hero, power, ball, fx) {
+  const target = charAtPos(ctx, ball.cell);
+  if (target) {
+    damageZapChar(ctx, target, magicMissileDamage(ctx.rng, power), "wand");
+  }
+  fx({ kind: "missile", from: hero.pos, to: ball.cell });
+}
+function effectFirebolt(ctx, hero, power, ball, fx) {
+  const level = ctx.level;
+  for (let i = 1;i < ball.distance - 1; i++) {
+    const c = ball.trace[i];
+    if (isFlamableForBlob(level.tiles[c])) {
+      seedBlob(level.blobs, "fire", c, 4, level.w * level.h);
+    }
+  }
+  seedBlob(level.blobs, "fire", ball.cell, 1, level.w * level.h);
+  const target = charAtPos(ctx, ball.cell);
+  if (target) {
+    damageZapChar(ctx, target, fireboltDamage(ctx.rng, power), "wand");
+    if (isZapCharAlive(target) && target.buffs["burning"]) {
+      const full = BURNING_DURATION * elementsDurationFactor(elementsLevelOf(target));
+      target.buffs["burning"] = { kind: "burning", left: full };
+    }
+  }
+  fx({ kind: "missile", from: hero.pos, to: ball.cell });
+}
+function effectLightning(ctx, hero, power, ball, fx) {
+  const level = ctx.level;
+  const w = level.w;
+  const affected = new Set;
+  const points = [hero.pos];
+  const hit = (ch, damage) => {
+    if (damage < 1)
+      return;
+    affected.add(ch);
+    const inWater = level.tiles[ch.pos] === 9 /* WATER */ && !ch.flying;
+    damageZapChar(ctx, ch, inWater ? damage * 2 : damage, "lightning");
+    points.push(ch.pos);
+    const ns = [];
+    const cx = ch.pos % w;
+    const cy = Math.floor(ch.pos / w);
+    for (let dy = -1;dy <= 1; dy++) {
+      for (let dx = -1;dx <= 1; dx++) {
+        if (dx === 0 && dy === 0)
+          continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= level.h)
+          continue;
+        const n = charAtPos(ctx, ny * w + nx);
+        if (n && isZapCharAlive(n) && !affected.has(n))
+          ns.push(n);
+      }
+    }
+    if (ns.length > 0)
+      hit(ctx.rng.pick(ns), lightningChainDamage(ctx.rng, damage));
+  };
+  const first = charAtPos(ctx, ball.cell);
+  if (first && isZapCharAlive(first)) {
+    hit(first, lightningInitialDamage(ctx.rng, power));
+  } else {
+    points.push(ball.cell);
+  }
+  fx({ kind: "strike", points });
+  if (!hero.isAlive()) {
+    ctx.log("You killed yourself with your own Wand of Lightning...");
+  }
+}
+function effectDisintegration(ctx, _hero, power, rawLevel, ball, fx) {
+  const level = ctx.level;
+  const effDistance = Math.min(ball.distance, disintegrationMaxDistance(rawLevel));
+  let terrainAffected = false;
+  const chars = [];
+  for (let i = 1;i < effDistance; i++) {
+    const c = ball.trace[i];
+    const ch = charAtPos(ctx, c);
+    if (ch && isZapCharAlive(ch))
+      chars.push(ch);
+    const t = level.tiles[c];
+    if (t === 2 /* DOOR */) {
+      setLevelTile(level, c, 38 /* EMBERS */);
+      terrainAffected = true;
+    } else if (t === 39 /* HIGH_GRASS */) {
+      setLevelTile(level, c, 10 /* GRASS */);
+      terrainAffected = true;
+    }
+  }
+  for (const ch of chars) {
+    damageZapChar(ctx, ch, disintegrationDamage(ctx.rng, power, chars.length), "wand");
+  }
+  fx({ kind: "beam", cells: ball.trace.slice(0, effDistance) });
+}
+function setLevelTile(level, pos, t) {
+  level.tiles[pos] = t;
+}
+function effectAvalanche(ctx, hero, power, ball, fx) {
+  const level = ctx.level;
+  const size = avalancheSize(power);
+  const dist = buildDistanceMap2(level.w, level.h, ball.cell, (pos) => !solidAt(level, pos), size);
+  const n = level.w * level.h;
+  const burst = [];
+  for (let i = 0;i < n; i++) {
+    const d = dist[i];
+    if (d === Infinity)
+      continue;
+    burst.push(i);
+    const ch = charAtPos(ctx, i);
+    if (ch && isZapCharAlive(ch)) {
+      damageZapChar(ctx, ch, avalancheDamage(ctx.rng, size, d), "wand");
+      if (isZapCharAlive(ch) && avalancheParalyzes(ctx.rng, d)) {
+        prolongBuff2(ch, "paralysis", avalancheParalysisDuration(ctx.rng));
+      }
+    }
+    pressTrapCell(ctx, i, ch && isZapCharAlive(ch) ? asTrapChar(ch) : null, (mobId, pos) => {
+      const mob = buildMob(mobId, nextMobId(), pos, level.w);
+      mob.state = "wandering";
+      ctx.addMob(mob, 2);
+    });
+  }
+  fx({ kind: "burst", cells: burst });
+}
+function effectPoison(ctx, hero, power, ball, _fx) {
+  const target = charAtPos(ctx, ball.cell);
+  if (target && isZapCharAlive(target)) {
+    const dur = poisonWandDuration(power) * elementsDurationFactor(elementsLevelOf(target));
+    target.buffs["poison"] = { kind: "poison", left: dur };
+  } else {
+    ctx.log(TXT_NOTHING_HAPPENED);
+  }
+}
+function effectAmok(ctx, hero, power, ball, _fx) {
+  const target = charAtPos(ctx, ball.cell);
+  if (target && isZapCharAlive(target)) {
+    if (target instanceof ContentHero) {
+      prolongBuff2(target, "vertigo", vertigoDuration(elementsLevelOf(target)));
+    } else {
+      prolongBuff2(target, "amok", amokDuration(power));
+    }
+  } else {
+    ctx.log(TXT_NOTHING_HAPPENED);
+  }
+}
+function effectSlowness(ctx, _hero, power, ball, _fx) {
+  const target = charAtPos(ctx, ball.cell);
+  if (target && isZapCharAlive(target)) {
+    prolongBuff2(target, "slow", slowDuration(elementsLevelOf(target)) / 3 + power);
+  } else {
+    ctx.log(TXT_NOTHING_HAPPENED);
+  }
+}
+function effectBlink(ctx, hero, power, ball, fx) {
+  const dest = blinkDestinationCell(ball.trace, ball.distance, power, charAtPos(ctx, ball.cell) != null);
+  const from = hero.pos;
+  hero.pos = dest;
+  fx({ kind: "missile", from, to: dest });
+}
+function effectTeleportation(ctx, hero, _power, ball, _fx) {
+  const target = charAtPos(ctx, ball.cell);
+  if (target && isZapCharAlive(target)) {
+    if (target instanceof ContentHero) {
+      identifyWandType("teleportation", ctx.log);
+      let cell = -1;
+      for (let count = 11;count > 0; count--) {
+        cell = randomRespawnCell(ctx, hero);
+        if (cell !== -1)
+          break;
+      }
+      if (cell !== -1) {
+        hero.pos = cell;
+      } else {
+        ctx.log("There is nowhere to teleport to!");
+      }
+    } else {
+      let pos = -1;
+      for (let count = 11;count > 0; count--) {
+        pos = randomRespawnCell(ctx, hero);
+        if (pos !== -1)
+          break;
+      }
+      if (pos === -1) {
+        ctx.log("There is nowhere to teleport to!");
+      } else {
+        target.pos = pos;
+        ctx.log(`${hero.name} teleported ${target.name} to somewhere`);
+      }
+    }
+  } else {
+    ctx.log(TXT_NOTHING_HAPPENED);
+  }
+}
+function effectFlock(ctx, hero, power, ball, fx) {
+  const level = ctx.level;
+  const n = flockSheepCount(power);
+  let cell = ball.cell;
+  if (charAtPos(ctx, cell) != null && ball.distance > 2) {
+    cell = ball.trace[ball.distance - 2];
+  }
+  const occupied = new Set;
+  if (hero.isAlive())
+    occupied.add(hero.pos);
+  for (const m of ctx.mobs)
+    if (m.isAlive())
+      occupied.add(m.y * level.w + m.x);
+  const positions = flockSheepPositions(level.w, level.h, cell, (pos) => beamPassable(level.tiles[pos]), (pos) => occupied.has(pos), n);
+  const lifespan = flockLifespan(power, ctx.rng);
+  for (const pos of positions) {
+    spawnFlockSheep(ctx, pos, lifespan);
+  }
+  fx({ kind: "sheep", cells: positions });
+}
+function effectRegrowth(ctx, _hero, power, ball, _fx) {
+  const level = ctx.level;
+  for (let i = 1;i < ball.distance - 1; i++) {
+    const c = ball.trace[i];
+    const t2 = level.tiles[c];
+    if (t2 === 1 /* FLOOR */ || t2 === 38 /* EMBERS */) {
+      setLevelTile(level, c, 10 /* GRASS */);
+    }
+  }
+  const cell = ball.cell;
+  const t = level.tiles[cell];
+  if (t === 1 /* FLOOR */ || t === 38 /* EMBERS */ || t === 10 /* GRASS */ || t === 39 /* HIGH_GRASS */) {
+    seedRegrowthBlob(level.blobs, cell, regrowthSeedAmount(power), level.w * level.h);
+  } else {
+    ctx.log(TXT_NOTHING_HAPPENED);
+  }
+}
+
+class RegrowthBlob2 extends Blob {
+  constructor(length) {
+    super("regrowth", length);
+  }
+  evolve(_rng, world) {
+    const { length } = world;
+    const { cur, off } = this;
+    for (let pos = 0;pos < length; pos++) {
+      if (cur[pos] > 0) {
+        const grown = cur[pos] > 1;
+        const v = cur[pos] - 1;
+        this.volume += off[pos] = v;
+        const t = world.tileAt(pos);
+        let c1 = t;
+        if (t === 1 /* FLOOR */ || t === 38 /* EMBERS */) {
+          c1 = grown ? 39 /* HIGH_GRASS */ : 10 /* GRASS */;
+        } else if (t === 10 /* GRASS */ && grown) {
+          c1 = 39 /* HIGH_GRASS */;
+        }
+        if (c1 !== t) {
+          world.setTile(pos, c1);
+        }
+      } else {
+        off[pos] = 0;
+      }
+    }
+  }
+}
+function seedRegrowthBlob(blobs, cell, amount, length) {
+  let blob = blobs.find((b) => b instanceof RegrowthBlob2);
+  if (!blob) {
+    blob = new RegrowthBlob2(length);
+    blobs.push(blob);
+  }
+  blob.seed(cell, amount);
+  return blob;
+}
+function effectReach(ctx, hero, power, ball, _fx) {
+  const level = ctx.level;
+  const reach = reachDistance(ball.distance, power);
+  for (let i = 1;i < reach; i++) {
+    const c = ball.trace[i];
+    const before = level.tiles[c];
+    const ch = charAtPos(ctx, c);
+    if (ch && isZapCharAlive(ch) && !(ch instanceof ContentHero)) {
+      const heroPos = hero.pos;
+      hero.pos = ch.pos;
+      ch.pos = heroPos;
+      break;
+    }
+    const heapIdx = level.items.findIndex((it) => it.pos === c);
+    if (heapIdx !== -1) {
+      const heap = level.items[heapIdx];
+      if (heap.lockedChest)
+        break;
+      level.items.splice(heapIdx, 1);
+      const { defId, qty } = parseItemId(heap.itemId);
+      if (defId === "dewdrop") {
+        healDewdrop(ctx, hero, qty);
+      } else {
+        const pickupId = parseWandId(heap.itemId) != null ? normalizeWandPickup(ctx.rng, heap.itemId) : parseRingId(heap.itemId) != null ? normalizeRingPickup(ctx.rng, heap.itemId) : heap.itemId;
+        addToInventory(hero, pickupId, qty);
+        ctx.log(txtReachTransported(getItem(pickupId).name));
+      }
+      break;
+    }
+    pressTrapCell(ctx, c, null, (mobId, pos) => {
+      const mob = buildMob(mobId, nextMobId(), pos, level.w);
+      mob.state = "wandering";
+      ctx.addMob(mob, 2);
+    });
+    if (before === 40 /* OPEN_DOOR */) {
+      setLevelTile(level, c, 2 /* DOOR */);
+    }
+  }
+}
+function applyZapEffect(ctx, hero, state, ball, fx) {
+  const power = wandZapPower(hero, state, true);
+  switch (state.wandId) {
+    case "magic_missile":
+      return effectMagicMissile(ctx, hero, power, ball, fx);
+    case "firebolt":
+      return effectFirebolt(ctx, hero, power, ball, fx);
+    case "lightning":
+      return effectLightning(ctx, hero, power, ball, fx);
+    case "disintegration":
+      return effectDisintegration(ctx, hero, power, state.level, ball, fx);
+    case "avalanche":
+      return effectAvalanche(ctx, hero, power, ball, fx);
+    case "poison":
+      return effectPoison(ctx, hero, power, ball, fx);
+    case "amok":
+      return effectAmok(ctx, hero, power, ball, fx);
+    case "slowness":
+      return effectSlowness(ctx, hero, power, ball, fx);
+    case "blink":
+      return effectBlink(ctx, hero, power, ball, fx);
+    case "teleportation":
+      return effectTeleportation(ctx, hero, power, ball, fx);
+    case "flock":
+      return effectFlock(ctx, hero, power, ball, fx);
+    case "regrowth":
+      return effectRegrowth(ctx, hero, power, ball, fx);
+    case "reach":
+      return effectReach(ctx, hero, power, ball, fx);
+  }
+}
+var SHEEP_DEF = {
+  id: "sheep",
+  name: "sheep",
+  sprite: "mob_sheep",
+  hp: 1,
+  atk: 0,
+  def: 0,
+  dmgMin: 0,
+  dmgMax: 0,
+  triangular: true,
+  dr: 0,
+  exp: 0,
+  maxLvl: 1,
+  speed: 1,
+  flying: false,
+  ability: null,
+  attackDelay: 1,
+  immunities: [],
+  resistances: []
+};
 var sheepLifespans = new Map;
+function spawnFlockSheep(ctx, pos, lifespan) {
+  const level = ctx.level;
+  const sheep = new ContentMob(nextMobId(), SHEEP_DEF, pos, level.w);
+  sheep.invulnerable = true;
+  sheep.hostile = false;
+  sheep.state = "wandering";
+  sheepLifespans.set(sheep.id, lifespan);
+  ctx.addMob(sheep);
+  pressTrapCell(ctx, pos, asTrapChar(sheep), (mobId, p) => {
+    const mob = buildMob(mobId, nextMobId(), p, level.w);
+    mob.state = "wandering";
+    ctx.addMob(mob, 2);
+  });
+}
+function zapWandFromSlot(ctx, hero, slot, targetCell, fx = WandFxNoop) {
+  const stack = hero.inventory[slot];
+  if (!stack)
+    return 1;
+  const st = getWandState(stack.itemId);
+  if (!st)
+    return 1;
+  if (targetCell === hero.pos) {
+    ctx.log(TXT_SELF_TARGET);
+    return 0;
+  }
+  identifyWandType(st.wandId, ctx.log);
+  if (beginZap(ctx, hero, st).fizzled) {
+    st.levelKnown = true;
+    st.chargeKnown = true;
+    return 1;
+  }
+  const res = resolveZap(ctx, hero, st, targetCell, fx);
+  return res.ok ? res.spent : 1;
+}
+function rechargeWands(hero, timeUnits, mageClass) {
+  for (const stack of hero.inventory) {
+    const st = getWandState(stack.itemId);
+    if (st)
+      rechargeWand(hero, st, timeUnits, mageClass);
+  }
+}
 registerWandIdClasses();
 function instanceItemDef(defId) {
   if (defId.startsWith("wand_of_"))
@@ -7932,6 +9452,7 @@ class ContentHero extends Actor {
   armorId = null;
   rangedWeapon = null;
   darts = 0;
+  subClass = "none";
   inventory = [];
   gold = 0;
   hungerLevel = 0;
@@ -8051,11 +9572,11 @@ function removeFromInventory(hero, slot, qty = 1) {
 }
 
 // src/content/potions.ts
-function affectBuff2(buffs, kind, duration) {
+function affectBuff3(buffs, kind, duration) {
   const cur = buffs[kind];
   buffs[kind] = cur ? { ...cur, left: cur.left + duration } : { kind, left: duration };
 }
-function prolongBuff2(buffs, kind, duration, extra) {
+function prolongBuff3(buffs, kind, duration, extra) {
   const cur = buffs[kind];
   const next = cur ? { ...cur, left: Math.max(cur.left, duration) } : { kind, left: duration };
   if (extra?.sourceId !== undefined)
@@ -8194,23 +9715,23 @@ function applyDrinkEffect(ctx, hero, id) {
       break;
     }
     case "potion_mindvision": {
-      affectBuff2(hero.buffs, "mindvision", 20);
+      affectBuff3(hero.buffs, "mindvision", 20);
       break;
     }
     case "potion_levitation": {
-      affectBuff2(hero.buffs, "levitation", 20);
+      affectBuff3(hero.buffs, "levitation", 20);
       hero.flying = true;
       delete hero.buffs.roots;
       ctx.log("You float into the air!");
       break;
     }
     case "potion_invisibility": {
-      affectBuff2(hero.buffs, "invisibility", 15);
+      affectBuff3(hero.buffs, "invisibility", 15);
       ctx.log("You vanish!");
       break;
     }
     case "potion_purity": {
-      affectBuff2(hero.buffs, "gasesimmunity", 5);
+      affectBuff3(hero.buffs, "gasesimmunity", 5);
       ctx.log("You feel cleansed of impurities.");
       break;
     }
@@ -8295,7 +9816,7 @@ function shatterPotionAt(ctx, hero, cell, id) {
       for (const c of affected) {
         const ch = charAtCell(ctx, hero, c);
         if (ch) {
-          prolongBuff2(ch.buffs, "frost", 5 * ctx.rng.float(1, 1.5));
+          prolongBuff3(ch.buffs, "frost", 5 * ctx.rng.float(1, 1.5));
           ch.paralysed = true;
           delete ch.buffs.burning;
         }
@@ -8695,7 +10216,7 @@ function doMagicMapping(ctx, _hero) {
 function doTeleportation(ctx, hero) {
   const level = ctx.level;
   for (let i = 0;i < 10; i++) {
-    const cell = randomRespawnCell(ctx, hero);
+    const cell = randomRespawnCell2(ctx, hero);
     if (cell !== -1) {
       hero.pos = cell;
       ctx.log("You teleport!");
@@ -8704,7 +10225,7 @@ function doTeleportation(ctx, hero) {
   }
   ctx.log("The scroll fizzles.");
 }
-function randomRespawnCell(ctx, hero) {
+function randomRespawnCell2(ctx, hero) {
   const level = ctx.level;
   const n = level.w * level.h;
   for (let i = 0;i < 10; i++) {
@@ -8737,7 +10258,7 @@ function doChallenge(ctx, hero) {
       mob.beckonedTo = hero.pos;
     if (isMobVisible(ctx, mob.pos)) {
       const d = chebyshev(hero.pos, mob.pos, w);
-      prolongBuff2(mob.buffs, "rage", d);
+      prolongBuff3(mob.buffs, "rage", d);
     }
   }
   ctx.log("You let out a challenging cry!");
@@ -8746,7 +10267,7 @@ function doTerror(ctx, hero) {
   for (const m of ctx.mobs) {
     const mob = m;
     if (isMobVisible(ctx, mob.pos)) {
-      prolongBuff2(mob.buffs, "terror", 10, { sourceId: hero.id });
+      prolongBuff3(mob.buffs, "terror", 10, { sourceId: hero.id });
       mob.terrorFrom = hero.pos;
     }
   }
@@ -8756,7 +10277,7 @@ function doLullaby(ctx, hero) {
   for (const m of ctx.mobs) {
     const mob = m;
     if (isMobVisible(ctx, mob.pos)) {
-      affectBuff2(mob.buffs, "sleep", 1.5);
+      affectBuff3(mob.buffs, "sleep", 1.5);
       mob.putToSleep = true;
     }
   }
@@ -8769,11 +10290,11 @@ function doPsionicBlast(ctx, hero) {
     const mob = m;
     if (!isMobVisible(ctx, mob.pos))
       continue;
-    affectBuff2(mob.buffs, "blindness", blindFor);
+    affectBuff3(mob.buffs, "blindness", blindFor);
     const dmg = rng.intRange(1, Math.floor(mob.ht * 2 / 3));
     damageMobDirect(ctx, mob, dmg);
   }
-  affectBuff2(hero.buffs, "blindness", blindFor);
+  affectBuff3(hero.buffs, "blindness", blindFor);
   const heroDmg = rng.intRange(1, Math.floor(hero.ht * 2 / 3));
   hero.hp -= heroDmg;
   ctx.log("A blast of psionic energy erupts!");
@@ -8862,6 +10383,9 @@ var HONEYPOT_DEF = {
   price: 50
 };
 var summonBeeImpl = null;
+function setSummonBee(fn) {
+  summonBeeImpl = fn;
+}
 function shatterHoneypotAt(ctx, hero, cell) {
   const w = ctx.level.w;
   const occupied = (c) => {
@@ -8897,7 +10421,7 @@ function shatterHoneypotAt(ctx, hero, cell) {
     newPos = candidates.length > 0 ? ctx.rng.pick(candidates) : -1;
   }
   if (newPos !== -1 && summonBeeImpl) {
-    summonBeeImpl(newPos);
+    summonBeeImpl(ctx, newPos);
   }
 }
 function shatterHoneypotInHands(ctx, hero, slot) {
@@ -8927,6 +10451,31 @@ function throwHoneypot(ctx, hero, slot, cell) {
   }
   return HONEYPOT_THROW_TIME;
 }
+
+// src/mechanics/subclasses.ts
+var SUBCLASS_DESCS = {
+  gladiator: "A successful attack with a melee weapon allows the _Gladiator_ to start a combo, " + "in which every next successful hit inflicts more damage.",
+  berserker: "When severely wounded, the _Berserker_ enters a state of wild fury " + "significantly increasing his damage output.",
+  warlock: "After killing an enemy the _Warlock_ consumes its soul. " + "It heals his wounds and satisfies his hunger.",
+  battlemage: "When fighting with a wand in his hands, the _Battlemage_ inflicts additional damage depending " + "on the current number of charges. Every successful hit restores 1 charge to this wand.",
+  assassin: "When performing a surprise attack, the _Assassin_ inflicts additional damage to his target.",
+  freerunner: "The _Freerunner_ can move almost twice faster, than most of the monsters. When he " + "is running, the Freerunner is much harder to hit. For that he must be unencumbered and not starving.",
+  sniper: "_Snipers_ are able to detect weak points in an enemy's armor, " + "effectively ignoring it when using a missile weapon.",
+  warden: "Having a strong connection with forces of nature gives _Wardens_ an ability to gather dewdrops and " + "seeds from plants. Also trampling a high grass grants them a temporary armor buff."
+};
+
+// src/content/tomes.ts
+var TOME_OF_MASTERY_ID = "tome_of_mastery";
+var TOME_OF_MASTERY = {
+  id: TOME_OF_MASTERY_ID,
+  name: "Tome of Mastery",
+  sprite: "item_tome_mastery",
+  type: "misc",
+  stackable: false,
+  desc: "This worn leather book is not that thick, but you feel somehow, " + "that you can gather a lot from it. Remember though that reading " + "this tome may require some time.",
+  price: 0
+};
+var TOME_ITEMS = [TOME_OF_MASTERY];
 
 // src/content/items.ts
 var DARK_GOLD = {
@@ -9383,6 +10932,7 @@ var ITEMS = {
   ...POTION_DEFS,
   ...SCROLL_DEFS,
   honeypot: HONEYPOT_DEF,
+  ...Object.fromEntries(TOME_ITEMS.map((d) => [d.id, d])),
   darkgold: DARK_GOLD,
   pickaxe: PICKAXE,
   ...WAND_BASE_DEFS,
@@ -9404,6 +10954,413 @@ function parseItemId(id) {
     defId: id.slice(0, colon),
     qty: Number.isFinite(n) && n > 0 ? n : 1
   };
+}
+
+// src/dungeon/cityBoss.ts
+function pressArenaCell3(level, rng, cell, hooks) {
+  if (level.enteredArena)
+    return;
+  if (level.arenaDoorCell < 0)
+    return;
+  const w = level.w;
+  const doorRow = Math.floor(level.arenaDoorCell / w);
+  if (Math.floor(cell / w) >= doorRow)
+    return;
+  level.enteredArena = true;
+  let pos = -1;
+  let count = 0;
+  for (let tries = 0;tries < 4096 && pos < 0; tries++) {
+    const p = rng.int(0, level.size);
+    const px = p % w;
+    const py = Math.floor(p / w);
+    if (!level.isPassable(px, py))
+      continue;
+    if (py >= doorRow)
+      continue;
+    if (level.visible[p] && count++ < 20)
+      continue;
+    if (hooks.occupied(p))
+      continue;
+    pos = p;
+  }
+  if (pos >= 0)
+    hooks.spawn(pos);
+  level.set(level.arenaDoorCell % w, doorRow, 3 /* DOOR_LOCKED */);
+}
+
+// src/mechanics/king.ts
+var KING_HT = 300;
+var KING_EXP = 40;
+var KING_DEFENSE = 25;
+var KING_DR = 14;
+var KING_ATTACK = 32;
+var KING_DMG_MIN = 20;
+var KING_DMG_MAX = 38;
+var KING_MAX_LVL = 30;
+var KING_MAX_ARMY_SIZE = 5;
+var KING_RESISTANCES = [
+  "toxic_gas",
+  "death",
+  "psionic_blast",
+  "disintegration"
+];
+var KING_IMMUNITIES = ["paralysis", "vertigo"];
+var UNDEAD_HT = 28;
+var UNDEAD_DEFENSE = 15;
+var UNDEAD_DR = 5;
+var UNDEAD_ATTACK = 16;
+var UNDEAD_DMG_MIN = 12;
+var UNDEAD_DMG_MAX = 16;
+var UNDEAD_EXP = 0;
+var UNDEAD_MAX_LVL = 30;
+var UNDEAD_IMMUNITIES = ["death", "paralysis"];
+var UNDEAD_PARALYSIS_TURNS = 1;
+var UNDEAD_PARALYSIS_DIE = KING_MAX_ARMY_SIZE;
+function kingMaxArmySize(hp, ht) {
+  return 1 + Math.floor(KING_MAX_ARMY_SIZE * (ht - hp) / ht);
+}
+function kingUndeadsToSummon(maxArmy, undeadCount) {
+  return maxArmy - undeadCount;
+}
+function kingDisplayName(depth, deepestFloor) {
+  return deepestFloor === null || depth === deepestFloor ? "King of Dwarves" : "undead King of Dwarves";
+}
+function undeadSpawnCells(distance, length, undeadsToSummon) {
+  const dist = Array.from({ length }, (_, j) => distance[j]);
+  const cells = [];
+  let d = 1;
+  undeadLabel:
+    for (let i = 0;i < undeadsToSummon; i++) {
+      do {
+        for (let j = 0;j < length; j++) {
+          if (dist[j] === d) {
+            cells.push(j);
+            dist[j] = Infinity;
+            continue undeadLabel;
+          }
+        }
+        d++;
+      } while (d < undeadsToSummon);
+    }
+  return cells;
+}
+var pedestalLeft = -1;
+var pedestalRight = -1;
+function setKingPedestals(left, right) {
+  pedestalLeft = left;
+  pedestalRight = right;
+}
+function kingPedestal(first) {
+  return first ? pedestalLeft : pedestalRight;
+}
+
+// src/content/king.ts
+var KING_DEF = {
+  id: "king",
+  name: "King of Dwarves",
+  sprite: "mob_king",
+  hp: KING_HT,
+  atk: KING_ATTACK,
+  def: KING_DEFENSE,
+  dmgMin: KING_DMG_MIN,
+  dmgMax: KING_DMG_MAX,
+  triangular: true,
+  dr: KING_DR,
+  exp: KING_EXP,
+  maxLvl: KING_MAX_LVL,
+  speed: 1,
+  flying: false,
+  ability: null,
+  attackDelay: 1,
+  immunities: [...KING_IMMUNITIES],
+  resistances: [...KING_RESISTANCES]
+};
+var UNDEAD_DEF = {
+  id: "king_undead",
+  name: "undead dwarf",
+  sprite: "mob_undead",
+  hp: UNDEAD_HT,
+  atk: UNDEAD_ATTACK,
+  def: UNDEAD_DEFENSE,
+  dmgMin: UNDEAD_DMG_MIN,
+  dmgMax: UNDEAD_DMG_MAX,
+  triangular: true,
+  dr: UNDEAD_DR,
+  exp: UNDEAD_EXP,
+  maxLvl: UNDEAD_MAX_LVL,
+  speed: 1,
+  flying: false,
+  ability: null,
+  attackDelay: 1,
+  immunities: [...UNDEAD_IMMUNITIES],
+  resistances: []
+};
+var undeadCount = 0;
+var kingDeepestFloor = null;
+class UndeadMob extends ContentMob {
+  constructor(id, pos, w) {
+    super(id, UNDEAD_DEF, pos, w);
+    this.state = "wandering";
+  }
+  attackProc(ctx, hero, damage) {
+    if (ctx.rng.int(0, UNDEAD_PARALYSIS_DIE) === 0) {
+      prolongBuff(hero, "paralysis", UNDEAD_PARALYSIS_TURNS);
+      hero.paralysed = true;
+    }
+    return damage;
+  }
+  onDeath(_ctx) {
+    undeadCount--;
+  }
+}
+
+class KingMob extends ContentMob {
+  nextPedestal = true;
+  spawnDepth;
+  constructor(id, pos, w, spawnDepth, deepestFloor = null) {
+    super(id, KING_DEF, pos, w);
+    this.spawnDepth = spawnDepth;
+    this.name = kingDisplayName(spawnDepth, deepestFloor ?? kingDeepestFloor);
+    undeadCount = 0;
+  }
+  canTryToSummon(ctx) {
+    if (undeadCount < kingMaxArmySize(this.hp, this.ht)) {
+      const ch = charAtPos(ctx, kingPedestal(this.nextPedestal), this);
+      return ch === this || ch === undefined;
+    }
+    return false;
+  }
+  getCloser(ctx, target) {
+    return this.canTryToSummon(ctx) ? super.getCloser(ctx, kingPedestal(this.nextPedestal)) : super.getCloser(ctx, target);
+  }
+  canAttack(ctx, targetPos) {
+    return this.canTryToSummon(ctx) ? this.pos === kingPedestal(this.nextPedestal) : super.canAttack(ctx, targetPos);
+  }
+  doAttack(ctx, hero) {
+    if (this.canTryToSummon(ctx) && this.pos === kingPedestal(this.nextPedestal)) {
+      this.summon(ctx);
+      return this.attackCost();
+    }
+    if (charAtPos(ctx, kingPedestal(this.nextPedestal), this) === hero) {
+      this.nextPedestal = !this.nextPedestal;
+    }
+    return super.doAttack(ctx, hero);
+  }
+  summon(ctx) {
+    this.nextPedestal = !this.nextPedestal;
+    const level = ctx.level;
+    const blocked = new Set;
+    for (const m of ctx.mobs) {
+      if (m.isAlive())
+        blocked.add(m.y * level.w + m.x);
+    }
+    const hero = heroOf(ctx);
+    if (hero.isAlive())
+      blocked.add(hero.pos);
+    const undeadsToSummon = kingUndeadsToSummon(kingMaxArmySize(this.hp, this.ht), undeadCount);
+    const distance = buildDistanceMap2(level.w, level.h, this.pos, (pos) => {
+      const x = pos % level.w;
+      const y = Math.floor(pos / level.w);
+      return !blocked.has(pos) && level.isPassable(x, y);
+    }, undeadsToSummon);
+    distance[this.pos] = Infinity;
+    const cells = undeadSpawnCells(distance, level.w * level.h, undeadsToSummon);
+    for (const cell of cells) {
+      const undead = new UndeadMob(nextMobId(), cell, level.w);
+      ctx.addMob(undead);
+      undeadCount++;
+    }
+    ctx.log("Arise, slaves!");
+  }
+  onNotice(ctx) {
+    super.onNotice(ctx);
+    ctx.log("How dare you!");
+  }
+  onDeath(ctx) {
+    if (ITEMS["armor_kit"]) {
+      dropItemAt(ctx, this.pos, "armor_kit");
+    }
+    dropItemAt(ctx, this.pos, "skeleton_key");
+    ctx.log("You cannot kill me, warrior... I am... immortal...");
+  }
+}
+function spawnKingArena(ctx, pos) {
+  const king = new KingMob(nextMobId(), pos, ctx.level.w, ctx.level.depth, kingDeepestFloor);
+  king.state = "hunting";
+  ctx.addMob(king);
+  if (ctx.level.visible[pos]) {
+    king.notice(ctx);
+  }
+  return king;
+}
+
+// src/content/wells.ts
+var AWARENESS_MESSAGE = "As you take a sip, you feel the knowledge pours into your mind. " + "Now you know everything about your equipped items. Also you sense all " + "items on the level and know all its secrets.";
+var HEALTH_MESSAGE = "As you take a sip, you feel your wounds heal completely.";
+function awarenessHeroAction(world) {
+  world.identifyEquipped();
+  world.revealAllSecrets();
+  world.affectAwareness();
+}
+function healthHeroAction(world) {
+  world.healHeroFull();
+  world.uncurseEquipped();
+  world.satisfyHunger(HUNGER_STARVING);
+  world.fillDewVial();
+  world.log(HEALTH_MESSAGE);
+}
+var WEAPON_PAIRS = new Map([
+  ["shortsword", "knuckles"],
+  ["spear", "quarterstaff"],
+  ["sword", "mace"],
+  ["longsword", "battle_axe"],
+  ["glaive", "war_hammer"]
+]);
+function affectWellCell(world, pos, kind) {
+  const ch = world.heroOn(pos);
+  if (ch === null)
+    return "none";
+  ch.flashBlue();
+  world.interrupt();
+  world.observe();
+  if (!ch.isHero)
+    return "none";
+  switch (kind) {
+    case "awareness":
+      awarenessHeroAction(world);
+      break;
+    case "health":
+      healthHeroAction(world);
+      break;
+    case "transmutation":
+      break;
+  }
+  world.spendWell(pos);
+  if (world.visibleAt(pos)) {}
+  world.journalRemove(kind);
+  return "consumed";
+}
+
+// src/content/wellwire.ts
+var wellKinds = new WeakMap;
+function noteWellCells(level, wells) {
+  wellKinds.set(level, new Map(wells.map((w) => [w.cell, w.kind])));
+}
+function wellKindAt(level, cell) {
+  return wellKinds.get(level)?.get(cell) ?? null;
+}
+function drinkWell(ctx, hero, pos) {
+  const kind = wellKindAt(ctx.level, pos);
+  if (kind === null)
+    return;
+  const world = makeWellWorld(ctx, hero);
+  affectWellCell(world, pos, kind);
+}
+function makeWellWorld(ctx, hero) {
+  const level = ctx.level;
+  const w = level.w;
+  const toXY = (pos) => [pos % w, Math.floor(pos / w)];
+  const heroChar = (h) => ({
+    isHero: true,
+    flashBlue: () => {}
+  });
+  return {
+    w,
+    length: w * level.h,
+    passableAt: (pos) => {
+      const [x, y] = toXY(pos);
+      return level.isPassable(x, y);
+    },
+    avoidAt: (pos) => {
+      const [x, y] = toXY(pos);
+      return level.isPassable(x, y);
+    },
+    visibleAt: (pos) => level.visible[pos] === 1,
+    log: (msg) => ctx.log(msg),
+    interrupt: () => {},
+    observe: () => {},
+    heroOn: (pos) => {
+      if (hero.pos === pos && hero.isAlive())
+        return heroChar(hero);
+      return null;
+    },
+    heapTopAt: (pos) => {
+      const placed = level.items.find((it) => it.pos === pos);
+      if (!placed)
+        return null;
+      const def3 = getItem(placed.itemId);
+      return {
+        itemId: placed.itemId,
+        vanillaClass: placed.itemId,
+        kind: wellItemKind(def3.type),
+        level: 0,
+        enchanted: false,
+        levelKnown: false,
+        cursedKnown: false,
+        cursed: false,
+        qty: 1,
+        identified: true
+      };
+    },
+    replaceHeapTop: (pos, item) => {
+      const idx = level.items.findIndex((it) => it.pos === pos);
+      if (idx === -1)
+        return;
+      const def3 = getItem(item.itemId);
+      level.items[idx] = {
+        ...level.items[idx],
+        itemId: item.itemId,
+        sprite: def3.sprite
+      };
+    },
+    pickupHeap: (pos) => {
+      const idx = level.items.findIndex((it) => it.pos === pos);
+      if (idx !== -1)
+        level.items.splice(idx, 1);
+    },
+    dropItemAt: (pos, item) => {
+      const def3 = getItem(item.itemId);
+      level.items.push({ pos, itemId: item.itemId, sprite: def3.sprite });
+    },
+    spendWell: (pos) => {
+      const [x, y] = toXY(pos);
+      level.set(x, y, 42 /* EMPTY_WELL */);
+      wellKinds.get(level)?.delete(pos);
+    },
+    journalRemove: (_kind) => {},
+    identifyEquipped: () => {},
+    revealAllSecrets: () => {},
+    affectAwareness: () => {
+      hero.buffs["awareness"] = { kind: "awareness", left: 2 };
+    },
+    healHeroFull: () => {
+      hero.hp = hero.ht;
+      for (const k of ["poison", "cripple", "weakness", "bleeding"]) {
+        delete hero.buffs[k];
+      }
+    },
+    uncurseEquipped: () => {},
+    satisfyHunger: (_amount) => {},
+    fillDewVial: () => {}
+  };
+}
+function wellItemKind(type) {
+  switch (type) {
+    case "weapon":
+      return "weapon";
+    case "scroll":
+      return "scroll";
+    case "potion":
+      return "potion";
+    case "ring":
+      return "ring";
+    case "wand":
+      return "wand";
+    case "seed":
+      return "seed";
+    default:
+      return "other";
+  }
 }
 
 // src/content/actions.ts
@@ -9438,9 +11395,12 @@ function useInventorySlot(ctx, hero, slot) {
     return 1;
   }
   const def3 = getItem(stack.itemId);
-  if (isWandId(stack.itemId) || isRingId(stack.itemId)) {
-    ctx.log("Nothing happens.");
-    return 1;
+  if (isWandId(stack.itemId)) {
+    ctx.log("Choose a cell to zap.");
+    return 0;
+  }
+  if (isRingId(stack.itemId)) {
+    return useRingFromSlot(ctx, hero, slot) > 0 ? 1 : 0;
   }
   switch (def3.type) {
     case "potion":
@@ -9658,6 +11618,14 @@ function equipSlot(ctx, hero, slot) {
     return equipWeaponFromInventory(ctx, hero, slot, stack);
   if (def3.type === "armor")
     return equipArmorFromInventory(ctx, hero, slot, stack);
+  if (isRingId(stack.itemId)) {
+    const finger = useRingFromSlot(ctx, hero, slot);
+    if (finger === 0) {
+      ctx.log("Unequip one ring first.");
+      return 0;
+    }
+    return 1;
+  }
   ctx.log("You can't equip that.");
   return 1;
 }
@@ -9952,6 +11920,14 @@ function moveHero(ctx, hero, dx, dy) {
           dm300.notice(ctx);
         }
       });
+    } else if (ctx.level.depth === 20) {
+      setKingPedestals(pedestalCell(true), pedestalCell(false));
+      pressArenaCell3(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          spawnKingArena(ctx, pos);
+        }
+      });
     }
     enterCell(ctx, hero, nx, ny);
   } else if (tile === 2 /* DOOR */) {
@@ -9966,6 +11942,8 @@ function enterCell(ctx, hero, x, y) {
     trampleHighGrass(ctx, hero, x, y);
   else if (t === 2 /* DOOR */)
     doorEnter(ctx, x, y);
+  else if (t === 12 /* WELL */)
+    drinkWell(ctx, hero, y * ctx.level.w + x);
 }
 function searchIntentional(ctx, hero) {
   const level = ctx.level;
@@ -10042,6 +12020,8 @@ function tickHeroClock(rng, ctx, hero, cost) {
       hero.hp = regenTick(hero.hp, hero.ht, isStarving(hero.hungerLevel));
     }
   }
+  rechargeWands(hero, cost, false);
+  tickRingClocks(hero, cost);
 }
 function dartTrace(level, from, to) {
   const w = level.w;
@@ -10595,6 +12575,7 @@ function resetQuestState() {
   Object.assign(ghostQuest, freshGhostQuest());
   Object.assign(wandmakerQuest, freshWandmakerQuest());
   Object.assign(blacksmithQuest, freshBlacksmithQuest());
+  Object.assign(impQuest, freshImpQuest());
 }
 function freshBlacksmithQuest() {
   return {
@@ -10606,17 +12587,29 @@ function freshBlacksmithQuest() {
   };
 }
 var blacksmithQuest = freshBlacksmithQuest();
+function freshImpQuest() {
+  return {
+    spawned: false,
+    alternative: false,
+    given: false,
+    completed: false,
+    rewardRingId: null
+  };
+}
+var impQuest = freshImpQuest();
 function saveQuestState() {
   return {
     ghost: { ...ghostQuest },
     wandmaker: { ...wandmakerQuest },
-    blacksmith: { ...blacksmithQuest }
+    blacksmith: { ...blacksmithQuest },
+    imp: { ...impQuest }
   };
 }
 function restoreQuestState(data) {
   Object.assign(ghostQuest, freshGhostQuest(), data?.ghost ?? {});
   Object.assign(wandmakerQuest, freshWandmakerQuest(), data?.wandmaker ?? {});
   Object.assign(blacksmithQuest, freshBlacksmithQuest(), data?.blacksmith ?? {});
+  Object.assign(impQuest, freshImpQuest(), data?.imp ?? {});
 }
 function initGhostQuest(rng, depth) {
   ghostQuest.spawned = true;
@@ -10659,7 +12652,7 @@ function initWandmakerQuest(rng, waterCells, levelLength) {
   wandmakerQuest.wand1 = createWandReward(rng, rng.pick(battle));
   wandmakerQuest.wand2 = createWandReward(rng, rng.pick(nonBattle));
 }
-function randomRespawnCell2(ctx) {
+function randomRespawnCell3(ctx) {
   const level = ctx.level;
   const n = level.w * level.h;
   for (let i = 0;i < 100; i++) {
@@ -10858,7 +12851,7 @@ class GhostMob extends NpcMob {
 function relocateGhost(ctx, ghost) {
   let newPos = -1;
   for (let i = 0;i < 10; i++) {
-    newPos = randomRespawnCell2(ctx);
+    newPos = randomRespawnCell3(ctx);
     if (newPos !== -1)
       break;
   }
@@ -10899,7 +12892,7 @@ function onSewersKill(ctx, pos) {
     }
   } else if (ghostQuest.type === "rat") {
     const rat = new FetidRatMob(nextNpcId(), 0, ctx.level.w);
-    rat.pos = randomRespawnCell2(ctx);
+    rat.pos = randomRespawnCell3(ctx);
     if (rat.pos !== -1) {
       ctx.addMob(rat, 0);
       ghostQuest.processed = true;
@@ -10990,18 +12983,18 @@ function resolveWandRewardInstance(rng, rewardId) {
 }
 function placeWandmakerItem(ctx, type) {
   if (type === "berry") {
-    let pos = randomRespawnCell2(ctx);
+    let pos = randomRespawnCell3(ctx);
     let guard = 0;
     while (pos !== -1 && ctx.level.items.some((it) => it.pos === pos) && guard++ < 100) {
-      pos = randomRespawnCell2(ctx);
+      pos = randomRespawnCell3(ctx);
     }
     if (pos !== -1)
       dropItemAt(ctx, pos, "rotberry_seed");
   } else if (type === "dust") {
-    let pos = randomRespawnCell2(ctx);
+    let pos = randomRespawnCell3(ctx);
     let guard = 0;
     while (pos !== -1 && ctx.level.items.some((it) => it.pos === pos) && guard++ < 100) {
-      pos = randomRespawnCell2(ctx);
+      pos = randomRespawnCell3(ctx);
     }
     if (pos !== -1)
       dropItemAt(ctx, pos, "corpse_dust");
@@ -11017,10 +13010,10 @@ function placeWandmakerItem(ctx, type) {
       }
     }
     if (!placed) {
-      let pos = randomRespawnCell2(ctx);
+      let pos = randomRespawnCell3(ctx);
       let guard = 0;
       while (pos !== -1 && ctx.level.items.some((it) => it.pos === pos) && guard++ < 100) {
-        pos = randomRespawnCell2(ctx);
+        pos = randomRespawnCell3(ctx);
       }
       if (pos !== -1)
         dropItemAt(ctx, pos, "phantom_fish");
@@ -11081,20 +13074,25 @@ class CurseMob extends ContentMob {
     }, pos, w);
     this.state = "hunting";
   }
-  attackProc(ctx, hero, damage) {
+  attackProc(ctx, enemy, damage) {
     const w = this.w;
-    const dx = hero.pos % w - this.pos % w;
-    const dy = Math.floor(hero.pos / w) - Math.floor(this.pos / w);
+    const dx = enemy.pos % w - this.pos % w;
+    const dy = Math.floor(enemy.pos / w) - Math.floor(this.pos / w);
     if (Math.max(Math.abs(dx), Math.abs(dy)) === 1) {
-      const nx = hero.pos % w + dx;
-      const ny = Math.floor(hero.pos / w) + dy;
+      const nx = enemy.pos % w + dx;
+      const ny = Math.floor(enemy.pos / w) + dy;
       const newPos = ny * w + nx;
       if (ctx.level.isPassable(nx, ny) && charAtPos(ctx, newPos) == null) {
-        hero.pos = newPos;
+        enemy.pos = newPos;
         ctx.syncMobs();
-        pressTrapCell(ctx, newPos, hero, () => {
-          return;
-        });
+        if (enemy instanceof ContentHero)
+          pressTrapCell(ctx, newPos, enemy, () => {
+            return;
+          });
+        else
+          mobPressTrapCell(ctx, enemy, () => {
+            return;
+          });
       }
     }
     return damage;
@@ -11383,6 +13381,34 @@ var npcIdCounter = -1;
 function nextNpcId() {
   return npcIdCounter--;
 }
+
+class ImpMob extends NpcMob {
+  constructor(id, pos, w) {
+    super(id, npcDef("imp", "ambitious imp", "mob_imp", 1, false), pos, w);
+    this.state = "wandering";
+  }
+  onTalk(ctx) {
+    if (!impQuest.given) {
+      impQuest.given = true;
+      const text = impQuest.alternative ? TXT_MONKS1 : TXT_GOLEMS1;
+      ctx.log(text);
+    } else if (!impQuest.completed) {
+      const text = impQuest.alternative ? TXT_MONKS2 : TXT_GOLEMS2;
+      ctx.log(text);
+    } else {
+      ctx.log("The imp is busy with his new shop.");
+    }
+  }
+  description() {
+    return "This imp is clearly up to something. He is being very polite, " + "which is suspicious.";
+  }
+}
+var TXT_GOLEMS1 = "Are you an adventurer? I love adventurers! You can always rely on them " + `if something needs to be killed. Am I right? For a bounty, of course ;)
+` + "In my case this is _golems_ who need to be killed. You see, I'm going to start a " + "little business here, but these stupid golems are bad for business! " + "It's very hard to negotiate with wandering lumps of granite, damn them! " + "So please, kill... let's say _6 of them_ and a reward is yours.";
+var TXT_MONKS1 = "Are you an adventurer? I love adventurers! You can always rely on them " + `if something needs to be killed. Am I right? For a bounty, of course ;)
+` + "In my case this is _monks_ who need to be killed. You see, I'm going to start a " + "little business here, but these lunatics don't buy anything themselves and " + "will scare away other customers. " + "So please, kill... let's say _8 of them_ and a reward is yours.";
+var TXT_GOLEMS2 = "How is your golem safari going?";
+var TXT_MONKS2 = "Oh, you are still alive! I knew that your kung-fu is stronger ;) " + "Just don't forget to grab these monks' tokens.";
 function buildNpc(mobId, id, pos, w, depth) {
   switch (mobId) {
     case "ghost":
@@ -11397,6 +13423,8 @@ function buildNpc(mobId, id, pos, w, depth) {
       return new ShopkeeperMob(id, pos, w);
     case "blacksmith":
       return new BlacksmithMob(id, pos, w);
+    case "imp":
+      return new ImpMob(id, pos, w);
     default:
       return null;
   }
@@ -11476,6 +13504,29 @@ var SEWER_MOB_TABLE = {
     { id: "spinner", weight: 4 },
     { id: "elemental", weight: 0.02 },
     { id: "monk", weight: 0.01 }
+  ],
+  16: [
+    { id: "elemental", weight: 1 },
+    { id: "warlock", weight: 1 },
+    { id: "monk", weight: 0.2 }
+  ],
+  17: [
+    { id: "elemental", weight: 1 },
+    { id: "monk", weight: 1 },
+    { id: "warlock", weight: 1 }
+  ],
+  18: [
+    { id: "elemental", weight: 1 },
+    { id: "monk", weight: 2 },
+    { id: "golem", weight: 1 },
+    { id: "warlock", weight: 1 }
+  ],
+  19: [
+    { id: "elemental", weight: 1 },
+    { id: "monk", weight: 2 },
+    { id: "golem", weight: 3 },
+    { id: "warlock", weight: 1 },
+    { id: "succubus", weight: 0.02 }
   ]
 };
 function pickMobId(rng, depth) {
@@ -11669,6 +13720,112 @@ var contentLevelGen = {
   }
 };
 
+// src/content/bee.ts
+function beeDef(depth) {
+  const ht = (3 + depth) * 5;
+  const skill = 9 + depth;
+  return {
+    id: "bee",
+    name: "golden bee",
+    sprite: "mob_bee",
+    hp: ht,
+    atk: skill,
+    def: skill,
+    dmgMin: Math.floor(ht / 10),
+    dmgMax: Math.floor(ht / 4),
+    triangular: true,
+    dr: 0,
+    exp: 0,
+    maxLvl: 30,
+    speed: 1,
+    viewDistance: 4,
+    flying: true,
+    ability: null,
+    attackDelay: 1,
+    immunities: ["poison"],
+    resistances: []
+  };
+}
+
+class BeeMob extends ContentMob {
+  constructor(id, pos, w, depth) {
+    super(id, beeDef(depth), pos, w);
+    this.hostile = false;
+    this.invulnerable = true;
+    this.state = "wandering";
+  }
+  mobDamageRoll(rng) {
+    return rng.normalIntRange(Math.floor(this.ht / 10), Math.floor(this.ht / 4));
+  }
+  canSee(ctx, pos) {
+    return ctx.level.visible[pos] === 1;
+  }
+  selectEnemy(ctx) {
+    const cur = this.enemy;
+    if (cur == null || !cur.isAlive()) {
+      const candidates = [];
+      for (const m of ctx.mobs) {
+        if (!(m instanceof ContentMob) || m === this)
+          continue;
+        if (m.hostile && m.isAlive() && ctx.level.visible[m.pos] === 1) {
+          candidates.push(m);
+        }
+      }
+      return candidates.length > 0 ? ctx.rng.pick(candidates) : null;
+    }
+    return cur;
+  }
+  takeTurn(ctx) {
+    this.hp--;
+    if (this.hp <= 0) {
+      killMob(ctx, this, {});
+      return this.waitCost();
+    }
+    if (this.state === "wandering") {
+      return this.actBeeWandering(ctx);
+    }
+    return super.takeTurn(ctx);
+  }
+  actBeeWandering(ctx) {
+    const enemy = this.selectEnemy(ctx);
+    const enemyInFOV = enemy != null && enemy.isAlive() && this.canSee(ctx, enemy.pos);
+    if (enemyInFOV && enemy != null) {
+      this.enemySeen = true;
+      this.notice(ctx);
+      this.state = "hunting";
+      this.target = enemy.pos;
+      return 0;
+    }
+    this.enemySeen = false;
+    const oldPos = this.pos;
+    if (this.getCloser(ctx, heroOf(ctx).pos)) {
+      this.afterMove(ctx, oldPos);
+      return this.moveCost();
+    }
+    return this.waitCost();
+  }
+  attackProc(_ctx, enemy, damage) {
+    if (enemy instanceof ContentMob) {
+      enemy.aggro(this);
+    }
+    return damage;
+  }
+  onTalk(ctx) {
+    const hero = heroOf(ctx);
+    const curPos = this.pos;
+    this.pos = hero.pos;
+    hero.pos = curPos;
+    ctx.syncMobs();
+  }
+}
+function spawnBee(ctx, cell) {
+  const bee = new BeeMob(nextMobId(), cell, ctx.level.w, ctx.level.depth);
+  bee.hp = bee.ht;
+  ctx.addMob(bee);
+}
+registerBee(BeeMob);
+setSummonBee((ctx, cell) => spawnBee(ctx, cell));
+
 // src/ui/inventory.ts
 function asHero(game) {
   return game.hero;
@@ -11753,6 +13910,10 @@ function readInventory(game) {
   return adapter(game);
 }
 function actionsFor(item) {
+  if (item.id.startsWith("wand_of_"))
+    return ["use", "drop"];
+  if (item.id.startsWith("ring_of_"))
+    return ["equip", "drop"];
   if (item.id === "pickaxe")
     return ["mine", "equip", "drop"];
   switch (item.kind) {
@@ -11773,8 +13934,12 @@ function actionsFor(item) {
 function actionLabel(action, item) {
   switch (action) {
     case "use":
+      if (item.id.startsWith("wand_of_"))
+        return "Zap";
       return item.kind === "potion" ? "Drink" : item.kind === "food" ? "Eat" : item.kind === "scroll" ? "Read" : "Use";
     case "equip":
+      if (item.id.startsWith("ring_of_"))
+        return "Wear";
       return item.equipped ? item.kind === "armor" ? "Take off" : "Unwield" : item.kind === "armor" ? "Wear" : "Wield";
     case "drop":
       return "Drop";
@@ -11789,6 +13954,8 @@ function actionLabel(action, item) {
 function doItemAction(game, item, action) {
   switch (action) {
     case "use":
+      if (item.id.startsWith("wand_of_"))
+        return "zap-targeting";
       game.queueIntent({ kind: "useItem", slot: item.slot });
       return "done";
     case "equip":
@@ -11813,6 +13980,7 @@ class InventoryPanel {
   open = false;
   selected = 0;
   onThrowRequest = () => {};
+  onZapRequest = () => {};
   toggle() {
     this.open = !this.open;
     this.selected = 0;
@@ -11872,6 +14040,8 @@ class InventoryPanel {
         const r = doItemAction(game, sel, a.action);
         if (r === "throw-targeting")
           this.onThrowRequest(sel);
+        else if (r === "zap-targeting")
+          this.onZapRequest(sel);
         else
           this.close();
         return true;
@@ -12018,10 +14188,10 @@ class GooMob extends ContentMob {
     this.pumpedUp = s.pumpedUp;
     this.jumped = s.jumped;
   }
-  doAttack(ctx, hero) {
+  doAttack(ctx, enemy) {
     const rng = ctx.rng;
-    const dist = chebyshevPos(this.pos, hero.pos, this.w);
-    const action = gooDecide(rng, { hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped }, { dist, jumpPathClear: this.jumpPathClear(ctx, hero) });
+    const dist = chebyshevPos(this.pos, enemy.pos, this.w);
+    const action = gooDecide(rng, { hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped }, { dist, jumpPathClear: this.jumpPathClear(ctx, enemy) });
     switch (action.kind) {
       case "pump": {
         ctx.log("Goo is pumping itself up!");
@@ -12033,47 +14203,55 @@ class GooMob extends ContentMob {
         return this.waitCost();
       case "pumpedAttack": {
         this.jumped = false;
-        this.gooStrike(ctx, hero, gooAttackSkill(true, this.jumped), true);
+        this.gooStrike(ctx, enemy, gooAttackSkill(true, this.jumped), true);
         this.applyGooAfter(action);
         return 1 * this.getSpeed();
       }
       case "attack": {
-        this.gooStrike(ctx, hero, gooAttackSkill(false, this.jumped), false);
+        this.gooStrike(ctx, enemy, gooAttackSkill(false, this.jumped), false);
         this.applyGooAfter(action);
         return 1 * this.getSpeed();
       }
       case "jumpAttack": {
         this.jumped = true;
-        this.pos = this.jumpDest(ctx, hero);
+        this.pos = this.jumpDest(ctx, enemy);
         ctx.log("Goo jumps!");
-        this.gooStrike(ctx, hero, gooAttackSkill(true, this.jumped), true);
+        this.gooStrike(ctx, enemy, gooAttackSkill(true, this.jumped), true);
         this.applyGooAfter(action);
         return 1 * this.getSpeed();
       }
     }
   }
-  gooStrike(ctx, hero, accuracy, pumped) {
-    strikeMobVsHero(ctx, this, hero, accuracy, (rng) => gooDamageRoll(rng, pumped), (rng, damage) => {
+  gooStrike(ctx, enemy, accuracy, pumped) {
+    const proc = (rng, damage) => {
       if (gooOozeRoll(rng)) {
-        hero.buffs.ooze = { kind: "ooze", left: 0 };
-        ctx.log("Caustic ooze eats your flesh. Wash away it!");
+        enemy.buffs.ooze = { kind: "ooze", left: 0 };
+        if (enemy instanceof ContentHero) {
+          ctx.log("Caustic ooze eats your flesh. Wash away it!");
+        }
       }
       return damage;
-    });
+    };
+    const dmg = (rng) => gooDamageRoll(rng, pumped);
+    if (enemy instanceof ContentHero) {
+      strikeMobVsHero(ctx, this, enemy, accuracy, dmg, proc);
+    } else {
+      strikeMobVsMob(ctx, this, enemy, accuracy, dmg, proc);
+    }
   }
-  jumpDest(ctx, hero) {
-    const dx = Math.sign(hero.x - this.x);
-    const dy = Math.sign(hero.y - this.y);
-    const nx = hero.x - dx;
-    const ny = hero.y - dy;
+  jumpDest(ctx, enemy) {
+    const dx = Math.sign(enemy.x - this.x);
+    const dy = Math.sign(enemy.y - this.y);
+    const nx = enemy.x - dx;
+    const ny = enemy.y - dy;
     const level = ctx.level;
     if (level.inBounds(nx, ny) && level.isPassable(nx, ny) && !level.mobAt(nx, ny)) {
       return ny * this.w + nx;
     }
     return this.pos;
   }
-  jumpPathClear(ctx, hero) {
-    return lineClear(ctx.level, this.x, this.y, hero.x, hero.y);
+  jumpPathClear(ctx, enemy) {
+    return lineClear(ctx.level, this.x, this.y, enemy.x, enemy.y);
   }
 }
 function lineClear(level, x0, y0, x1, y1) {
@@ -12165,15 +14343,15 @@ class TenguMob extends ContentMob {
     }
     return super.getCloser(ctx, target);
   }
-  doAttack(ctx, hero) {
-    const adjacent2 = chebyshevPos(this.pos, hero.pos, this.w) <= 1;
+  doAttack(ctx, enemy) {
+    const adjacent2 = chebyshevPos(this.pos, enemy.pos, this.w) <= 1;
     const { jump, nextTimeToJump } = tenguShouldJump(this.timeToJump, adjacent2);
     this.timeToJump = nextTimeToJump;
     if (jump) {
-      this.jump(ctx, hero.pos);
+      this.jump(ctx, enemy.pos);
       return 1;
     }
-    return super.doAttack(ctx, hero);
+    return super.doAttack(ctx, enemy);
   }
   jump(ctx, enemyPos) {
     const rng = ctx.rng;
@@ -12355,7 +14533,7 @@ function catalogKind(def3) {
 function contentInventoryAdapter(game) {
   const hero = game.hero;
   const items = hero.inventory.map((s, slot) => {
-    const def3 = getItem(s.itemId);
+    const def3 = instanceItemDef(s.itemId) ?? getItem(s.itemId);
     const potionInfo = potionUiInfo(s.itemId, def3.name, def3.sprite);
     const scrollInfo = potionInfo ? null : scrollUiInfo(s.itemId, def3.name, def3.sprite);
     const info = potionInfo ?? scrollInfo;
@@ -12527,6 +14705,7 @@ var contentMechanics = {
     if (!result)
       return [];
     noteSignCells(level, result.markers.signs);
+    noteWellCells(level, result.markers.wells);
     noteWallDecoCells(level, result.markers.wallDeco);
     const resolved = resolveMobSpawns(rng, result.level.depth, result.mobs, result.level);
     return buildMobs(resolved, result.level.w, result.level.depth);
@@ -12566,6 +14745,9 @@ var contentMechanics = {
       }
       case "useItem":
         cost = useInventorySlot(ctx, hero, intent.slot);
+        break;
+      case "zapWand":
+        cost = zapWandFromSlot(ctx, hero, intent.slot, intent.targetCell);
         break;
       case "equip":
         cost = equipSlot(ctx, hero, intent.slot);
@@ -13222,7 +15404,7 @@ class Renderer {
     return c;
   }
   prerender(name, region) {
-    const orig = ORIGINAL_SPRITES[name];
+    const orig = ALL_ORIGINAL_SPRITES[name];
     if (orig) {
       const bin = atob(orig.rgba);
       const bytes = new Uint8ClampedArray(bin.length);
@@ -14841,6 +17023,7 @@ class UiManager {
   effects = new Effects;
   game = null;
   throwMode = null;
+  zapMode = null;
   kills = 0;
   lastHeroAct = 0;
   view = { w: 390, h: 700 };
@@ -14861,6 +17044,10 @@ class UiManager {
     };
     this.inventory.onThrowRequest = (item) => {
       this.throwMode = { slot: item.slot };
+      this.inventory.close();
+    };
+    this.inventory.onZapRequest = (item) => {
+      this.zapMode = { slot: item.slot };
       this.inventory.close();
     };
     this.effects.onMobDeath = () => {
@@ -14919,6 +17106,7 @@ class UiManager {
     this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
+    this.zapMode = null;
     this.screens.show("playing");
   }
   continueRun() {
@@ -14935,6 +17123,7 @@ class UiManager {
     this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
+    this.zapMode = null;
     this.screens.show("playing");
   }
   quitToTitle(save) {
@@ -14946,6 +17135,7 @@ class UiManager {
     this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
+    this.zapMode = null;
     this.screens.show("title");
   }
   deathSummary() {
@@ -14988,8 +17178,9 @@ class UiManager {
       return;
     }
     const k = e.key;
-    if (this.throwMode && (k === "Escape" || k.toLowerCase() === "p")) {
+    if ((this.throwMode || this.zapMode) && (k === "Escape" || k.toLowerCase() === "p")) {
       this.throwMode = null;
+      this.zapMode = null;
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -15075,6 +17266,25 @@ class UiManager {
         g.logMsg("Throw cancelled.");
       }
       this.throwMode = null;
+      this.zapMode = null;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (this.zapMode) {
+      const t = this.renderer.screenToTile(e.clientX, e.clientY);
+      const w = g.level.w;
+      const h = g.level.h;
+      if (t.x >= 0 && t.y >= 0 && t.x < w && t.y < h) {
+        g.queueIntent({
+          kind: "zapWand",
+          slot: this.zapMode.slot,
+          targetCell: t.y * w + t.x
+        });
+      } else {
+        g.logMsg("Zap cancelled.");
+      }
+      this.zapMode = null;
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -15146,6 +17356,8 @@ class UiManager {
         this.dialogs.draw(ctx, this.renderer, this.view);
       if (this.throwMode)
         this.drawThrowHint(ctx);
+      if (this.zapMode)
+        this.drawZapHint(ctx);
     } else {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = UI.backdrop;
@@ -15154,6 +17366,24 @@ class UiManager {
     if (this.screens.state !== "playing") {
       this.screens.draw(ctx, this.renderer, this.view, nowMs);
     }
+  }
+  drawZapHint(ctx) {
+    const label = "Tap a cell to zap · Esc cancels";
+    ctx.font = "bold 13px system-ui, sans-serif";
+    const w = ctx.measureText(label).width + 28;
+    const r = { x: (this.view.w - w) / 2, y: 70, w, h: 34 };
+    ctx.fillStyle = "rgba(10, 8, 14, 0.85)";
+    ctx.strokeStyle = UI.gold;
+    ctx.lineWidth = 2;
+    roundRect(ctx, r, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = UI.gold;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 1);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
   }
   drawThrowHint(ctx) {
     const label = "Tap a target to throw · Esc cancels";
