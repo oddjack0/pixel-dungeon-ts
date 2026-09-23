@@ -49,6 +49,11 @@ import {
 import { pressTrapCell } from '../mechanics/traps.js';
 import { pressArenaCell } from '../dungeon/prisonBoss.js';
 import { pressArenaCell as pressCavesArenaCell } from '../dungeon/cavesBoss.js';
+import { pressArenaCell as pressCityArenaCell } from '../dungeon/cityBoss.js';
+import { pedestalCell } from '../dungeon/cityLevel.js';
+import { setKingPedestals } from '../mechanics/king.js';
+import { spawnKingArena } from './king.js';
+import { drinkWell } from './wellwire.js';
 import { getItem, parseItemId } from './items.js';
 import { drinkPotion as drinkPotionFull } from './potions.js';
 import { readScroll as readScrollFull } from './scrolls.js';
@@ -62,8 +67,8 @@ import {
 } from './hero.js';
 import { heroOf, strikeHeroVsMob, buildMob, nextMobId, type ContentMob } from './mobs.js';
 // Stage 2 (wands/rings worker): id predicates for the inventory use-path.
-import { isWandId } from './wands.js';
-import { isRingId } from './rings.js';
+import { isWandId, rechargeWands } from './wands.js';
+import { isRingId, tickRingClocks, useRingFromSlot } from './rings.js';
 
 /**
  * Hero.actPickUp (Hero.java:1038-1054): one heap per action, takes 1 turn
@@ -111,13 +116,17 @@ export function useInventorySlot(
     return 1;
   }
   const def = getItem(stack.itemId);
-  // Stage 2 (wands/rings worker): wand/ring instance defs carry type 'misc'
-  // (per-instance level/charges/identification can't live in the static
-  // catalog) — route by id. The wand-zap and ring-equip use-paths land with
-  // their worker; until then the inventory UI offers nothing for these.
-  if (isWandId(stack.itemId) || isRingId(stack.itemId)) {
-    ctx.log('Nothing happens.');
-    return 1;
+  // Stage 3 (Worker A): wands route through cell targeting (Wand.execute
+  // AC_ZAP -> GameScene.selectCell(zapper), Wand.java:123-126) — a bare
+  // inventory 'use' only enters zap-targeting mode in the UiManager, so the
+  // mechanics path is a no-op here. Rings equip into the two ring fingers
+  // (Ring.doEquip, Ring.java:123-179).
+  if (isWandId(stack.itemId)) {
+    ctx.log('Choose a cell to zap.');
+    return 0;
+  }
+  if (isRingId(stack.itemId)) {
+    return useRingFromSlot(ctx, hero, slot) > 0 ? 1 : 0; // TIME_TO_EQUIP (Ring.java:179)
   }
   switch (def.type) {
     case 'potion':
@@ -442,6 +451,17 @@ export function equipSlot(
   const def = getItem(stack.itemId);
   if (def.type === 'weapon') return equipWeaponFromInventory(ctx, hero, slot, stack);
   if (def.type === 'armor') return equipArmorFromInventory(ctx, hero, slot, stack);
+  // Ring.doEquip (Ring.java:123-179): into ring1/ring2; both full -> vanilla
+  // opens WndOptions to pick a finger (the port logs and spends no time so
+  // the player can free a finger first). TIME_TO_EQUIP on success.
+  if (isRingId(stack.itemId)) {
+    const finger = useRingFromSlot(ctx, hero, slot);
+    if (finger === 0) {
+      ctx.log('Unequip one ring first.'); // WndOptions TXT_UNEQUIP_TITLE (Ring.java:131)
+      return 0;
+    }
+    return 1; // TIME_TO_EQUIP (Ring.java:179)
+  }
   ctx.log("You can't equip that.");
   return 1;
 }
@@ -1016,6 +1036,22 @@ export function moveHero(
           dm300.notice(ctx);
         },
       });
+    } else if (ctx.level.depth === 20) {
+      // CityBossLevel.press (CityBossLevel.java:176-200): the hero's first
+      // step outside the entrance room spawns the Dwarf King (HUNTING) and
+      // re-locks the arena door. Register the pedestal cells for the King's
+      // summoning AI (CityBossLevel.pedestal, CityBossLevel.java:137-143)
+      // at entry time — the King only exists after this hook fires.
+      setKingPedestals(pedestalCell(true), pedestalCell(false));
+      pressCityArenaCell(ctx.level, ctx.rng, hero.pos, {
+        occupied: (pos) => pos === hero.pos || ctx.mobs.some((m) => m.y * level.w + m.x === pos),
+        spawn: (pos) => {
+          // Bestiary.mob(depth) at depth 20 -> King (Bestiary.java:151-153);
+          // CityBossLevel.press: boss.state = boss.HUNTING; GameScene.add;
+          // notice() when visible (CityBossLevel.java:194-196, 208-212).
+          spawnKingArena(ctx, pos);
+        },
+      });
     }
     // Vanilla Level.press continues after traps: HIGH_GRASS trample, then
     // WELL, ALCHEMY, then DOOR enter (Level.java:622-704). Wells and the
@@ -1040,6 +1076,9 @@ function enterCell(ctx: ActionContext, hero: ContentHero, x: number, y: number):
   const t = ctx.level.get(x, y);
   if (t === Terrain.HIGH_GRASS) trampleHighGrass(ctx, hero, x, y);
   else if (t === Terrain.DOOR) doorEnter(ctx, x, y);
+  // Stage 3 (well wiring): Level.press WELL case (Level.java:690-700) —
+  // the hero drinks from the magic well.
+  else if (t === Terrain.WELL) drinkWell(ctx, hero, y * ctx.level.w + x);
 }
 
 /** Intentional search costs TIME_TO_SEARCH = 2 (Hero.java:134). */
@@ -1157,6 +1196,14 @@ export function tickHeroClock(
       hero.hp = regenTick(hero.hp, hero.ht, isStarving(hero.hungerLevel));
     }
   }
+  // Stage 3 (Worker A): each carried wand's Charger recharges while the wand
+  // is in the inventory (Wand.Charger, Wand.java:478-500). The port has no
+  // Mage class yet, so mageClass=false (Wand recharge is TIME_TO_CHARGE 40
+  // turns for non-mages; the battlemage 20-turn rate lands with the class).
+  rechargeWands(hero, cost, false);
+  // Equipped rings tick their RingBuff clocks once per hero turn
+  // (RingBuff.act; the 200-tick identification counter, Ring.java).
+  tickRingClocks(hero, cost);
 }
 
 /**

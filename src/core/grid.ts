@@ -53,6 +53,14 @@ export enum Terrain {
   // (Door.enter, Door.java:14-21); leaving it closes it again (Door.leave,
   // Door.java:23-29) unless a heap lies on it.
   OPEN_DOOR = 40,
+  // Stage 3 (Worker G): vanilla Terrain.EMPTY_DECO. Appended — ids are NEVER
+  // renumbered. Regrowth.evolve (Regrowth.java) regrows EMPTY/EMBERS/
+  // EMPTY_DECO tiles to grass; the port's FLOOR is the EMPTY analog.
+  EMPTY_DECO = 41,
+  // Stage 3 (well wiring): vanilla Terrain.EMPTY_WELL. Appended — ids are
+  // NEVER renumbered. A WELL becomes EMPTY_WELL once drunk (WellWater.
+  // affectCell, WellWater.java:97: Level.set(cell, Terrain.EMPTY_WELL)).
+  EMPTY_WELL = 42,
 }
 
 /** The 8 trap types, in vanilla `levels/traps/` order. */
@@ -140,6 +148,21 @@ export const REGION_LABELS: Record<Region, string> = {
 export function regionLabel(r: Region): string {
   return REGION_LABELS[r];
 }
+
+/**
+ * Ambient particle tint range per region (vanilla `Level.color1/color2`,
+ * consumed by `LeafParticle`: `ColorMath.random(Dungeon.level.color1,
+ * Dungeon.level.color2)`). Boss depths reuse their region's colors
+ * (PrisonBossLevel.java:45-46, CavesBossLevel.java:43-44,
+ * CityBossLevel.java:40-41, HallsBossLevel.java:40-41).
+ */
+export const REGION_COLORS: Record<Region, { color1: number; color2: number }> = {
+  [Region.SEWERS]: { color1: 0x48763c, color2: 0x59994a }, // SewerLevel.java:37-38
+  [Region.PRISON]: { color1: 0x6a723d, color2: 0x88924c }, // PrisonLevel.java:35-36
+  [Region.CAVES]: { color1: 0x534f3e, color2: 0xb9d661 }, // CavesLevel.java:37-38
+  [Region.CITY]: { color1: 0x4b6636, color2: 0xf2f2f2 }, // CityLevel.java:34-35
+  [Region.HALLS]: { color1: 0x801500, color2: 0xa68521 }, // HallsLevel.java:42-43
+};
 
 /** Level feelings (`Level.Feeling`): rolled for regular levels when depth > 1. */
 export enum Feeling {

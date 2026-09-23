@@ -44,10 +44,13 @@ import {
   useInventorySlot,
   waitTurn,
 } from './actions.js';
+import { noteWellCells } from './wellwire.js';
 import { throwPotion, isPotionId, potionUiInfo } from './potions.js';
 import { scrollUiInfo } from './scrolls.js';
 import { throwHoneypot, HONEYPOT_ID } from './honeypot.js';
 import { shatterHoneypotInHands } from './honeypot.js';
+import { instanceItemDef, zapWandFromSlot } from './wands.js';
+import './bee.js'; // Stage 3 (Worker A): registers the honeypot Bee summoner.
 import {
   createStarterHero,
   syncDarts,
@@ -74,6 +77,7 @@ import type { Game } from '../engine/loop.js';
 import './goo-boss.js'; // registers the Goo constructor for buildMob
 import './tengu-boss.js'; // registers the Tengu constructor for buildMob
 import './dm300-boss.js'; // registers the DM-300 constructor for buildMob
+import './bee.js'; // registers the Bee constructor for buildMob + the honeypot summon seam
 import './npcs.js'; // registers the quest-NPC builder for buildMob
 import { resetQuestState, type NpcMob } from './npcs.js';
 
@@ -113,7 +117,10 @@ function catalogKind(def: ItemDef): ItemKind {
 function contentInventoryAdapter(game: Game): UiItem[] {
   const hero = game.hero as unknown as ContentHero;
   const items: UiItem[] = hero.inventory.map((s, slot) => {
-    const def = getItem(s.itemId);
+    // Stage 3 (Worker A): wand/ring instances carry dynamic names and
+    // sprites (identified "wand of firebolt" vs. "marble wand"), so the
+    // adapter prefers the instance def — mirroring hero.ts:186.
+    const def = instanceItemDef(s.itemId) ?? getItem(s.itemId);
     // Stage 2 (Worker 4): potions/scrolls show their run-assigned
     // color/rune names and sprites once the ID system is initialized.
     const potionInfo = potionUiInfo(s.itemId, def.name, def.sprite);
@@ -359,6 +366,9 @@ export const contentMechanics: MechanicsHooks = {
     // Stage 0 (exact copy): register the painter's sign markers so the
     // 'wait' intent can read signs (Sign.java).
     noteSignCells(level, result.markers.signs);
+    // Stage 3 (well wiring): register the magic wells' kinds so the
+    // Level.press WELL case can drink from them (WellWater.affectCell).
+    noteWellCells(level, result.markers.wells);
     // Stage 2 (Worker 5): register the painter's wall-deco markers so the
     // pickaxe's MINE action can find dark gold veins (Pickaxe.java).
     noteWallDecoCells(level, result.markers.wallDeco);
@@ -412,6 +422,13 @@ export const contentMechanics: MechanicsHooks = {
       }
       case 'useItem':
         cost = useInventorySlot(ctx, hero, intent.slot);
+        break;
+      case 'zapWand':
+        // Wand.zapper.onSelect (Wand.java:430-475): setKnown, self-target
+        // guard, Ballistica.cast, charge spend — all inside
+        // zapWandFromSlot; a bare inventory 'use' of a wand only enters
+        // targeting mode in the UiManager (Wand.execute AC_ZAP).
+        cost = zapWandFromSlot(ctx, hero, intent.slot, intent.targetCell);
         break;
       case 'equip':
         cost = equipSlot(ctx, hero, intent.slot);

@@ -21,6 +21,7 @@ import { ORIGINAL_SPRITES } from '../assets/original_sprites';
 import { POTION_DEFS } from './potions.js';
 import { SCROLL_DEFS } from './scrolls.js';
 import { HONEYPOT_DEF } from './honeypot.js';
+import { TOME_ITEMS } from './tomes.js';
 import { WAND_SPECS } from '../mechanics/wands.js';
 import { RING_SPECS } from '../mechanics/rings.js';
 
@@ -712,6 +713,8 @@ export const ITEMS: Readonly<Record<string, ItemDef>> = {
   ...POTION_DEFS,
   ...SCROLL_DEFS,
   honeypot: HONEYPOT_DEF,
+  // Stage 3 (subclass system): Tome of Mastery (items/TomeOfMastery.java).
+  ...Object.fromEntries(TOME_ITEMS.map((d) => [d.id, d])),
   darkgold: DARK_GOLD,
   pickaxe: PICKAXE,
   // Stage 2 (wands/rings): base defs for the 13 wands + 12 rings. These are

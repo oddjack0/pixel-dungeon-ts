@@ -9,6 +9,7 @@
  * hunger.ts) and the renderer reads `sprite` + buff flags for visuals.
  */
 import type { BuffKind } from './buffs';
+import type { HeroSubClass } from './subclasses.js';
 import type { EnchantmentId } from '../content/enchantments.js';
 import type { GlyphId } from '../content/glyphs.js';
 
@@ -147,6 +148,12 @@ export interface Hero extends Char {
   rangedWeapon: WeaponDef | null;
   /** Number of darts carried (stackable missile ammo). */
   darts: number;
+  /**
+   * Hero subclass (Hero.subClass, Hero.java:167; heroes/HeroSubClass.java).
+   * 'none' until the Tome of Mastery is read (Stage 3). Mechanics live in
+   * mechanics/subclasses.ts + mechanics/subclass_buffs.ts.
+   */
+  subClass: HeroSubClass;
 }
 
 /** Extension point for mobs. The content designer extends this with AI state

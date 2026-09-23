@@ -79,6 +79,7 @@ export function createWarrior(id: number, pos: number): Hero {
     armor: { ...CLOTH_ARMOR },
     rangedWeapon: null,
     darts: 8,
+    subClass: 'none',
   };
 }
 
