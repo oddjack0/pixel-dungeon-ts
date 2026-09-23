@@ -896,16 +896,6 @@ function paintTrapsRoom(ctx: PainterCtx, room: Room): void {
   ctx.fillRoom(room, Terrain.WALL);
   const trapTile = ctx.rng.pick(traps);
   ctx.fillRoomMargin(room, 1, trapTile);
-  if (trapTile !== Terrain.CHASM) {
-    const trapIndex = TRAP_ORDER.indexOf(
-      trapTile === Terrain.TRAP_TOXIC ? 'toxic' : trapTile === Terrain.TRAP_PARALYTIC ? 'paralytic' : 'summoning',
-    );
-    for (let j = room.t + 1; j < room.b; j++) {
-      for (let i = room.l + 1; i < room.r; i++) {
-        ctx.out.traps.push({ x: i, y: j, trap: trapIndex, hidden: false });
-      }
-    }
-  }
   const door = entranceDoor(room);
   if (door) upgradeDoor(door, DoorType.REGULAR);
   const lastRow =
@@ -942,6 +932,22 @@ function paintTrapsRoom(ctx: PainterCtx, room: Room): void {
     } else {
       ctx.set(x, y, Terrain.PEDESTAL);
       ctx.drop(pos, kind);
+    }
+  }
+  // Register traps AFTER the prize path is carved: the path (lastRow) and
+  // the pedestal/chest overwrite trap tiles (vanilla TrapsPainter.java has
+  // no registry — traps are just tiles), so only cells that still hold the
+  // trap tile are real traps. No RNG draws here, so the stream is unchanged.
+  if (trapTile !== Terrain.CHASM) {
+    const trapIndex = TRAP_ORDER.indexOf(
+      trapTile === Terrain.TRAP_TOXIC ? 'toxic' : trapTile === Terrain.TRAP_PARALYTIC ? 'paralytic' : 'summoning',
+    );
+    for (let j = room.t + 1; j < room.b; j++) {
+      for (let i = room.l + 1; i < room.r; i++) {
+        if (ctx.tiles[ctx.idx(i, j)] === trapTile) {
+          ctx.out.traps.push({ x: i, y: j, trap: trapIndex, hidden: false });
+        }
+      }
     }
   }
   ctx.out.spawnQueue.push(prize('levitation'));
@@ -1757,6 +1763,14 @@ export function decorateCaves(
           for (let x = w.l + 2; x < w.r - 1; x++) ctx.set(x, w.t, Terrain.CHASM);
         }
       }
+    }
+    // Chasm cuts can overwrite WALL_DECO veins recorded above; drop the
+    // stale markers so every wallDeco marker still points at a WALL tile
+    // (vanilla: the CHASM fill overwrites the WALL_DECO tile — there is no
+    // separate registry to go stale). No RNG draws here.
+    const wallDeco = ctx.out.markers.wallDeco;
+    for (let k = wallDeco.length - 1; k >= 0; k--) {
+      if (ctx.tiles[wallDeco[k]!] !== Terrain.WALL) wallDeco.splice(k, 1);
     }
   }
 }

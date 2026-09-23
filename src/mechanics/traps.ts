@@ -46,6 +46,7 @@ import {
   BURNING_DURATION,
   CRIPPLE_DURATION,
   bleedingTick,
+  hasGasesImmunity,
   poisonTrapDuration,
 } from './buffs.js';
 import {
@@ -175,6 +176,17 @@ export function damageFromTrap(
   };
   const applied = applyDamage(rng, target, dmg, sourceTag);
   ch.hp = applied.hp;
+  // Stage 3 (Worker D): Undead.damage (King.java:281-286) — when a ToxicGas
+  // blob damages an undead dwarf, the gas at its cell is cleared. The src
+  // object doesn't survive the port's damage pipeline; the 'toxic_gas'
+  // sourceTag is the only marker that src was a ToxicGas blob. (The mob is
+  // identified by def id — ContentMob carries no TrapMob.kind at runtime.)
+  if (sourceTag === 'toxic_gas') {
+    const mobId = (ch as unknown as { def?: { id?: string } }).def?.id;
+    if (mobId === 'king_undead') {
+      ctx.level.blobs.find((b) => b.kind === 'toxic')?.clear(ch.pos);
+    }
+  }
   if (applied.paralysisBroken) {
     ch.paralysed = false;
     delete ch.buffs.paralysis;
@@ -289,6 +301,61 @@ export function makeBlobWorld(
       level.set(x, y, burned);
       // GameScene.updateMap / discoverTile / Dungeon.observe(): renderer +
       // FOV refresh — the engine owns them.
+    },
+    // ---- Stage 3 (Worker G) hooks ----
+    elementsLevel: (ch) => {
+      // RingOfElements level = the ring_elements buff's level (RingBuff.level).
+      const lvl = ch.buffs.ring_elements?.level;
+      return lvl == null ? null : lvl;
+    },
+    prolongVertigo: (ch, duration) => {
+      // NPC.add(Buff) is a no-op (NPC.java:41-43); Buff.attachTo refuses
+      // immune chars (Buff.java:30) — GasesImmunity covers Vertigo.
+      if (ch.invulnerable) return;
+      if (hasGasesImmunity(ch.buffs)) return;
+      const cur = ch.buffs.vertigo?.left ?? 0;
+      ch.buffs.vertigo = { kind: 'vertigo', left: Math.max(cur, duration) };
+    },
+    prolongFrost: (ch, duration) => {
+      // Buff.prolong: affect + postpone(duration) = max (Buff.java:85-89);
+      // attach sets paralysed + detaches Burning (Frost.java:25-49).
+      if (ch.invulnerable) return;
+      const cur = ch.buffs.frost?.left ?? 0;
+      ch.buffs.frost = { kind: 'frost', left: Math.max(cur, duration) };
+      ch.paralysed = true;
+      delete ch.buffs.burning;
+    },
+    clearFireAt: (cell) => {
+      const fire = level.blobs.find((b) => b.kind === 'fire');
+      if (fire) fire.clear(cell); // Fire.clear(cell), Freezing.java
+    },
+    freezeHeapAt: (cell) => {
+      // Heap.freeze() (Heap.java:251): mystery meat → FrozenCarpaccio.
+      // The port has no meat items (documented at burningInventoryTick in
+      // buffs.ts), so this is a no-op until they land.
+    },
+    prolongSacrificeMarked: (ch, duration) => {
+      if (ch.invulnerable) return;
+      const cur = ch.buffs.sacrificeMarked?.left ?? 0;
+      ch.buffs.sacrificeMarked = {
+        kind: 'sacrificeMarked',
+        left: Math.max(cur, duration),
+      };
+    },
+    prolongShadows: (ch) => {
+      // Foliage.evolve: Buff.affect(hero, Shadows.class).prolong().
+      // Shadows is another worker's subclass buff — the engine wires this
+      // when it lands; until then the call is a documented no-op.
+    },
+    hero: () => {
+      // Foliage.evolve needs hero.isAlive(), visibleEnemies(), pos.
+      // TrapHero has no visible-enemy count yet — the engine wires this
+      // when the hero's enemy visibility lands; 1 keeps Shadows off.
+      if (!hero.isAlive()) return null;
+      return { ...hero, visibleEnemies: 1 };
+    },
+    observe: () => {
+      // Dungeon.observe(): FOV refresh — the engine owns it.
     },
     log: (msg) => ctx.log(msg),
   };

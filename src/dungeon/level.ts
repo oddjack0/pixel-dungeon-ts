@@ -86,7 +86,7 @@ export interface ItemSpawn {
 }
 
 /** Mob spawn kinds produced by the generator, for the content designer. */
-export type MobKind = 'mob' | 'boss' | 'ratking' | 'statue' | 'piranha' | 'ghost' | 'shopkeeper' | 'wandmaker' | 'blacksmith';
+export type MobKind = 'mob' | 'boss' | 'ratking' | 'statue' | 'piranha' | 'ghost' | 'shopkeeper' | 'wandmaker' | 'blacksmith' | 'imp';
 
 /**
  * Cross-depth run state (vanilla `Dungeon` statics: Dungeon.java).
@@ -107,6 +107,10 @@ export interface RunState {
   wandmakerSpawned: boolean;
   /** The blacksmith quest has spawned (Blacksmith.Quest.spawned). */
   blacksmithSpawned: boolean;
+  /** The imp quest has spawned (Imp.Quest.spawned, CityLevel.createItems). */
+  impSpawned: boolean;
+  /** Imp.Quest.alternative (Imp.java:223): which shop item set the imp wants. */
+  impAlternative: boolean;
 }
 
 /** Fresh per-run state (vanilla statics reset on new game). */
@@ -118,6 +122,8 @@ export function newRunState(): RunState {
     scrollsOfUpgrade: 0,
     wandmakerSpawned: false,
     blacksmithSpawned: false,
+    impSpawned: false,
+    impAlternative: false,
   };
 }
 
@@ -138,6 +144,14 @@ export class Level extends Grid {
 
   depth = 1;
   region: Region = Region.SEWERS;
+  /**
+   * Ambient particle tint range (vanilla `Level.color1/color2`,
+   * Level.java:130-131 defaults). Set from REGION_COLORS during generation;
+   * consumed by leaf-type ambient particles
+   * (`ColorMath.random(color1, color2)`, LeafParticle.java:46).
+   */
+  color1 = 0x004400;
+  color2 = 0x88cc44;
 
   /** SPEC §3 aliases for Grid.w/h. */
   get width(): number {

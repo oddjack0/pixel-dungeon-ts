@@ -1,4 +1,4 @@
-import { Terrain, Feeling, regionForDepth } from '../core/grid.js';
+import { Terrain, Feeling, regionForDepth, REGION_COLORS } from '../core/grid.js';
 import { Grid } from '../core/grid.js';
 import type { RNG } from '../core/rng.js';
 import { computeFov } from '../core/fov.js';
@@ -38,6 +38,7 @@ import {
   type PainterMarkers,
 } from './painters.js';
 import { paintShopRoom } from './shopPainter.js';
+import { paintCityBoss, decorateCity, isCityDepth } from './cityLevel.js';
 
 /**
  * Milestone 1 dungeon generator: Sewers depths 1-4 + the Goo boss level
@@ -185,6 +186,7 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   const boss = isBossDepth(depth);
   const tengu = depth === 10;
   const dm300 = depth === 15;
+  const king = depth === 20;
 
   // ---- 1. quest items (Level.create; skipped on boss levels) ----
   const queue: SpawnKind[] = [];
@@ -231,6 +233,8 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   let cavesArenaDoor = -1;
   /** DM-300 level: the arena bounds (bossArena seam). */
   let cavesArena: { l: number; t: number; r: number; b: number } | null = null;
+  /** Dwarf King level: the arena-door cell (CityBossLevel.arenaDoor). */
+  let cityArenaDoor = -1;
   let secretDoors = 0;
   let trapAttempts = 0;
   let trapsPlaced = 0;
@@ -248,6 +252,20 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     exitCell = built.exit;
     cavesArenaDoor = built.arenaDoor;
     cavesArena = built.arena;
+    rooms = [];
+    ctx = c;
+  } else if (king) {
+    // Vanilla `CityBossLevel.build` + `decorate` (CityBossLevel.java:58-137):
+    // no room system — a 7-wide hall with a carpeted center aisle, statue
+    // pairs, two pedestals, the LOCKED_EXIT at the top, the arena DOOR, and
+    // the bookshelf entrance chamber below. No feeling, no placeTraps, no
+    // quest items (CityBossLevel extends Level directly, not RegularLevel).
+    // Single-shot: the carve has no failure modes, so no retry loop.
+    const c = new PainterCtx(rng, W, H, depth, 'none', true, false);
+    const built = paintCityBoss(c);
+    entranceCell = built.entrance;
+    exitCell = built.exit;
+    cityArenaDoor = built.arenaDoor;
     rooms = [];
     ctx = c;
   } else
@@ -324,7 +342,9 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
       const assign = assignRoomTypes(rng, built, depth, {
         prevWeakFloor: pitNeeded,
         nextIsBoss: isBossDepth(depth + 1),
-        tunnelsToPassages: isPrisonDepth(depth),
+        // Vanilla `CityLevel.assignRoomType` (CityLevel.java:57-65) paints
+        // TUNNEL rooms as PASSAGE, like PrisonLevel.
+        tunnelsToPassages: isPrisonDepth(depth) || isCityDepth(depth),
       });
       run.weakFloor = assign.weakFloor;
       // Vanilla `Blacksmith.Quest.spawn` (Blacksmith.java:305-320), called
@@ -381,6 +401,18 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
           3,
         );
         decorateCaves(c, built, entranceRoom, entranceCell);
+      } else if (isCityDepth(depth)) {
+        // Vanilla `CityLevel.water/grass` (CityLevel.java:49-55):
+        // Patch.generate(0.65/0.45, 4) water, Patch.generate(0.60/0.40, 3) grass.
+        paintWaterGrass(
+          c,
+          built,
+          feeling === Feeling.WATER ? 0.65 : 0.45,
+          feeling === Feeling.GRASS ? 0.6 : 0.4,
+          4,
+          3,
+        );
+        decorateCity(c, entranceRoom, entranceCell);
       } else {
         paintWaterGrass(c, built);
         decorateSewers(c, entranceRoom, entranceCell);
@@ -394,8 +426,8 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   if (!ctx || entranceCell < 0 || exitCell < 0) {
     throw new Error(`dungeon generation failed for depth ${depth}`);
   }
-  // DM-300 depths use no rooms; every other depth has entrance/exit rooms.
-  if (!dm300 && (!entranceRoom || !exitRoom)) {
+  // DM-300 / King depths use no rooms; every other depth has entrance/exit rooms.
+  if (!dm300 && !king && (!entranceRoom || !exitRoom)) {
     throw new Error(`dungeon generation failed for depth ${depth}`);
   }
 
@@ -443,8 +475,9 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     // Tengu is NOT generated: he spawns when the hero enters the arena
     // (PrisonBossLevel.press) — the boss worker's runtime hook. DM-300 is
     // NOT generated either: it spawns when the hero LEAVES the arena
-    // (CavesBossLevel.press) — see cavesBoss.ts.
-    if (!tengu && !dm300 && exitRoom) mobs.push({ pos: randomCell(ctx, exitRoom), kind: 'boss' });
+    // (CavesBossLevel.press) — see cavesBoss.ts. The Dwarf King spawns when
+    // the hero ENTERS the arena (CityBossLevel.press) — see cityBoss.ts.
+    if (!tengu && !dm300 && !king && exitRoom) mobs.push({ pos: randomCell(ctx, exitRoom), kind: 'boss' });
   } else {
     const nMobs = 2 + (depth % 5) + rng.int(0, 3);
     for (let i = 0; i < nMobs; i++) {
@@ -514,23 +547,28 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     // unlockedOnly: guaranteed quest items (food, potion of strength,
     // scrolls of upgrade, dew vial) must always be obtainable — vanilla
     // never strands them behind a locked door whose key is unreachable.
-    const randomDropCell = (unlockedOnly = false, walkableOnly = false): number => {
-      for (let guard = 0; guard < 1000; guard++) {
-        const room = randomStandardRoom();
-        if (!room) continue;
-        if (
-          unlockedOnly &&
-          room.doors.some((d) => d.type === DoorType.LOCKED)
-        )
-          continue;
-        const pos = randomCell(ctx, room);
-        const t = tiles[pos]!;
-        if (!PASSABLE_SPAWN.has(t)) continue;
-        // Vanilla `Level.passable[]` treats water as walkable, so the
-        // walkableOnly filter here is about standard-room floor tiles —
-        // quest items must land where the hero can actually pick them up.
-        if (walkableOnly && t === Terrain.WATER) continue;
-        return pos;
+    // The water exclusion keeps quest items off water in the normal case
+    // (a deliberate port tightening); if every standard room is flooded
+    // (City water fill can do this), vanilla `randomDropCell` semantics
+    // apply — `passable[pos]` INCLUDES water (RegularLevel.java:648-658,
+    // Terrain.java:91) — rather than throwing.
+    const randomDropCell = (unlockedOnly = false): number => {
+      for (let pass = 0; pass < 2; pass++) {
+        const allowWater = pass === 1;
+        for (let guard = 0; guard < 1000; guard++) {
+          const room = randomStandardRoom();
+          if (!room) continue;
+          if (
+            unlockedOnly &&
+            room.doors.some((d) => d.type === DoorType.LOCKED)
+          )
+            continue;
+          const pos = randomCell(ctx, room);
+          const t = tiles[pos]!;
+          if (!PASSABLE_SPAWN.has(t)) continue;
+          if (!allowWater && t === Terrain.WATER) continue;
+          return pos;
+        }
       }
       throw new Error('randomDropCell failed: no standard room');
     };
@@ -556,7 +594,7 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
           heap = 'HEAP';
           break;
       }
-      items.push({ pos: randomDropCell(false, true), heap, tag: 'random' });
+      items.push({ pos: randomDropCell(false), heap, tag: 'random' });
     }
 
     // SewerLevel.createItems: the dew vial joins the spawn queue (once/run).
@@ -567,14 +605,14 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     }
 
     for (const queued of ctx.out.spawnQueue) {
-      let cell = randomDropCell(true, true);
+      let cell = randomDropCell(true);
       if (queued.tag === 'scroll-of-upgrade') {
         let guard = 1000;
         while (
           (tiles[cell] === Terrain.TRAP_FIRE || tiles[cell] === Terrain.TRAP_FIRE_HIDDEN) &&
           guard-- > 0
         ) {
-          cell = randomDropCell(true, true);
+          cell = randomDropCell(true);
         }
       }
       items.push({ pos: cell, heap: queued.heap, tag: queued.tag });
@@ -582,10 +620,34 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
   }
   // (Bones.get() is skipped: no cross-run bone state in M1 — see report.)
 
+  // The imp quest (CityLevel.createItems -> Imp.Quest.spawn, Imp.java:212-223):
+  // vanilla calls it AFTER super.createItems(), so the chance roll and the
+  // respawn-cell search come after all regular item drops in RNG order.
+  // Once per run, only on depths 17-19: chance Random.Int(20-depth)==0, so
+  // depth 19 is guaranteed (Int(1) is always 0). Vanilla's do/while on
+  // randomRespawnCell is unbounded; this port uses the bounded 50-try
+  // stand-in (the wandmaker precedent marks spawned only when a cell is
+  // actually found). The Random.Int(2) alternative roll is preserved so the
+  // stream matches vanilla exactly.
+  if (!run.impSpawned && depth > 16 && depth < 20 && rng.int(0, 20 - depth) === 0) {
+    let pos = -1;
+    for (let t = 0; t < 50 && pos === -1; t++) pos = randomRespawnCell();
+    if (pos !== -1) {
+      occupied.add(pos);
+      mobs.push({ pos, kind: 'imp' });
+      run.impSpawned = true;
+    }
+    run.impAlternative = rng.int(0, 2) === 0;
+  }
+
   // ---- assemble the Level model ----
   const level = new Level(W, H);
   level.depth = depth;
   level.region = regionForDepth(depth);
+  // Vanilla per-region ambient tint (Level.color1/color2).
+  const regionColors = REGION_COLORS[level.region];
+  level.color1 = regionColors.color1;
+  level.color2 = regionColors.color2;
   level.tiles = tiles;
   level.feeling = feeling;
   level.bossLevel = boss;
@@ -607,6 +669,11 @@ export function generateLevel(rng: RNG, depth: number, run: RunState): GenResult
     // (CavesBossLevel.press/seal/unseal — see cavesBoss.ts).
     level.bossArena = { ...cavesArena };
     level.arenaDoorCell = cavesArenaDoor;
+  }
+  if (king) {
+    // Runtime seam for the boss worker's Dwarf King arena-entry hook
+    // (CityBossLevel.press/seal/unseal — see cityBoss.ts).
+    level.arenaDoorCell = cityArenaDoor;
   }
 
   return { level, rooms, markers: ctx.out.markers, items, mobs, trapAttempts, trapsPlaced };
