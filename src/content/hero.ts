@@ -21,6 +21,7 @@ import type {
 } from '../mechanics/char.js';
 import type { BuffKind } from '../mechanics/buffs.js';
 import type { BuffState } from '../mechanics/char.js';
+import type { HeroSubClass } from '../mechanics/subclasses.js';
 import { charTimeScale } from '../mechanics/char.js';
 import { initDurability } from '../mechanics/durability.js';
 import { heroSpeed } from '../mechanics/hero.js';
@@ -98,6 +99,11 @@ export class ContentHero extends Actor implements HeroActor, Hero {
   armorId: string | null = null;
   rangedWeapon: WeaponDef | null = null;
   darts = 0;
+  /**
+   * Hero subclass (Hero.subClass, Hero.java:167). 'none' until the Tome of
+   * Mastery is read (Stage 3, mechanics/subclasses.ts + subclass_buffs.ts).
+   */
+  subClass: HeroSubClass = 'none';
 
   /** Belongings.backpack (unequipped gear, potions, scrolls, food, darts, keys). */
   inventory: ItemStack[] = [];
