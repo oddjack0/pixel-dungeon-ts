@@ -48,6 +48,7 @@ export class UiManager {
 
   private game: Game | null = null;
   private throwMode: { slot: number } | null = null;
+  private zapMode: { slot: number } | null = null;
   private kills = 0;
   private lastHeroAct = 0;
   private view: View = { w: 390, h: 700 };
@@ -68,6 +69,12 @@ export class UiManager {
     };
     this.inventory.onThrowRequest = (item) => {
       this.throwMode = { slot: item.slot };
+      this.inventory.close();
+    };
+    // Wand AC_ZAP (Wand.java:123-126): Zap enters cell-targeting mode; the
+    // next map tap queues the zapWand intent with the tapped cell.
+    this.inventory.onZapRequest = (item) => {
+      this.zapMode = { slot: item.slot };
       this.inventory.close();
     };
     this.effects.onMobDeath = () => {
@@ -144,6 +151,7 @@ export class UiManager {
     this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
+    this.zapMode = null;
     this.screens.show('playing');
   }
 
@@ -160,6 +168,7 @@ export class UiManager {
     this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
+    this.zapMode = null;
     this.screens.show('playing');
   }
 
@@ -171,6 +180,7 @@ export class UiManager {
     this.shop.close();
     this.minimap.open = false;
     this.throwMode = null;
+    this.zapMode = null;
     this.screens.show('title');
   }
 
@@ -221,8 +231,9 @@ export class UiManager {
       return;
     }
     const k = e.key;
-    if (this.throwMode && (k === 'Escape' || k.toLowerCase() === 'p')) {
+    if ((this.throwMode || this.zapMode) && (k === 'Escape' || k.toLowerCase() === 'p')) {
       this.throwMode = null;
+      this.zapMode = null;
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -313,6 +324,28 @@ export class UiManager {
         g.logMsg('Throw cancelled.');
       }
       this.throwMode = null;
+      this.zapMode = null;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    // Zap targeting (Wand AC_ZAP cell selector, Wand.java:123-126): the next
+    // tap picks any map cell; tapping off the map cancels the zap.
+    if (this.zapMode) {
+      const t = this.renderer.screenToTile(e.clientX, e.clientY);
+      const w = g.level.w;
+      const h = g.level.h;
+      if (t.x >= 0 && t.y >= 0 && t.x < w && t.y < h) {
+        g.queueIntent({
+          kind: 'zapWand',
+          slot: this.zapMode.slot,
+          targetCell: t.y * w + t.x,
+        });
+      } else {
+        g.logMsg('Zap cancelled.');
+      }
+      this.zapMode = null;
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -391,6 +424,7 @@ export class UiManager {
       // Quest dialogs render above every other overlay.
       if (dialogOpen()) this.dialogs.draw(ctx, this.renderer, this.view);
       if (this.throwMode) this.drawThrowHint(ctx);
+      if (this.zapMode) this.drawZapHint(ctx);
     } else {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = UI.backdrop;
@@ -399,6 +433,25 @@ export class UiManager {
     if (this.screens.state !== 'playing') {
       this.screens.draw(ctx, this.renderer, this.view, nowMs);
     }
+  }
+
+  private drawZapHint(ctx: CanvasRenderingContext2D): void {
+    const label = 'Tap a cell to zap · Esc cancels';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    const w = ctx.measureText(label).width + 28;
+    const r = { x: (this.view.w - w) / 2, y: 70, w, h: 34 };
+    ctx.fillStyle = 'rgba(10, 8, 14, 0.85)';
+    ctx.strokeStyle = UI.gold;
+    ctx.lineWidth = 2;
+    roundRect(ctx, r, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = UI.gold;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 1);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 
   private drawThrowHint(ctx: CanvasRenderingContext2D): void {

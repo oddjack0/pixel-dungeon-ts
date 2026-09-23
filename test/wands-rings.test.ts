@@ -385,23 +385,33 @@ describe('zap flow (Wand.zap, Wand.java:121-146)', () => {
     return { rng, level, ctx, hero, logs, id, slot };
   }
 
-  test('useWandFromSlot returns "target" when charged, 1 when fizzled', () => {
+  test('useWandFromSlot always enters targeting (Wand.execute AC_ZAP, Wand.java:121-126)', () => {
     const { ctx, hero, slot, id } = zapSetup('firebolt');
+    // Vanilla opens the cell selector even for an empty wand; the fizzle
+    // resolves after a cell is tapped (Wand.zapper.onSelect). Merely
+    // opening targeting identifies nothing.
     expect(useWandFromSlot(ctx, hero, slot)).toBe('target');
+    expect(isWandTypeKnown('firebolt')).toBe(false);
     const st = getWandState(id)!;
     st.curCharges = 0;
-    expect(useWandFromSlot(ctx, hero, slot)).toBe(1);
+    expect(useWandFromSlot(ctx, hero, slot)).toBe('target');
+    expect(isWandTypeKnown('firebolt')).toBe(false);
   });
 
-  test('beginZap identifies the TYPE even on fizzle (Wand.execute)', () => {
-    const { ctx, hero, id, logs } = zapSetup('firebolt');
+  test('beginZap fizzles at 0 charges; the zapper identifies the TYPE even on fizzle (Wand.java:444-456)', () => {
+    const { ctx, hero, slot, id, logs } = zapSetup('firebolt');
     const st = getWandState(id)!;
     st.curCharges = 0;
     expect(isWandTypeKnown('firebolt')).toBe(false);
     const { fizzled } = beginZap(ctx, hero, st);
     expect(fizzled).toBe(true);
-    expect(isWandTypeKnown('firebolt')).toBe(true);
     expect(logs.some((l) => l.includes('fizzles'))).toBe(true);
+    // setKnown() runs in the zapper's onSelect BEFORE the charge check
+    // (Wand.java:444): the full flow identifies the type even on fizzle.
+    const cost = zapWandFromSlot(ctx, hero, slot, hero.pos + 3);
+    expect(cost).toBe(1);
+    expect(isWandTypeKnown('firebolt')).toBe(true);
+    expect(st.levelKnown).toBe(true);
   });
 
   test('a zap spends 1 charge and counts toward the 40-use identification', () => {
@@ -417,23 +427,26 @@ describe('zap flow (Wand.zap, Wand.java:121-146)', () => {
     expect(st.chargeKnown).toBe(true);
   });
 
-  test('40th use identifies the wand', () => {
+  test('40th use fully identifies the wand (Wand.wandUsed -> Item.identify, Wand.java:352-360)', () => {
     const { ctx, hero, slot, id, logs } = zapSetup('firebolt');
     const st = getWandState(id)!;
     st.usagesToKnow = 1;
     st.curCharges = 5;
     zapWandFromSlot(ctx, hero, slot, hero.pos + 3);
     expect(isWandTypeKnown('firebolt')).toBe(true);
+    expect(st.levelKnown).toBe(true);
+    expect(st.cursedKnown).toBe(true);
     expect(logs.some((l) => l.includes('familiar enough'))).toBe(true);
   });
 
-  test('self-target is rejected ("You can\'t target yourself")', () => {
+  test('self-target is rejected before setKnown: no identification, no turn cost (Wand.java:432-434)', () => {
     const { ctx, hero, slot, id, logs } = zapSetup('firebolt');
     const st = getWandState(id)!;
     const before = st.curCharges;
     const res = zapWandFromSlot(ctx, hero, slot, hero.pos);
-    expect(res).toBe(1);
+    expect(res).toBe(0);
     expect(st.curCharges).toBe(before); // no charge spent
+    expect(isWandTypeKnown('firebolt')).toBe(false); // no setKnown()
     expect(logs.some((l) => l.includes("can't target yourself"))).toBe(true);
   });
 
@@ -513,7 +526,12 @@ describe('per-wand zap effects', () => {
   test('Avalanche damages, paralyzes, and presses traps (WandOfAvalanche)', async () => {
     const { level, ctx, hero, slot } = zapSetup('avalanche');
     const { buildMob } = await import('../src/content/mobs.js');
-    const mob = buildMob('rat', 9005, targetCell(hero, 2), level.w);
+    // Vanilla zaps are magic=true (Wand.java:426): the beam runs PAST the
+    // tapped cell to the first wall — every real level is walled, so the
+    // test levels the beam against a wall exactly like the game does.
+    const wallCell = targetCell(hero, 5);
+    level.set(wallCell % level.w, Math.floor(wallCell / level.w), Terrain.WALL);
+    const mob = buildMob('rat', 9005, targetCell(hero, 4), level.w);
     (ctx.mobs as unknown as { push(m: unknown): void }).push(mob);
     const hp = mob.hp;
     // StubRng-free: paralysis chance uses ctx.rng; just check damage + buff key exists path.
@@ -592,10 +610,16 @@ describe('per-wand zap effects', () => {
   test('Disintegration melts doors and damages chars on the trace', async () => {
     const { level, ctx, hero, slot } = zapSetup('disintegration');
     const { buildMob } = await import('../src/content/mobs.js');
+    // The magic beam (Wand.java:426) runs past the tapped cell to the first
+    // wall; disintegration caps its reach at level+4 trace cells
+    // (WandOfDisintegration.java). Doors block the beam (losBlocking), so
+    // the mob stands before the door on the trace.
+    const mob = buildMob('rat', 9008, targetCell(hero, 2), level.w);
+    (ctx.mobs as unknown as { push(m: unknown): void }).push(mob);
     const doorCell = targetCell(hero, 3);
     level.set(doorCell % level.w, Math.floor(doorCell / level.w), Terrain.DOOR);
-    const mob = buildMob('rat', 9008, targetCell(hero, 4), level.w);
-    (ctx.mobs as unknown as { push(m: unknown): void }).push(mob);
+    const wallCell = targetCell(hero, 7);
+    level.set(wallCell % level.w, Math.floor(wallCell / level.w), Terrain.WALL);
     const hp = mob.hp;
     zapWandFromSlot(ctx, hero, slot, targetCell(hero, 6));
     expect(level.getAt(doorCell)).toBe(Terrain.EMBERS);

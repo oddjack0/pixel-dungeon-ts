@@ -133,7 +133,7 @@ export interface WandState {
   cursedKnown: boolean;
   curCharges: number;
   maxCharges: number;
-  /** Counts DOWN from 40; at 0 the wand type is identified (Wand.java:56). */
+  /** Counts DOWN from 40; at 0 the wand is fully identified (Wand.wandUsed, Wand.java:352-360). */
   usagesToKnow: number;
   /** Charge count is player-visible (curChargeKnown, Wand.java:75). */
   chargeKnown: boolean;
@@ -443,16 +443,15 @@ export type ZapResult =
   | { ok: false; reason: 'no-charges' | 'self-target' | 'no-target' | 'unknown' };
 
 /**
- * Begin a zap: Wand.execute calls setKnown() BEFORE checking charges
- * (Wand.java:123-126), so even an empty wand is identified when used.
- * Returns false when the zap fizzles (still costs 1 turn).
+ * Fizzle-check preamble of the zapper's onSelect AFTER a cell is picked
+ * (Wand.java:449-456). The caller (zapWandFromSlot) runs setKnown() first —
+ * the zap reveals the wand's TYPE even when it fizzles.
  */
 export function beginZap(
   ctx: Pick<ActionContext, 'log'>,
   hero: ContentHero,
   state: WandState,
 ): { fizzled: boolean } {
-  identifyWandType(state.wandId, ctx.log);
   if (state.curCharges <= 0) {
     ctx.log(TXT_FIZZLES);
     return { fizzled: true };
@@ -461,12 +460,16 @@ export function beginZap(
 }
 
 /**
- * Resolve a zap at a target cell (Wand.zapper.onSelect). `targetCell`
- * must be a map position; targeting the hero's own cell is rejected
- * (Wand.zapper: "You can't target yourself").
+ * Resolve a zap at a target cell (Wand.zapper.onSelect after the charge
+ * check, Wand.java:449-467). `targetCell` must be a map position;
+ * targeting the hero's own cell is rejected (Wand.zapper:
+ * "You can't target yourself").
  *
- * Successful zaps: curCharges--, usagesToKnow--, identify at 40 uses
- * (Wand.zapProc -> usagesToKnow-- -> if (usagesToKnow == 0) setKnown()).
+ * Charged zaps (Wand.wandUsed, Wand.java:352-360): the charge is spent
+ * AFTER the effect; usagesToKnow decrements only while unidentified, and
+ * at 40 uses the wand is FULLY identified (Item.identify: levelKnown +
+ * cursedKnown) with GLog.w(TXT_FAMILIAR). A successful zap dispels
+ * invisibility (Wand.java:446-448: Invisibility.dispel()).
  */
 export function resolveZap(
   ctx: ActionContext,
@@ -489,10 +492,17 @@ export function resolveZap(
     spec.hitChars,
   );
   applyZapEffect(ctx, hero, state, ball, fx);
-  state.curCharges--;
+  // Wand.wandUsed (Wand.java:352-360): usagesToKnow only counts down while
+  // the wand is not fully identified; the 40th use identifies it completely
+  // and logs TXT_FAMILIAR ("You are now familiar enough with your %s.").
+  if (!(state.levelKnown && state.cursedKnown) && --state.usagesToKnow <= 0) {
+    state.levelKnown = true; // Item.identify (Item.java:217-221)
+    state.cursedKnown = true;
+    ctx.log(txtWandIdentified(wandDisplayName(state.wandId)));
+  }
+  state.curCharges--; // spent after the effect (Wand.wandUsed, Wand.java:359)
   state.chargeKnown = true; // updateQuickslot (Wand.java:135)
-  state.usagesToKnow--;
-  if (state.usagesToKnow <= 0) identifyWandType(state.wandId, ctx.log);
+  delete hero.buffs.invisibility; // Invisibility.dispel() (Wand.java:448)
   return { ok: true, spent: 1 };
 }
 
@@ -590,11 +600,18 @@ function ballisticaWorldOf(ctx: ActionContext): BallisticaWorld {
   const level = ctx.level;
   const w = level.w;
   const hero = heroOf(ctx);
+  const len = level.tiles.length;
+  // Vanilla levels are always ringed by walls, so a beam can never leave the
+  // map; treat out-of-bounds indices as solid (Level.passable would throw in
+  // vanilla — the port must terminate instead of looping forever).
+  const inBounds = (pos: number): boolean => pos >= 0 && pos < len;
   return {
     w,
     h: level.h,
-    beamPassableAt: (pos) => beamPassable(level.tiles[pos] as Terrain),
-    losBlockingAt: (pos) => beamLosBlocking(level.tiles[pos] as Terrain),
+    beamPassableAt: (pos) =>
+      inBounds(pos) && beamPassable(level.tiles[pos] as Terrain),
+    losBlockingAt: (pos) =>
+      inBounds(pos) && beamLosBlocking(level.tiles[pos] as Terrain),
     charAt: (pos) =>
       (hero.isAlive() && hero.pos === pos) ||
       ctx.mobs.some((m) => m.isAlive() && m.y * w + m.x === pos),
@@ -1303,12 +1320,15 @@ export function tickFlockSheep(ctx: ActionContext): void {
 /* ------------------------------------------------------------------ */
 
 /**
- * The inventory "use" action for a wand (Wand.execute, AC_ZAP):
- * prompts for a target. Returns 'target' so the UI can enter
- * cell-targeting mode, or a turn cost when the zap resolved/fizzled.
+ * The inventory "use" action for a wand (Wand.execute, AC_ZAP,
+ * Wand.java:121-126): enters cell-targeting mode. Vanilla opens the cell
+ * selector unconditionally — even for an empty wand; the fizzle resolves
+ * after a cell is tapped (Wand.zapper.onSelect, Wand.java:430-475).
+ * Merely opening (or cancelling) targeting identifies nothing: setKnown()
+ * runs in onSelect after a non-self cell is picked (Wand.java:444).
  *
- * COORDINATOR SEAM: useInventorySlot's wand branch + the zapWand intent
- * in handleHeroIntent should call zapWandFromSlot.
+ * COORDINATOR SEAM: the UI's zap-targeting mode + the zapWand intent in
+ * handleHeroIntent call zapWandFromSlot once the cell is chosen.
  */
 export function useWandFromSlot(
   ctx: ActionContext,
@@ -1317,17 +1337,14 @@ export function useWandFromSlot(
 ): 'target' | number {
   const stack = hero.inventory[slot];
   if (!stack || !isWandId(stack.itemId)) return 1;
-  const st = getWandState(stack.itemId);
-  if (!st) return 1;
-  // Wand.execute: beginZap identifies the TYPE even on fizzle.
-  const { fizzled } = beginZap(ctx, hero, st);
-  if (fizzled) return 1;
   return 'target';
 }
 
 /**
  * Resolve the zap once the player picks a target cell
- * (Wand.zapper.onSelect). Returns the turn cost (1).
+ * (Wand.zapper.onSelect, Wand.java:430-475). Returns the turn cost:
+ * 1 for a real zap or a fizzle, 0 for a self-target (vanilla returns
+ * BEFORE setKnown() and spendAndNext, Wand.java:432-434).
  */
 export function zapWandFromSlot(
   ctx: ActionContext,
@@ -1340,6 +1357,22 @@ export function zapWandFromSlot(
   if (!stack) return 1;
   const st = getWandState(stack.itemId);
   if (!st) return 1;
+  // Wand.zapper.onSelect: self-target -> TXT_SELF_TARGET, return before
+  // setKnown()/spendAndNext — no identification, no turn cost.
+  if (targetCell === hero.pos) {
+    ctx.log(TXT_SELF_TARGET);
+    return 0;
+  }
+  // setKnown() (Wand.java:444): the zap reveals the wand's TYPE — before
+  // the charge check, so an empty wand still identifies its type.
+  identifyWandType(st.wandId, ctx.log);
+  // Empty wand (Wand.java:449-456): TIME_TO_ZAP, TXT_FIZZLES, levelKnown,
+  // updateQuickslot.
+  if (beginZap(ctx, hero, st).fizzled) {
+    st.levelKnown = true;
+    st.chargeKnown = true;
+    return 1; // spendAndNext(TIME_TO_ZAP)
+  }
   const res = resolveZap(ctx, hero, st, targetCell, fx);
   return res.ok ? res.spent : 1;
 }

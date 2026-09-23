@@ -60,9 +60,11 @@ import {
   dropItemAt,
   registerGoo,
   strikeMobVsHero,
+  strikeMobVsMob,
   type MobDef,
 } from './mobs.js';
-import type { ContentHero } from './hero.js';
+import { ContentHero } from './hero.js';
+import type { MechanicsRng } from '../mechanics/rng.js';
 
 /**
  * Goo.java:41-59 — HP/HT 80, def 12, atk 15 (30 pumped), NormalIntRange(2,12)
@@ -158,13 +160,13 @@ export class GooMob extends ContentMob {
    * Goo.doAttack (Goo.java:104-170): pumped strike, jump strike, pump-up,
    * or the 1/3 pump fizzle that spends the turn.
    */
-  override doAttack(ctx: ActionContext, hero: ContentHero): number {
+  override doAttack(ctx: ActionContext, enemy: ContentHero | ContentMob): number {
     const rng = ctx.rng;
-    const dist = chebyshevPos(this.pos, hero.pos, this.w);
+    const dist = chebyshevPos(this.pos, enemy.pos, this.w);
     const action = gooDecide(
       rng,
       { hp: this.hp, pumpedUp: this.pumpedUp, jumped: this.jumped },
-      { dist, jumpPathClear: this.jumpPathClear(ctx, hero) },
+      { dist, jumpPathClear: this.jumpPathClear(ctx, enemy) },
     );
     switch (action.kind) {
       case 'pump': {
@@ -181,14 +183,14 @@ export class GooMob extends ContentMob {
         // Goo.java:112-118: jumped = false BEFORE the strike — pumped attack
         // WITHOUT accuracy penalty (attackSkill 30).
         this.jumped = false;
-        this.gooStrike(ctx, hero, gooAttackSkill(true, this.jumped), true);
+        this.gooStrike(ctx, enemy, gooAttackSkill(true, this.jumped), true);
         this.applyGooAfter(action);
         return 1 * this.getSpeed(); // spend(attackDelay())
       }
       case 'attack': {
         // Goo.java:150-156: normal attack (attackSkill 15); jumped untouched.
         // The attack() wrapper then clears pumpedUp only (Goo.java:176-180).
-        this.gooStrike(ctx, hero, gooAttackSkill(false, this.jumped), false);
+        this.gooStrike(ctx, enemy, gooAttackSkill(false, this.jumped), false);
         this.applyGooAfter(action);
         return 1 * this.getSpeed(); // spend(attackDelay())
       }
@@ -197,9 +199,9 @@ export class GooMob extends ContentMob {
         // WITH accuracy penalty (attackSkill 15). The leap lands in the cell
         // before the hero along the jump trace (Ballistica.trace[distance-2]).
         this.jumped = true;
-        this.pos = this.jumpDest(ctx, hero);
+        this.pos = this.jumpDest(ctx, enemy);
         ctx.log('Goo jumps!');
-        this.gooStrike(ctx, hero, gooAttackSkill(true, this.jumped), true);
+        this.gooStrike(ctx, enemy, gooAttackSkill(true, this.jumped), true);
         this.applyGooAfter(action);
         return 1 * this.getSpeed(); // spend(attackDelay())
       }
@@ -209,26 +211,28 @@ export class GooMob extends ContentMob {
   /** Goo strike with explicit accuracy and pumped damage (Goo.damageRoll). */
   private gooStrike(
     ctx: ActionContext,
-    hero: ContentHero,
+    enemy: ContentHero | ContentMob,
     accuracy: number,
     pumped: boolean,
   ): void {
-    strikeMobVsHero(
-      ctx,
-      this,
-      hero,
-      accuracy,
-      (rng) => gooDamageRoll(rng, pumped),
-      (rng, damage) => {
-        // Goo.attackProc: 1/3 chance to apply Ooze (Goo.java:174-180).
-        // The warning text is Hero.add's Ooze branch (Hero.java:1091).
-        if (gooOozeRoll(rng)) {
-          hero.buffs.ooze = { kind: 'ooze', left: 0 }; // duration-less (Ooze.java)
+    // Goo.attackProc: 1/3 chance to apply Ooze (Goo.java:174-180). Vanilla
+    // applies Ooze to any Char enemy; the warning text is Hero.add's Ooze
+    // branch (Hero.java:1091), so it only logs for the hero.
+    const proc = (rng: MechanicsRng, damage: number) => {
+      if (gooOozeRoll(rng)) {
+        enemy.buffs.ooze = { kind: 'ooze', left: 0 }; // duration-less (Ooze.java)
+        if (enemy instanceof ContentHero) {
           ctx.log('Caustic ooze eats your flesh. Wash away it!');
         }
-        return damage;
-      },
-    );
+      }
+      return damage;
+    };
+    const dmg = (rng: MechanicsRng) => gooDamageRoll(rng, pumped);
+    if (enemy instanceof ContentHero) {
+      strikeMobVsHero(ctx, this, enemy, accuracy, dmg, proc);
+    } else {
+      strikeMobVsMob(ctx, this, enemy, accuracy, dmg, proc);
+    }
   }
 
   /**
@@ -239,11 +243,11 @@ export class GooMob extends ContentMob {
    * is validated (in-bounds, walkable, unoccupied) and Goo stays put if it
    * is invalid.
    */
-  private jumpDest(ctx: ActionContext, hero: ContentHero): number {
-    const dx = Math.sign(hero.x - this.x);
-    const dy = Math.sign(hero.y - this.y);
-    const nx = hero.x - dx;
-    const ny = hero.y - dy;
+  private jumpDest(ctx: ActionContext, enemy: ContentHero | ContentMob): number {
+    const dx = Math.sign(enemy.x - this.x);
+    const dy = Math.sign(enemy.y - this.y);
+    const nx = enemy.x - dx;
+    const ny = enemy.y - dy;
     const level = ctx.level;
     if (
       level.inBounds(nx, ny) &&
@@ -256,8 +260,8 @@ export class GooMob extends ContentMob {
   }
 
   /** Ballistic path clear from Goo to the hero (Ballistica, Goo.java:95). */
-  private jumpPathClear(ctx: ActionContext, hero: ContentHero): boolean {
-    return lineClear(ctx.level, this.x, this.y, hero.x, hero.y);
+  private jumpPathClear(ctx: ActionContext, enemy: ContentHero | ContentMob): boolean {
+    return lineClear(ctx.level, this.x, this.y, enemy.x, enemy.y);
   }
 }
 

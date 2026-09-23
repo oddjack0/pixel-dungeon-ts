@@ -108,15 +108,15 @@ export class TenguMob extends ContentMob {
    * adjacent. The jump branch spends 1/speed() (from jump()), NOT an
    * additional attackDelay (Tengu.java:167).
    */
-  override doAttack(ctx: ActionContext, hero: ContentHero): number {
-    const adjacent = chebyshevPos(this.pos, hero.pos, this.w) <= 1;
+  override doAttack(ctx: ActionContext, enemy: ContentHero | ContentMob): number {
+    const adjacent = chebyshevPos(this.pos, enemy.pos, this.w) <= 1;
     const { jump, nextTimeToJump } = tenguShouldJump(this.timeToJump, adjacent);
     this.timeToJump = nextTimeToJump;
     if (jump) {
-      this.jump(ctx, hero.pos);
+      this.jump(ctx, enemy.pos);
       return 1; // spend(1/speed()) -> real 1/speed (moveCost convention)
     }
-    return super.doAttack(ctx, hero);
+    return super.doAttack(ctx, enemy);
   }
 
   /**

@@ -27,6 +27,13 @@ export type HeroIntent =
   | { kind: 'drop'; slot: number }
   | { kind: 'throwItem'; slot: number; targetId: number }
   /**
+   * Stage 3 (Worker A): Wand AC_ZAP — the inventory 'Zap' action enters
+   * cell-targeting mode in the UiManager; the tapped cell arrives here as
+   * `targetCell` (Wand.execute -> GameScene.selectCell(zapper),
+   * Wand.java:123-126 -> Wand.zapper.onSelect, Wand.java:430-475).
+   */
+  | { kind: 'zapWand'; slot: number; targetCell: number }
+  /**
    * Stage 2 (Worker 4): Honeypot AC_SHATTER — shatter the honeypot in
    * `slot` at the hero's own feet (Honeypot.java:61-73). Produced by the
    * inventory 'shatter' action.

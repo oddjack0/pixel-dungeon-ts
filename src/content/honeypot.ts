@@ -14,9 +14,8 @@
  * - Always identified, not upgradable, price 50 * qty
  *   (Honeypot.java:115-133).
  *
- * Bee seam: Worker 2 (mobs) implements the Bee mob + ally AI and
- * registers it via `setSummonBee`. Until then the shatter consumes the
- * pot without spawning (noted in the Stage-2 report).
+ * Bee seam: the bee worker (bee.ts) implements the Bee mob + ally AI and
+ * registers it via `setSummonBee` at module load.
  */
 import type { ActionContext } from '../engine/seams.js';
 import { Terrain } from '../core/grid.js';
@@ -47,16 +46,16 @@ export const HONEYPOT_DEF: ItemDef = {
 // ---------------------------------------------------------------------------
 
 /**
- * Spawn an allied Bee at `cell`, owned by the mob worker. The mob worker
- * calls `setSummonBee` with its implementation once the Bee mob lands.
+ * Spawn an allied Bee at `cell`, owned by the bee worker (bee.ts). The bee
+ * worker calls `setSummonBee` with its implementation at module load.
  */
-let summonBeeImpl: ((cell: number) => void) | null = null;
+let summonBeeImpl: ((ctx: ActionContext, cell: number) => void) | null = null;
 
-export function setSummonBee(fn: (cell: number) => void): void {
+export function setSummonBee(fn: (ctx: ActionContext, cell: number) => void): void {
   summonBeeImpl = fn;
 }
 
-/** True once Worker 2 has registered the Bee spawner. */
+/** True once the bee worker has registered the Bee spawner. */
 export function beeSpawnerRegistered(): boolean {
   return summonBeeImpl !== null;
 }
@@ -105,11 +104,11 @@ export function shatterHoneypotAt(
     newPos = candidates.length > 0 ? ctx.rng.pick(candidates) : -1;
   }
   if (newPos !== -1 && summonBeeImpl) {
-    summonBeeImpl(newPos);
+    summonBeeImpl(ctx, newPos);
   }
-  // Without Worker 2's spawner the pot still shatters (consumed by the
-  // caller); the missing bee is a known Stage-2 gap, not a silent bug —
-  // see the worker report.
+  // Without the bee spawner the pot still shatters (consumed by the
+  // caller); the missing bee is a known gap, not a silent bug — see the
+  // worker report.
 }
 
 /**

@@ -140,8 +140,19 @@ export function readInventory(game: Game): UiItem[] {
   return adapter(game);
 }
 
-/** Context-aware actions for an item, in display order. */
+/**
+ * Context-aware actions for an item, in display order.
+ *
+ * Wand/ring instance ids (`wand_of_firebolt#3`, `ring_of_thorns#1`) are
+ * detected by id prefix: the UI layer owns no item-def knowledge beyond
+ * this (the content designer owns the catalog).
+ */
 export function actionsFor(item: UiItem): ItemAction[] {
+  // Wands: vanilla defaultAction = AC_ZAP (Wand.java:78) — the UI offers
+  // Zap, which enters cell-targeting mode (Wand.execute -> zapper).
+  if (item.id.startsWith('wand_of_')) return ['use', 'drop'];
+  // Rings: vanilla actions() adds AC_EQUIP/AC_UNEQUIP (Ring.java:116-120).
+  if (item.id.startsWith('ring_of_')) return ['equip', 'drop'];
   // Stage 2 (Worker 4): the honeypot throws or shatters at the hero's
   // feet (Honeypot.java:50-73); potions are throwable (Potion AC_THROW).
   // Stage 2 (Worker 5): the pickaxe's default action is MINE
@@ -166,8 +177,12 @@ export function actionsFor(item: UiItem): ItemAction[] {
 export function actionLabel(action: ItemAction, item: UiItem): string {
   switch (action) {
     case 'use':
+      // Wand AC_ZAP (Wand.java:58): the button reads "Zap".
+      if (item.id.startsWith('wand_of_')) return 'Zap';
       return item.kind === 'potion' ? 'Drink' : item.kind === 'food' ? 'Eat' : item.kind === 'scroll' ? 'Read' : 'Use';
     case 'equip':
+      // Ring AC_EQUIP (Ring.java:118).
+      if (item.id.startsWith('ring_of_')) return 'Wear';
       return item.equipped ? (item.kind === 'armor' ? 'Take off' : 'Unwield') : item.kind === 'armor' ? 'Wear' : 'Wield';
     case 'drop':
       return 'Drop';
@@ -182,11 +197,19 @@ export function actionLabel(action: ItemAction, item: UiItem): string {
 
 /**
  * Dispatch an inventory action. Returns 'throw-targeting' when the UI should
- * enter throw-targeting mode (the UiManager owns that interaction).
+ * enter throw-targeting mode, 'zap-targeting' when it should enter
+ * wand-zap targeting mode (the UiManager owns those interactions).
  */
-export function doItemAction(game: Game, item: UiItem, action: ItemAction): 'done' | 'throw-targeting' {
+export function doItemAction(
+  game: Game,
+  item: UiItem,
+  action: ItemAction,
+): 'done' | 'throw-targeting' | 'zap-targeting' {
   switch (action) {
     case 'use':
+      // Wand.execute AC_ZAP (Wand.java:123-126): GameScene.selectCell(zapper)
+      // — vanilla's cell selector. The UiManager owns the targeting mode.
+      if (item.id.startsWith('wand_of_')) return 'zap-targeting';
       game.queueIntent({ kind: 'useItem', slot: item.slot });
       return 'done';
     case 'equip':
@@ -223,6 +246,8 @@ export class InventoryPanel {
   selected = 0;
   /** Called when the player picks Throw on an item (UiManager owns targeting). */
   onThrowRequest: (item: UiItem) => void = () => {};
+  /** Called when the player picks Zap on a wand (UiManager owns targeting). */
+  onZapRequest: (item: UiItem) => void = () => {};
 
   toggle(): void {
     this.open = !this.open;
@@ -285,6 +310,7 @@ export class InventoryPanel {
       if (inRect(a.rect, x, y) && sel) {
         const r = doItemAction(game, sel, a.action);
         if (r === 'throw-targeting') this.onThrowRequest(sel);
+        else if (r === 'zap-targeting') this.onZapRequest(sel);
         else this.close();
         return true;
       }
